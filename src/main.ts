@@ -1,5 +1,5 @@
 import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, normalizePath, setIcon } from 'obsidian';
-import { DEFAULT_SETTINGS, WatchLogPluginSettings, AirtimeSchedule } from './types';
+import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, AirtimeSchedule } from './types';
 import type { ReadingData } from './types';
 import type { HistoryEntry } from './HistoryManager';
 import { DataManager } from './DataManager';
@@ -298,6 +298,13 @@ export default class WatchLogPlugin extends Plugin {
 		if (this.settings.showUpcomingStatusBar === undefined) {
 			this.settings.showUpcomingStatusBar = true;
 		}
+		// Backfill the default Add type setting for existing installs.
+		if (this.settings.defaultAddType === undefined) {
+			this.settings.defaultAddType = LAST_USED_TYPE_SENTINEL;
+		}
+		if (this.settings.lastAddedType === undefined) {
+			this.settings.lastAddedType = '';
+		}
 		// Ensure array fields are never undefined after a partial merge
 		if (!this.settings.types?.length) this.settings.types = DEFAULT_SETTINGS.types;
 		if (!this.settings.statuses?.length) this.settings.statuses = DEFAULT_SETTINGS.statuses;
@@ -318,6 +325,25 @@ export default class WatchLogPlugin extends Plugin {
 
 	async saveSettings(): Promise<void> {
 		await this.dataManager.saveSettings(this.settings);
+	}
+
+	/**
+	 * Resolves the type slug the Add modal should preselect. Precedence:
+	 * 1. If `defaultAddType` is the sentinel → the last added type if it still
+	 *    exists, otherwise the first available type.
+	 * 2. If `defaultAddType` is a real, still-existing type → that type.
+	 * 3. Otherwise (stored type was deleted/renamed) → the first available type.
+	 * Never returns a non-existent type as long as at least one type exists.
+	 */
+	resolveDefaultAddType(): string {
+		const types = this.settings.types ?? [];
+		const firstAvailable = types[0]?.name ?? '';
+		const exists = (name: string): boolean => !!name && types.some((t) => t.name === name);
+		const choice = this.settings.defaultAddType ?? LAST_USED_TYPE_SENTINEL;
+		if (choice === LAST_USED_TYPE_SENTINEL) {
+			return exists(this.settings.lastAddedType) ? this.settings.lastAddedType : firstAvailable;
+		}
+		return exists(choice) ? choice : firstAvailable;
 	}
 
 	/**

@@ -1,8 +1,9 @@
 import { Modal } from 'obsidian';
+import Fuse from 'fuse.js';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, TagDefinition, SavedFilterPreset, Season } from './types';
-import { formatTime, formatDateDisplay, parseDateInput, getThemedColor, getDisplayPoster } from './types';
+import { formatTime, formatDateDisplay, parseDateInput, getThemedColor, getDisplayPoster, getDisplayCredits } from './types';
 import { renderCommunityRating, maybeAutoRefreshCommunityRating, refreshCommunityRating } from './CommunityRating';
 import { AddTitleModal } from './AddTitleModal';
 import { AddFromUrlModal } from './AddFromUrlModal';
@@ -10,7 +11,7 @@ import { AddTitleChoiceModal } from './AddTitleChoiceModal';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { EditTitleModal } from './EditTitleModal';
 import { ConfirmModal } from './ConfirmModal';
-import { TitleDetailModal, GroupDetailModal } from './TitleDetailModal';
+import { TitleDetailModal, GroupDetailModal, renderCreditsRows } from './TitleDetailModal';
 import { renderGroupCollage } from './CollageUtil';
 
 // ── Display item type ─────────────────────────────────────────────────────────
@@ -91,6 +92,14 @@ export class ListTab {
 	private cardsResizeObserver: ResizeObserver | null = null;
 	private cardsLastFirst = -1;
 	private cardsLastLast = -1;
+	// Last-applied layout-write inputs. Used to skip the spacer/transform/CSS-var
+	// writes when neither the scroll offset nor the grid geometry changed, so a
+	// same-window scroll tick doesn't dirty layout (which would force a reflow on
+	// the next clientHeight read).
+	private cardsLastFirstRow = -1;
+	private cardsLastCols = -1;
+	private cardsLastCardHeight = -1;
+	private cardsLastTotalRows = -1;
 	private cardsLastScrollTop = 0;
 	// Survives destroyVirtualScroll() so render() can restore scroll position
 	// after a full Cards-view rebuild (mirrors how _lastScrollTop works for List).
@@ -105,6 +114,11 @@ export class ListTab {
 	// Document-level click handlers registered for transient menus/panels.
 	// Cleaned up on rerender so DOM removal doesn't leave dangling listeners.
 	private activeCleanups: (() => void)[] = [];
+
+	// Toolbar action-button wrapper (display: contents) — lets selection-state
+	// changes rebuild just the buttons without touching the search input or the
+	// tab content DOM.
+	private toolbarActionsEl: HTMLElement | null = null;
 
 	constructor(container: HTMLElement, plugin: WatchLogPlugin, dataManager: DataManager) {
 		this.container = container;
@@ -328,8 +342,13 @@ export class ListTab {
 		this.cardsScrollContainer = scroll;
 		this.cardsScrollSpacer = spacer;
 		this.cardsGridEl = grid;
+
 		this.cardsLastFirst = -1;
 		this.cardsLastLast = -1;
+		this.cardsLastFirstRow = -1;
+		this.cardsLastCols = -1;
+		this.cardsLastCardHeight = -1;
+		this.cardsLastTotalRows = -1;
 
 		this.cardsScrollHandler = () => {
 			const scrollTop = scroll.scrollTop;
@@ -353,8 +372,16 @@ export class ListTab {
 		// the spacer height is set) — the CSS grid reflows on its own and the
 		// internal range comparison already short-circuits if no items moved.
 		// Resetting here caused a spurious second "initial" render.
+		// rAF-guard like the scroll handler — a resize can fire a burst of
+		// callbacks (e.g. scrollbar appear/disappear), and calling
+		// renderVisibleCards synchronously each time bounces layout. Coalesce
+		// into one render per frame via the shared cardsScrollRAF token.
 		this.cardsResizeObserver = new ResizeObserver(() => {
-			this.renderVisibleCards();
+			if (this.cardsScrollRAF !== null) return;
+			this.cardsScrollRAF = window.requestAnimationFrame(() => {
+				this.cardsScrollRAF = null;
+				this.renderVisibleCards();
+			});
 		});
 		this.cardsResizeObserver.observe(scroll);
 
@@ -409,14 +436,46 @@ export class ListTab {
 		const firstIndex = firstVisibleRow * cols;
 		const lastIndex = Math.min(totalItems - 1, (lastVisibleRow + 1) * cols - 1);
 
-		spacer.style.height = `${totalRows * rowHeight}px`;
-		grid.style.transform = `translateY(${firstVisibleRow * rowHeight}px)`;
-		grid.style.setProperty('--wl-cards-cols', String(cols));
-		grid.style.setProperty('--wl-card-height', `${cardHeight}px`);
-
 		const oldFirst = this.cardsLastFirst;
 		const oldLast = this.cardsLastLast;
-		if (firstIndex === oldFirst && lastIndex === oldLast) return;
+		const windowUnchanged = firstIndex === oldFirst && lastIndex === oldLast;
+
+		// The four layout writes below only depend on these inputs (rowHeight is
+		// cardHeight + a fixed gap, so cardHeight covers it). When none changed,
+		// the writes would be no-ops — but still dirty layout — so skip them.
+		const layoutUnchanged =
+			firstVisibleRow === this.cardsLastFirstRow &&
+			cols === this.cardsLastCols &&
+			cardHeight === this.cardsLastCardHeight &&
+			totalRows === this.cardsLastTotalRows;
+
+		// Same visible window and same geometry — nothing to do. Bail before any
+		// DOM write so a scroll within the current row window stays free.
+		if (windowUnchanged && layoutUnchanged) return;
+
+		if (!layoutUnchanged) {
+			spacer.style.height = `${totalRows * rowHeight}px`;
+			// Offset the grid with padding-top, NOT transform: translateY. With a
+			// transform, every row advance (remove top row + append bottom row +
+			// transform bump in one frame) makes Chromium's layout-shift tracker
+			// report one full row of stationary cards as shifted (previousRect
+			// 0×0 → poster/collage rect) — the CLS that climbed on every scroll.
+			// Padding replaces the removed row in layout, so each surviving
+			// card's layout rect is literally unchanged and nothing is recorded.
+			// (Verified in a headless-Chromium harness: transform ≈ 0.14 CLS per
+			// row advance; padding-top = 0. ReadingTab avoids it differently, by
+			// rebuilding the whole window — inserted-only content is never
+			// counted as a shift.)
+			grid.style.paddingTop = `${firstVisibleRow * rowHeight}px`;
+			grid.style.setProperty('--wl-cards-cols', String(cols));
+			grid.style.setProperty('--wl-card-height', `${cardHeight}px`);
+			this.cardsLastFirstRow = firstVisibleRow;
+			this.cardsLastCols = cols;
+			this.cardsLastCardHeight = cardHeight;
+			this.cardsLastTotalRows = totalRows;
+		}
+
+		if (windowUnchanged) return;
 
 		const isInitial = oldFirst === -1 || oldLast === -1;
 		const hasOverlap = !isInitial && firstIndex <= oldLast && lastIndex >= oldFirst;
@@ -484,6 +543,7 @@ export class ListTab {
 			if (card) fragment.appendChild(card);
 		}
 		grid.appendChild(fragment);
+
 	}
 
 	private buildCardElement(
@@ -545,9 +605,11 @@ export class ListTab {
 			const title = this.dataManager.getTitles().find((t) => t.id === titleId);
 			if (!title) continue;
 			// Manual override takes priority — skip auto-fetch for manual overrides
-			// and for titles whose auto-fetched poster is already populated.
+			// and for titles whose poster is already resolved (an http URL, or the
+			// 'none' sentinel meaning "tried, nothing found — don't refetch").
 			if (title.manualPosterUrl && title.manualPosterUrl.trim() !== '') continue;
-			if (title.posterUrl !== '') continue;
+			// Needs a poster only when missing (undefined / null / "") and not 'none'.
+			if (title.posterUrl || title.posterUrl === 'none') continue;
 
 			const placeholder = card.querySelector('.wl-card-poster-placeholder');
 			placeholder?.addClass('is-loading');
@@ -604,6 +666,10 @@ export class ListTab {
 		this.cardsDisplayItems = [];
 		this.cardsLastFirst = -1;
 		this.cardsLastLast = -1;
+		this.cardsLastFirstRow = -1;
+		this.cardsLastCols = -1;
+		this.cardsLastCardHeight = -1;
+		this.cardsLastTotalRows = -1;
 		this.cardsLastScrollTop = 0;
 		this.cardsRowHeight = 0;
 		this.destroyCardsObserver();
@@ -623,6 +689,8 @@ export class ListTab {
 
 		const card = parent.createDiv({ cls: 'wl-card' });
 		card.dataset.titleId = title.id;
+		// Cards built while scrolling during selection mode must show their state
+		if (this.selectedItems.has(title.id)) card.addClass('wl-card-selected');
 		// Width is distributed by the parent CSS grid (1fr columns) — do not set
 		// an explicit width here. Setting fractional pixel widths per card caused
 		// flex-wrap to overflow and shift the grid left by one slot per scroll.
@@ -635,18 +703,36 @@ export class ListTab {
 
 		const img = card.createEl('img', { cls: 'wl-card-poster' });
 		img.alt = title.title;
+		// Give the <img> definite intrinsic dimensions so it never momentarily
+		// lays out at its natural (post-load) size; the CSS (absolute inset:0 +
+		// object-fit:cover) then makes it fill the card's box. (The scroll-CLS
+		// logged against this img was the grid's translateY offset, not the
+		// image load — see renderVisibleCards.)
+		if (cardWidth !== undefined && cardHeight !== undefined) {
+			img.width = Math.round(cardWidth);
+			img.height = Math.round(cardHeight);
+		}
 
 		const display = getDisplayPoster(title);
 		const isManual = !!(title.manualPosterUrl && title.manualPosterUrl.trim() !== '');
+		// A poster is still needed when it's missing (undefined / null / "") — but NOT
+		// when it's the 'none' sentinel (already tried, nothing found — don't refetch).
+		const needsPoster = !isManual && !title.posterUrl && title.posterUrl !== 'none';
 		if (display && display.startsWith('http')) {
-			img.src = display;
-			card.addClass('has-poster');
+			// Reveal synchronously: gating on onload made every re-render flash the
+			// letter placeholder for a frame, because onload is async even for a
+			// fully cached image. An <img> paints nothing until its data arrives,
+			// so the placeholder behind it still covers a genuinely slow load;
+			// onerror re-hides the img (broken-image glyph) and restores the
+			// placeholder. Attach onerror before src so a cached failure still fires.
 			img.onerror = () => {
 				card.removeClass('has-poster');
 				// Only mark the auto-fetched URL as 'none' — don't touch a user's manual choice.
 				if (!isManual) this.dataManager.updatePosterUrl(title.id, 'none');
 			};
-		} else if (!isManual && title.posterUrl === '') {
+			card.addClass('has-poster');
+			img.src = display;
+		} else if (needsPoster) {
 			card.dataset.needsPoster = 'true';
 		}
 
@@ -693,6 +779,10 @@ export class ListTab {
 		});
 
 		card.addEventListener('click', () => {
+			if (this.selectionMode) {
+				this.toggleCardSelection(card, title.id);
+				return;
+			}
 			this.openDetailModalForTitle(title.id);
 		});
 	}
@@ -796,6 +886,8 @@ export class ListTab {
 			: '#888780';
 
 		const card = parent.createDiv({ cls: 'wl-card wl-card-group' });
+		card.dataset.groupId = group.id;
+		if (this.selectedItems.has(group.id)) card.addClass('wl-card-selected');
 		if (cardHeight !== undefined) card.style.height = `${cardHeight}px`;
 
 		const letter = (group.name.trim().charAt(0) || '?').toUpperCase();
@@ -818,9 +910,13 @@ export class ListTab {
 		});
 
 		card.addEventListener('click', () => {
+			if (this.selectionMode) {
+				this.toggleCardSelection(card, group.id);
+				return;
+			}
 			new GroupDetailModal(this.plugin.app, this.plugin, group, members, () => {
 				this.render();
-			}).open();
+			}, (name) => this.applyPersonSearch(name)).open();
 		});
 	}
 
@@ -926,7 +1022,17 @@ export class ListTab {
 		if (!current) return;
 		new TitleDetailModal(this.plugin.app, this.plugin, current, () => {
 			this.render();
-		}).open();
+		}, (name) => this.applyPersonSearch(name)).open();
+	}
+
+	/**
+	 * Click-to-filter for a director/actor name: routes the name through the
+	 * existing search bar (which matches director/cast), so the filter is
+	 * visible, clearable, and scoped to this view exactly like a typed search.
+	 */
+	private applyPersonSearch(name: string): void {
+		this.searchQuery = name;
+		this.render();
 	}
 
 	// ── Header ────────────────────────────────────────────────────────────────────
@@ -951,10 +1057,80 @@ export class ListTab {
 		renderToolbarWithMobileToggle({
 			controls,
 			renderSearch: (parent) => this.renderSearch(parent),
-			renderActions: (parent) => this.renderToolbarActions(parent),
+			renderActions: (parent) => {
+				// display: contents wrapper — children still participate in the
+				// controls flex row, but the buttons can be rebuilt in isolation.
+				const wrap = parent.createDiv({ cls: 'wl-toolbar-actions' });
+				this.toolbarActionsEl = wrap;
+				this.renderToolbarActions(wrap);
+			},
 			expanded: this.toolbarExpanded,
 			onToggleChange: (expanded) => { this.toolbarExpanded = expanded; },
 		});
+	}
+
+	/**
+	 * Rebuilds only the toolbar action buttons (Select / All / action bar / …).
+	 * Used by selection-state changes so the tab content — especially the Cards
+	 * virtual-scroll grid — is never torn down just to update the header.
+	 */
+	private refreshToolbarActions(): void {
+		const wrap = this.toolbarActionsEl;
+		if (!wrap || !wrap.isConnected) return;
+		wrap.empty();
+		this.renderToolbarActions(wrap);
+	}
+
+	/**
+	 * Enters/exits selection mode without a full tab rebuild. Cards view only
+	 * needs its selection borders cleared (the grid DOM is untouched); List view
+	 * rebuilds just the table because rows gain/lose the checkbox column.
+	 */
+	private setSelectionMode(on: boolean): void {
+		this.selectionMode = on;
+		this.selectedItems.clear();
+		this.refreshToolbarActions();
+		if (this.currentSubTab === 'cards') {
+			this.syncCardSelectionClasses();
+		} else {
+			this.rerenderTable();
+		}
+	}
+
+	/** Applies/removes wl-card-selected on every currently rendered card. */
+	private syncCardSelectionClasses(): void {
+		const grid = this.cardsGridEl;
+		if (!grid) return;
+		grid.querySelectorAll<HTMLElement>('.wl-card').forEach((card) => {
+			const id = card.dataset.titleId ?? card.dataset.groupId;
+			card.classList.toggle('wl-card-selected', !!id && this.selectedItems.has(id));
+		});
+	}
+
+	/** Card click in selection mode — pure state + class toggle, no re-render. */
+	private toggleCardSelection(card: HTMLElement, id: string): void {
+		if (this.selectedItems.has(id)) {
+			this.selectedItems.delete(id);
+		} else {
+			this.selectedItems.add(id);
+		}
+		card.classList.toggle('wl-card-selected', this.selectedItems.has(id));
+		this.refreshToolbarActions();
+	}
+
+	/** Row click/checkbox in List selection mode — class toggle, no re-render. */
+	private toggleRowSelection(row: HTMLElement, id: string): boolean {
+		const nowSelected = !this.selectedItems.has(id);
+		if (nowSelected) {
+			this.selectedItems.add(id);
+		} else {
+			this.selectedItems.delete(id);
+		}
+		row.classList.toggle('wl-row-selected', nowSelected);
+		const cb = row.querySelector<HTMLInputElement>('.wl-col-select input');
+		if (cb) cb.checked = nowSelected;
+		this.refreshToolbarActions();
+		return nowSelected;
 	}
 
 	/**
@@ -974,13 +1150,11 @@ export class ListTab {
 			savedBtn.addEventListener('click', () => {
 				this.applyPreset(preset);
 				this.savedFilterActive = true;
-				savedBtn.addClass('wl-btn-preset-active');
 				this.saveFiltersToSettings();
-				// Full render so the filter bar (Clear button, filter dot) is
-				// rebuilt with the new active-filter state on whichever sub-tab
-				// is current — rerenderTable/rerenderActiveSubTab only refresh
-				// the content area, not the header.
-				this.render();
+				// Rebuild the toolbar (Clear button, filter dot, preset-active
+				// state) plus the content area — no need to nuke the whole tab.
+				this.refreshToolbarActions();
+				this.rerenderActiveSubTab();
 			});
 		} else {
 			this.savedFilterBtnEl = null;
@@ -1010,7 +1184,12 @@ export class ListTab {
 						this.selectedItems.add(item.data.id);
 					}
 				}
-				this.render();
+				this.refreshToolbarActions();
+				if (this.currentSubTab === 'cards') {
+					this.syncCardSelectionClasses();
+				} else {
+					this.rerenderTable();
+				}
 			});
 		}
 
@@ -1020,9 +1199,7 @@ export class ListTab {
 			text: 'Select',
 		});
 		selBtn.addEventListener('click', () => {
-			this.selectionMode = !this.selectionMode;
-			this.selectedItems.clear();
-			this.render();
+			this.setSelectionMode(!this.selectionMode);
 		});
 
 		// Add button pinned to the far right of the toolbar row — opens a chooser
@@ -1391,7 +1568,8 @@ export class ListTab {
 					panel.remove();
 					activeDocument.removeEventListener('click', closer, true);
 					this.saveFiltersToSettings();
-					this.render();
+					// Sorting only reorders the content — the toolbar is unaffected.
+					this.rerenderActiveSubTab();
 				});
 
 				dirBtn.addEventListener('click', (ev) => {
@@ -1404,7 +1582,7 @@ export class ListTab {
 					panel.remove();
 					activeDocument.removeEventListener('click', closer, true);
 					this.saveFiltersToSettings();
-					this.render();
+					this.rerenderActiveSubTab();
 				});
 			};
 
@@ -1536,11 +1714,12 @@ export class ListTab {
 						this.render();
 					};
 					confirmBtn.addEventListener('click', (e) => { e.stopPropagation(); void doCreate(); });
-					cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); this.render(); });
+					// Cancel only needs the toolbar back — nothing in the content changed.
+					cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); this.refreshToolbarActions(); });
 					nameInput.addEventListener('keydown', (e) => {
 						e.stopPropagation();
 						if (e.key === 'Enter') void doCreate();
-						if (e.key === 'Escape') this.render();
+						if (e.key === 'Escape') this.refreshToolbarActions();
 					});
 					nameInput.addEventListener('click', (e) => e.stopPropagation());
 					window.setTimeout(() => nameInput.focus(), 0);
@@ -1907,12 +2086,14 @@ export class ListTab {
 		const allTitles = this.dataManager.getTitles();
 		const titleMap = new Map(allTitles.map((t) => [t.id, t]));
 		const q = this.searchQuery.trim().toLowerCase();
+		// One fuzzy pass shared by the top-level filter and the group member match.
+		const searchMatched = this.getSearchMatchedIds();
 
 		// Top-level titles (not in any group), filtered. Hidden entirely when
 		// "Groups only" is active.
 		const topLevel = this.filterGroupsOnly
 			? []
-			: this.getFilteredSortedTitles().filter((t) => !groupedIds.has(t.id));
+			: this.getFilteredSortedTitles(searchMatched).filter((t) => !groupedIds.has(t.id));
 
 		// Groups: skip those excluded by group filter; show if any member passes filters
 		const displayGroups: Array<{ kind: 'group'; data: WatchLogGroup; members: WatchLogTitle[] }> = [];
@@ -1923,10 +2104,11 @@ export class ListTab {
 				.map((id) => titleMap.get(id))
 				.filter((t): t is WatchLogTitle => t !== undefined);
 
-			// Search: show group if name matches OR any member title matches
-			if (q) {
+			// Search: show group if name matches OR any member matches the fuzzy
+			// title/director/cast search.
+			if (searchMatched) {
 				const nameMatch = group.name.toLowerCase().includes(q);
-				const memberMatch = members.some((m) => m.title.toLowerCase().includes(q));
+				const memberMatch = members.some((m) => searchMatched.has(m.id));
 				if (!nameMatch && !memberMatch) continue;
 			}
 
@@ -2112,9 +2294,7 @@ export class ListTab {
 			cb.checked = isSelected;
 			cb.addEventListener('click', (e) => e.stopPropagation());
 			cb.addEventListener('change', () => {
-				if (cb.checked) { this.selectedItems.add(title.id); }
-				else { this.selectedItems.delete(title.id); }
-				this.render();
+				this.toggleRowSelection(row, title.id);
 			});
 		}
 
@@ -2195,9 +2375,7 @@ export class ListTab {
 
 		row.addEventListener('click', () => {
 			if (this.selectionMode) {
-				if (this.selectedItems.has(title.id)) { this.selectedItems.delete(title.id); }
-				else { this.selectedItems.add(title.id); }
-				this.render();
+				this.toggleRowSelection(row, title.id);
 				return;
 			}
 			this.expandedId = isExpanded ? null : title.id;
@@ -2239,9 +2417,7 @@ export class ListTab {
 			cb.checked = isSelected;
 			cb.addEventListener('click', (e) => e.stopPropagation());
 			cb.addEventListener('change', () => {
-				if (cb.checked) { this.selectedItems.add(group.id); }
-				else { this.selectedItems.delete(group.id); }
-				this.render();
+				this.toggleRowSelection(row, group.id);
 			});
 		}
 
@@ -2415,9 +2591,7 @@ export class ListTab {
 		row.addEventListener('click', () => {
 			if (this.renamingGroupId === group.id) return;
 			if (this.selectionMode) {
-				if (this.selectedItems.has(group.id)) { this.selectedItems.delete(group.id); }
-				else { this.selectedItems.add(group.id); }
-				this.render();
+				this.toggleRowSelection(row, group.id);
 				return;
 			}
 			if (isExpanded) {
@@ -2502,6 +2676,11 @@ export class ListTab {
 			linkIcon.rel = 'noopener noreferrer';
 			linkIcon.addEventListener('click', (e) => e.stopPropagation());
 		}
+
+		// Director / Cast rows under the status line; clicking a name filters
+		// this view via the search bar (same fallback rendering as the modal).
+		const creditsWrap = accLeft.createDiv({ cls: 'wl-acc-credits' });
+		renderCreditsRows(creditsWrap, title, (name) => this.applyPersonSearch(name));
 
 		// Stats row: 3 new blocks + existing progress block, all in one right-aligned row
 		const watchedEps = title.watchedEpisodes.length;
@@ -2921,12 +3100,34 @@ export class ListTab {
 		}
 	}
 
-	private getFilteredSortedTitles(): WatchLogTitle[] {
+	/**
+	 * Fuzzy search (fuse.js) over title + director + cast names. Returns the
+	 * matching title-id set, or null when the query is empty (no search filter).
+	 * The 'none' sentinel and unfetched credits are excluded from matching.
+	 */
+	private getSearchMatchedIds(): Set<string> | null {
+		const q = this.searchQuery.trim();
+		if (!q) return null;
+		const records = this.dataManager.getTitles().map((t) => ({
+			id: t.id,
+			title: t.title,
+			director: getDisplayCredits(t.director),
+			cast: getDisplayCredits(t.cast),
+		}));
+		const fuse = new Fuse(records, {
+			keys: ['title', 'director', 'cast'],
+			threshold: 0.4,
+			ignoreLocation: true,
+		});
+		return new Set(fuse.search(q).map((r) => r.item.id));
+	}
+
+	private getFilteredSortedTitles(searchMatched?: Set<string> | null): WatchLogTitle[] {
 		let titles = this.dataManager.getTitles();
 
-		if (this.searchQuery.trim()) {
-			const q = this.searchQuery.toLowerCase();
-			titles = titles.filter((t) => t.title.toLowerCase().includes(q));
+		const matched = searchMatched !== undefined ? searchMatched : this.getSearchMatchedIds();
+		if (matched) {
+			titles = titles.filter((t) => matched.has(t.id));
 		}
 
 		titles = titles.filter((t) => this.titlePassesFilters(t));

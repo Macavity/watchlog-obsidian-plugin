@@ -12,11 +12,14 @@ import type {
 	TmdbTvDetail,
 	TmdbExternalIds,
 	TmdbFindResult,
+	TmdbVideo,
+	TmdbCreditsResult,
 	Season,
 	AniListMedia,
 	AniListSearchResponse,
 	AniListMediaResponse,
 } from './types';
+import { normalizeCreditsForStore } from './types';
 
 const JIKAN_BASE = 'https://api.jikan.moe/v4';
 const OMDB_BASE = 'https://www.omdbapi.com';
@@ -26,6 +29,48 @@ const ANILIST_RATE_LIMIT_MS = 700;
 const GOOGLE_BOOKS_BASE = 'https://www.googleapis.com/books/v1';
 const JIKAN_RATE_LIMIT_MS = 400;
 const API_TIMEOUT_MS = 8000;
+
+/** Canonical YouTube watch URL from a raw video id. */
+function youtubeWatchUrl(id: string): string {
+	return `https://www.youtube.com/watch?v=${id}`;
+}
+
+/**
+ * Extracts a YouTube video id from any of the shapes providers hand back —
+ * `watch?v=ID`, `youtu.be/ID`, or `/embed/ID` (Jikan frequently ships only the
+ * embed URL while leaving youtube_id / url null). Empty string when none match.
+ */
+function extractYoutubeId(url: string | null | undefined): string {
+	if (!url) return '';
+	const m = url.match(/(?:[?&]v=|\/embed\/|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
+	return m?.[1] ?? '';
+}
+
+/**
+ * Splits an OMDb comma-separated name string ("Director" / "Actors") into a
+ * normalized stored list: trimmed names capped at MAX_CAST, or ['none'] when
+ * the field is absent / 'N/A' — so both APIs yield the same shape.
+ */
+function omdbNamesToCredits(s: string | undefined): string[] {
+	if (!s || s === 'N/A') return normalizeCreditsForStore([]);
+	return normalizeCreditsForStore(s.split(','));
+}
+
+/**
+ * Maps a TMDB `credits` payload to the stored { director, cast } shape:
+ * directors from crew entries with the Director job, cast from the (already
+ * billing-ordered) cast list — both normalized and capped like OMDb's.
+ */
+function tmdbCreditsToStored(credits: TmdbCreditsResult | undefined): { director: string[]; cast: string[] } {
+	const director = (credits?.crew ?? [])
+		.filter((c) => c.job === 'Director' && c.name)
+		.map((c) => c.name!);
+	const cast = (credits?.cast ?? []).map((c) => c.name ?? '');
+	return {
+		director: normalizeCreditsForStore(director),
+		cast: normalizeCreditsForStore(cast),
+	};
+}
 
 export interface BookSearchResult {
 	title: string;
@@ -266,6 +311,10 @@ export class ApiService {
 			averageScore: media.averageScore ?? undefined,
 			genres: media.genres ?? undefined,
 			posterUrl: media.coverImage?.large ?? media.coverImage?.medium ?? undefined,
+			trailerUrl:
+				media.trailer?.site === 'youtube' && media.trailer.id
+					? youtubeWatchUrl(media.trailer.id)
+					: 'none',
 		};
 	}
 
@@ -287,6 +336,7 @@ export class ApiService {
 						coverImage { large medium }
 						description
 						genres
+						trailer { id site }
 					}
 				}
 			}
@@ -315,6 +365,7 @@ export class ApiService {
 					averageScore
 					popularity
 					coverImage { large }
+					trailer { id site }
 					nextAiringEpisode {
 						airingAt
 						episode
@@ -346,6 +397,16 @@ export class ApiService {
 		}
 	}
 
+	/** Resolves a Jikan `trailer` object to a YouTube URL, or 'none' when absent. */
+	private jikanTrailerUrl(trailer: JikanAnime['trailer']): string {
+		if (!trailer) return 'none';
+		const id =
+			(trailer.youtube_id ?? '') ||
+			extractYoutubeId(trailer.url) ||
+			extractYoutubeId(trailer.embed_url);
+		return id ? youtubeWatchUrl(id) : 'none';
+	}
+
 	private mapJikanAnime(anime: JikanAnime): AnimeSearchResult {
 		const durationStr = anime.duration ?? '24 min per ep';
 		const durationMatch = durationStr.match(/(\d+)\s*min/);
@@ -361,6 +422,8 @@ export class ApiService {
 			releaseDate: anime.aired?.from ? (anime.aired.from.split('T')[0] ?? '') : '',
 			url: anime.url,
 			seasons,
+			posterUrl: anime.images?.jpg?.small_image_url ?? anime.images?.jpg?.image_url ?? undefined,
+			trailerUrl: this.jikanTrailerUrl(anime.trailer),
 		};
 	}
 
@@ -403,6 +466,9 @@ export class ApiService {
 				releaseDate: this.parseOmdbDate(data.Released ?? data.Year),
 				url: `https://www.imdb.com/title/${data.imdbID}`,
 				seasons: [{ name: 'Movie', episodes: 1, offset: 0 }],
+				trailerUrl: 'none', // OMDb does not provide trailers.
+				director: omdbNamesToCredits(data.Director),
+				cast: omdbNamesToCredits(data.Actors),
 			};
 		} catch {
 			return null;
@@ -437,6 +503,9 @@ export class ApiService {
 				releaseDate: this.parseOmdbDate(data.Released ?? data.Year),
 				url: `https://www.imdb.com/title/${data.imdbID}`,
 				seasons,
+				trailerUrl: 'none', // OMDb does not provide trailers.
+				director: omdbNamesToCredits(data.Director),
+				cast: omdbNamesToCredits(data.Actors),
 			};
 		} catch {
 			return null;
@@ -476,6 +545,17 @@ export class ApiService {
 			return { dayOfWeek, time: broadcast.time };
 		} catch {
 			return null;
+		}
+	}
+
+	/** Detail lookup for a single anime's trailer (Jikan /anime/{mal_id}). Returns a URL or 'none'. */
+	async getJikanTrailerByMalId(malId: number): Promise<string> {
+		try {
+			const url = `${JIKAN_BASE}/anime/${malId}`;
+			const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanAnime };
+			return this.jikanTrailerUrl(data.data?.trailer);
+		} catch {
+			return 'none';
 		}
 	}
 
@@ -527,17 +607,34 @@ export class ApiService {
 				releaseDate: item.release_date ?? item.first_air_date ?? '',
 				url: '',
 				seasons: [],
+				posterUrl: item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : undefined,
 			}));
 		} catch {
 			return [];
 		}
 	}
 
+	/**
+	 * Picks the best trailer from a TMDB `videos.results` list: an official YouTube
+	 * Trailer first, then any YouTube Trailer, then any YouTube Teaser. Returns a
+	 * YouTube watch URL, or 'none' when nothing suitable exists.
+	 */
+	private pickTmdbTrailer(videos: TmdbVideo[] | undefined): string {
+		const yt = (videos ?? []).filter((v) => v.site === 'YouTube' && v.key);
+		const pick =
+			yt.find((v) => v.type === 'Trailer' && v.official === true) ??
+			yt.find((v) => v.type === 'Trailer') ??
+			yt.find((v) => v.type === 'Teaser');
+		return pick ? youtubeWatchUrl(pick.key) : 'none';
+	}
+
 	async getTmdbMovieDetails(tmdbId: string): Promise<MediaSearchResult | null> {
 		if (!this.tmdbApiKey) return null;
 		try {
+			// append_to_response=videos,credits folds the trailer + director/cast
+			// lookups into the detail call (no extra round-trips).
 			const [detailData, extData] = await Promise.all([
-				this.fetchWithTimeout(`${TMDB_BASE}/movie/${tmdbId}`, this.tmdbHeaders()),
+				this.fetchWithTimeout(`${TMDB_BASE}/movie/${tmdbId}?append_to_response=videos,credits`, this.tmdbHeaders()),
 				this.fetchWithTimeout(`${TMDB_BASE}/movie/${tmdbId}/external_ids`, this.tmdbHeaders()),
 			]);
 			const detail = detailData as TmdbMovieDetail;
@@ -552,6 +649,8 @@ export class ApiService {
 				releaseDate: detail.release_date ?? '',
 				url: imdbId ? `https://www.imdb.com/title/${imdbId}` : '',
 				seasons: [{ name: 'Movie', episodes: 1, offset: 0 }],
+				trailerUrl: this.pickTmdbTrailer(detail.videos?.results),
+				...tmdbCreditsToStored(detail.credits),
 			};
 		} catch {
 			return null;
@@ -562,7 +661,7 @@ export class ApiService {
 		if (!this.tmdbApiKey) return null;
 		try {
 			const [detailData, extData] = await Promise.all([
-				this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}`, this.tmdbHeaders()),
+				this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}?append_to_response=videos,credits`, this.tmdbHeaders()),
 				this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}/external_ids`, this.tmdbHeaders()),
 			]);
 			const detail = detailData as TmdbTvDetail;
@@ -587,6 +686,8 @@ export class ApiService {
 				releaseDate: detail.first_air_date ?? '',
 				url: imdbId ? `https://www.imdb.com/title/${imdbId}` : '',
 				seasons,
+				trailerUrl: this.pickTmdbTrailer(detail.videos?.results),
+				...tmdbCreditsToStored(detail.credits),
 			};
 		} catch {
 			return null;
@@ -751,6 +852,111 @@ export class ApiService {
 			}
 		}
 
+		return null;
+	}
+
+	/**
+	 * Re-fetches the trailer for an existing title from its source, reusing the same
+	 * paths as add-time: AniList/Jikan for anime (honouring `animeApiSource`, falling
+	 * back to the other ID), TMDB-by-IMDb for movies/TV. OMDb (and anything else)
+	 * yields 'none'. Returns a YouTube watch URL or the sentinel 'none'.
+	 */
+	async fetchTrailer(
+		title: WatchLogTitle,
+		animeApiSource: 'jikan' | 'anilist' = 'jikan',
+		apiGroup: 'anime' | 'movie' | '' = '',
+	): Promise<string> {
+		const resolvedGroup: 'anime' | 'movie' | '' =
+			apiGroup || (title.type === 'Anime' ? 'anime' : title.type === 'Movie' || title.type === 'TV Show' || title.type === 'TvShow' ? 'movie' : '');
+
+		if (resolvedGroup === 'anime') {
+			const hasMal = (title.malId ?? 0) > 0;
+			const hasAniList = (title.anilistId ?? 0) > 0;
+			const tryAniList = async (): Promise<string> => {
+				if (!hasAniList) return 'none';
+				const media = await this.getAniListById(title.anilistId!);
+				return media?.trailer?.site === 'youtube' && media.trailer.id
+					? youtubeWatchUrl(media.trailer.id)
+					: 'none';
+			};
+			const tryJikan = async (): Promise<string> => {
+				if (!hasMal) return 'none';
+				return this.getJikanTrailerByMalId(title.malId!);
+			};
+			const order = animeApiSource === 'anilist' ? [tryAniList, tryJikan] : [tryJikan, tryAniList];
+			for (const attempt of order) {
+				const url = await attempt();
+				if (url && url !== 'none') return url;
+			}
+			return 'none';
+		}
+
+		if (resolvedGroup === 'movie') {
+			const imdbId = this.extractImdbId(title.externalLink ?? '');
+			// Only TMDB carries trailers; OMDb never does.
+			if (imdbId && this.tmdbApiKey) {
+				const full = await this.getTmdbByImdbId(imdbId);
+				if (full?.trailerUrl && full.trailerUrl !== 'none') return full.trailerUrl;
+			}
+			return 'none';
+		}
+
+		return 'none';
+	}
+
+	/**
+	 * One-time director/cast backfill for an existing title, keyed off the IMDb id
+	 * in its stored externalLink. Prefers the active API, falls back to the other
+	 * one when it has a key. Returns normalized stored lists (names or ['none']),
+	 * or null when there is no usable id / no keyed API / the requests failed —
+	 * the caller marks the fields 'none' in that case so it never re-attempts.
+	 */
+	async fetchCredits(
+		title: WatchLogTitle,
+		activeApi: 'OMDb' | 'TMDB' = 'OMDb',
+	): Promise<{ director: string[]; cast: string[] } | null> {
+		const imdbId = this.extractImdbId(title.externalLink ?? '');
+		if (!imdbId) return null;
+
+		// OMDb: Director/Actors ride in the plain detail response — one cheap call
+		// (deliberately NOT getOmdbTvDetails, which fans out per-season requests).
+		const tryOmdb = async (): Promise<{ director: string[]; cast: string[] } | null> => {
+			if (!this.omdbApiKey) return null;
+			try {
+				const url = `${OMDB_BASE}/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(this.omdbApiKey)}`;
+				const data = (await this.fetchWithTimeout(url)) as OmdbDetailResponse;
+				if (data.Response === 'False' || !data.imdbID) return null;
+				return {
+					director: omdbNamesToCredits(data.Director),
+					cast: omdbNamesToCredits(data.Actors),
+				};
+			} catch {
+				return null;
+			}
+		};
+
+		// TMDB: resolve the IMDb id via /find, then hit the lean /credits endpoint.
+		const tryTmdb = async (): Promise<{ director: string[]; cast: string[] } | null> => {
+			if (!this.tmdbApiKey) return null;
+			try {
+				const findUrl = `${TMDB_BASE}/find/${encodeURIComponent(imdbId)}?external_source=imdb_id`;
+				const found = (await this.fetchWithTimeout(findUrl, this.tmdbHeaders())) as TmdbFindResult;
+				const movieId = found.movie_results?.[0]?.id;
+				const tvId = found.tv_results?.[0]?.id;
+				const path = movieId !== undefined ? `movie/${movieId}` : tvId !== undefined ? `tv/${tvId}` : null;
+				if (!path) return null;
+				const credits = (await this.fetchWithTimeout(`${TMDB_BASE}/${path}/credits`, this.tmdbHeaders())) as TmdbCreditsResult;
+				return tmdbCreditsToStored(credits);
+			} catch {
+				return null;
+			}
+		};
+
+		const order = activeApi === 'TMDB' ? [tryTmdb, tryOmdb] : [tryOmdb, tryTmdb];
+		for (const attempt of order) {
+			const result = await attempt();
+			if (result) return result;
+		}
 		return null;
 	}
 

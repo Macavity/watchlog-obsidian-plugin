@@ -1,8 +1,16 @@
-import { App, Component, MarkdownRenderer, Modal, Notice, TFile, normalizePath, Setting } from 'obsidian';
+import { App, Component, MarkdownRenderer, Modal, Notice, Platform, TFile, normalizePath, Setting } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { CustomListColumn, CustomListRow, CustomList } from './types';
+import { DEFAULT_FIELD_COLOR } from './types';
 import { ConfirmModal } from './ConfirmModal';
+import { openColorPicker, deriveFillColor, deriveBorderColor } from './ColorPicker';
+import { openStatusDropdown } from './StatusDropdown';
+
+/** Minimum width (px) a resizable column can be dragged to. */
+const MIN_COL_WIDTH = 60;
+/** Fallback width (px) for a resizable column that has no explicit width in resizable mode. */
+const DEFAULT_COL_WIDTH = 140;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CustomListManager — vault I/O
@@ -63,6 +71,17 @@ export class CustomListManager {
 		}
 	}
 
+	/** Reads each named list and returns a `name → tabColor` map for tab rendering.
+	 *  Lists without a colour (or that fail to load) are simply omitted. */
+	async loadTabColors(names: string[]): Promise<Map<string, string>> {
+		const out = new Map<string, string>();
+		await Promise.all(names.map(async (name) => {
+			const list = await this.loadList(name);
+			if (list?.tabColor) out.set(name, list.tabColor);
+		}));
+		return out;
+	}
+
 	private parse(name: string, content: string): CustomList | null {
 		const notesMatch = content.match(/## Notes\n([\s\S]*?)(?=\n## |\s*$)/);
 		const notes = (notesMatch?.[1] ?? '').trim();
@@ -70,10 +89,14 @@ export class CustomListManager {
 		const dataMatch = content.match(/## Data\n```json\n([\s\S]*?)\n```/);
 		let columns: CustomListColumn[] = [];
 		let rows: CustomListRow[] = [];
+		let tabColor: string | undefined;
+		let nameWidth: number | undefined;
 
 		if (dataMatch?.[1]) {
 			try {
-				const p = JSON.parse(dataMatch[1]) as { columns?: unknown; rows?: unknown };
+				const p = JSON.parse(dataMatch[1]) as { columns?: unknown; rows?: unknown; tabColor?: unknown; nameWidth?: unknown };
+				if (typeof p.tabColor === 'string') tabColor = p.tabColor;
+				if (typeof p.nameWidth === 'number') nameWidth = p.nameWidth;
 				if (Array.isArray(p.columns)) {
 					columns = (p.columns as unknown[]).filter((c): c is CustomListColumn =>
 						typeof c === 'object' && c !== null &&
@@ -93,7 +116,7 @@ export class CustomListManager {
 			}
 		}
 
-		return { name, columns, rows, notes };
+		return { name, columns, rows, notes, tabColor, nameWidth };
 	}
 
 	async saveList(list: CustomList): Promise<void> {
@@ -143,7 +166,11 @@ export class CustomListManager {
 	}
 
 	private serialize(list: CustomList): string {
-		const json = JSON.stringify({ columns: list.columns, rows: list.rows }, null, 2);
+		const json = JSON.stringify(
+			{ columns: list.columns, rows: list.rows, tabColor: list.tabColor, nameWidth: list.nameWidth },
+			null,
+			2,
+		);
 		return `# ${list.name}\n\n## Notes\n${list.notes}\n\n## Data\n\`\`\`json\n${json}\n\`\`\`\n`;
 	}
 
@@ -179,6 +206,21 @@ export class CustomListManager {
 	}
 }
 
+/** Aligns a column's option-colour map with its (trimmed) options on save:
+ *  drops colours for removed options and clears the map for non-select columns. */
+function normalizeOptionColors(col: CustomListColumn): void {
+	if (col.type !== 'select') { delete col.optionColors; return; }
+	if (!col.optionColors) return;
+	const opts = new Set(col.options ?? []);
+	const cleaned: Record<string, string> = {};
+	for (const [k, v] of Object.entries(col.optionColors)) {
+		const tk = k.trim();
+		if (opts.has(tk)) cleaned[tk] = v;
+	}
+	if (Object.keys(cleaned).length) col.optionColors = cleaned;
+	else delete col.optionColors;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared column list renderer (used by EditColumnsModal & DefaultColumnsModal)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,6 +234,7 @@ function renderColumnList(
 	onDelete: (idx: number) => void,
 	onTypeChange: () => void,
 	onAdd?: () => void,
+	onOptionRename?: (colId: string, oldVal: string, newVal: string) => void,
 ): void {
 	listEl.empty();
 	listEl.addClass('wl-editcol-card-grid');
@@ -253,7 +296,26 @@ function renderColumnList(
 			if (col.type === t) opt.selected = true;
 		}
 		typeSelect.addEventListener('change', () => {
-			col.type = typeSelect.value as CustomListColumn['type'];
+			const newType = typeSelect.value as CustomListColumn['type'];
+			if (newType === 'select') {
+				// Rebuild the option list from the distinct non-empty values already
+				// present in this column's cells, in order of first appearance. This
+				// replaces any previously-stored options (so stale/orphaned options
+				// don't resurrect) and leaves the cell values themselves untouched —
+				// after the switch every populated cell holds a valid option.
+				const seen = new Set<string>();
+				const derived: string[] = [];
+				for (const row of existingRows) {
+					const raw = (row as Record<string, unknown>)[col.id];
+					if (typeof raw !== 'string' && typeof raw !== 'number') continue;
+					const val = String(raw).trim();
+					if (!val || seen.has(val)) continue;
+					seen.add(val);
+					derived.push(val);
+				}
+				col.options = derived;
+			}
+			col.type = newType;
 			onTypeChange();
 		});
 
@@ -317,20 +379,78 @@ function renderColumnList(
 				optsArea.empty();
 				(col.options ?? []).forEach((opt, oi) => {
 					const optRow = optsArea.createDiv({ cls: 'wl-editcol-card-opt-row' });
+
+					// Per-option colour dot — reuses the shared picker + derivation helpers.
+					const colorDot = optRow.createEl('button', {
+						cls: 'wl-reading-col-color-dot wl-editcol-opt-color-dot',
+					});
+					colorDot.title = 'Option color';
+					const syncDot = (): void => {
+						const c = col.optionColors?.[col.options?.[oi] ?? ''];
+						if (c) {
+							colorDot.removeClass('is-unset');
+							colorDot.setCssProps({ 'background-color': deriveFillColor(c), 'border-color': deriveBorderColor(c) });
+						} else {
+							colorDot.addClass('is-unset');
+							colorDot.setCssProps({ 'background-color': '', 'border-color': '' });
+						}
+					};
+					syncDot();
+					colorDot.addEventListener('click', (e) => {
+						e.stopPropagation();
+						const key = col.options?.[oi] ?? '';
+						if (!key) return; // can't colour a blank option
+						openColorPicker({
+							anchor: colorDot,
+							container: listEl,
+							current: col.optionColors?.[key] ?? DEFAULT_FIELD_COLOR,
+							allowCustom: true,
+							onPick: (color) => {
+								if (color === null) {
+									if (col.optionColors) delete col.optionColors[key];
+								} else {
+									if (!col.optionColors) col.optionColors = {};
+									col.optionColors[key] = color;
+								}
+								syncDot();
+							},
+						});
+					});
+
 					const optInput = optRow.createEl('input', {
 						cls: 'wl-modal-input wl-editcol-card-opt-input',
 						attr: { type: 'text', value: opt, placeholder: 'Option' },
 					});
+					let prevVal = opt;
 					optInput.addEventListener('input', () => {
 						if (!col.options) col.options = [];
-						col.options[oi] = optInput.value;
+						const nextVal = optInput.value;
+						if (nextVal !== prevVal) {
+							// Keep any assigned colour attached to the renamed value.
+							if (col.optionColors) {
+								const moved = col.optionColors[prevVal];
+								if (moved !== undefined) {
+									if (nextVal) col.optionColors[nextVal] = moved;
+									delete col.optionColors[prevVal];
+								}
+							}
+							// Record the rename so row cells can be migrated at save time.
+							onOptionRename?.(col.id, prevVal, nextVal);
+						}
+						col.options[oi] = nextVal;
+						prevVal = nextVal;
 					});
 					const delOpt = optRow.createEl('button', {
 						cls: 'wl-btn wl-btn-sm wl-editcol-card-opt-del',
 						text: '×',
 						attr: { title: 'Remove this option' },
 					});
-					delOpt.addEventListener('click', () => { col.options?.splice(oi, 1); renderOpts(); });
+					delOpt.addEventListener('click', () => {
+						const key = col.options?.[oi];
+						col.options?.splice(oi, 1);
+						if (key && col.optionColors) delete col.optionColors[key];
+						renderOpts();
+					});
 				});
 				const addOpt = optsArea.createEl('button', {
 					cls: 'wl-btn wl-btn-sm wl-editcol-card-opt-add',
@@ -363,7 +483,11 @@ export class EditColumnsModal extends Modal {
 	private manager: CustomListManager;
 	private onSave: (columns: CustomListColumn[]) => Promise<void>;
 	private cols: CustomListColumn[];
+	private tabColor: string | undefined;
 	private listEl!: HTMLElement;
+	// colId → (original option value → latest value). Applied to row cells on Save
+	// only — never live, so a Cancel can't leak a rename into a later cell-edit save.
+	private optionRenames: Map<string, Map<string, string>> = new Map();
 
 	constructor(
 		app: App,
@@ -375,14 +499,19 @@ export class EditColumnsModal extends Modal {
 		this.list = list;
 		this.manager = manager;
 		this.onSave = onSave;
+		this.tabColor = list.tabColor;
 		this.cols = list.columns
 			.filter(c => !c.locked)
-			.map(c => ({ ...c, options: c.options ? [...c.options] : undefined }));
+			.map(c => ({
+				...c,
+				options: c.options ? [...c.options] : undefined,
+				optionColors: c.optionColors ? { ...c.optionColors } : undefined,
+			}));
 	}
 
 	onOpen(): void {
 		this.modalEl.addClass('wl-editcol-modal');
-		this.titleEl.setText(`Edit Columns — ${this.list.name}`);
+		this.titleEl.setText(`Table settings — ${this.list.name}`);
 		this.contentEl.addClass('wl-editcols-modal');
 		this.renderBody();
 	}
@@ -390,6 +519,8 @@ export class EditColumnsModal extends Modal {
 	private renderBody(): void {
 		this.contentEl.empty();
 		this.contentEl.addClass('wl-editcols-modal');
+
+		this.renderTabColorRow(this.contentEl);
 
 		this.listEl = this.contentEl.createDiv({ cls: 'wl-editcols-list' });
 		this.renderCols();
@@ -399,6 +530,37 @@ export class EditColumnsModal extends Modal {
 		cancelBtn.addEventListener('click', () => this.close());
 		const saveBtn = footer.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' });
 		saveBtn.addEventListener('click', () => void this.handleSave());
+	}
+
+	private renderTabColorRow(parent: HTMLElement): void {
+		const row = parent.createDiv({ cls: 'wl-editcols-tabcolor-row' });
+		row.createSpan({ cls: 'wl-editcols-tabcolor-label', text: 'Tab color' });
+
+		const dot = row.createEl('button', { cls: 'wl-reading-col-color-dot wl-editcols-tabcolor-dot' });
+
+		const sync = (): void => {
+			if (this.tabColor) {
+				dot.removeClass('is-unset');
+				dot.setCssProps({ 'background-color': this.tabColor });
+			} else {
+				dot.addClass('is-unset');
+				dot.setCssProps({ 'background-color': '' });
+			}
+		};
+		sync();
+
+		dot.title = 'Choose tab color';
+		dot.addEventListener('click', (e) => {
+			e.stopPropagation();
+			openColorPicker({
+				anchor: dot,
+				container: this.contentEl,
+				current: this.tabColor ?? DEFAULT_FIELD_COLOR,
+				allowCustom: true,
+				// Clear swatch → null → revert to the default (uncoloured) tab name.
+				onPick: (color) => { this.tabColor = color ?? undefined; sync(); },
+			});
+		});
 	}
 
 	private renderCols(): void {
@@ -424,7 +586,36 @@ export class EditColumnsModal extends Modal {
 				});
 				this.renderBody();
 			},
+			(colId, oldVal, newVal) => this.recordOptionRename(colId, oldVal, newVal),
 		);
+	}
+
+	/** Accumulates a net (original → latest) rename per option, composing
+	 *  incremental keystrokes so "A"→"Ap"→"Apple" collapses to "A"→"Apple". */
+	private recordOptionRename(colId: string, oldVal: string, newVal: string): void {
+		let m = this.optionRenames.get(colId);
+		if (!m) { m = new Map(); this.optionRenames.set(colId, m); }
+		// If some original already maps to oldVal, extend that chain; else start fresh.
+		let origKey: string | null = null;
+		for (const [orig, cur] of m) { if (cur === oldVal) { origKey = orig; break; } }
+		m.set(origKey ?? oldVal, newVal);
+	}
+
+	/** Migrates row cells from each original option value to its final value.
+	 *  Only exact matches in the renamed column are touched; orphan values that
+	 *  were never an option, and options created fresh this session (orig ''),
+	 *  are left alone. */
+	private applyOptionRenamesToRows(): void {
+		for (const [colId, m] of this.optionRenames) {
+			for (const [orig, final] of m) {
+				if (orig === '' || orig === final) continue;
+				for (const r of this.list.rows) {
+					if ((r as Record<string, unknown>)[colId] === orig) {
+						(r as Record<string, unknown>)[colId] = final;
+					}
+				}
+			}
+		}
 	}
 
 	private handleSave(): void {
@@ -438,7 +629,10 @@ export class EditColumnsModal extends Modal {
 		for (const col of this.cols) {
 			col.label = col.label.trim();
 			if (col.options) col.options = col.options.map(o => o.trim()).filter(o => o);
+			normalizeOptionColors(col);
 		}
+		this.applyOptionRenamesToRows();
+		this.list.tabColor = this.tabColor;
 		void this.onSave(this.cols).then(() => this.close());
 	}
 }
@@ -458,7 +652,11 @@ export class DefaultColumnsModal extends Modal {
 		this.plugin = plugin;
 		this.manager = new CustomListManager(app, plugin);
 		this.cols = (plugin.settings.defaultCustomColumns ?? [])
-			.map(c => ({ ...c, options: c.options ? [...c.options] : undefined }));
+			.map(c => ({
+				...c,
+				options: c.options ? [...c.options] : undefined,
+				optionColors: c.optionColors ? { ...c.optionColors } : undefined,
+			}));
 	}
 
 	onOpen(): void {
@@ -524,6 +722,7 @@ export class DefaultColumnsModal extends Modal {
 		for (const col of this.cols) {
 			col.label = col.label.trim();
 			if (col.options) col.options = col.options.map(o => o.trim()).filter(o => o);
+			normalizeOptionColors(col);
 		}
 		this.plugin.settings.defaultCustomColumns = this.cols;
 		await this.plugin.saveSettings();
@@ -772,9 +971,11 @@ export class CustomListsTab {
 			this.currentList = await this.manager.loadList(this.activeListName);
 		}
 
+		const tabColors = await this.manager.loadTabColors(this.listNames);
+
 		if (gen !== this.renderGeneration) return; // stale render
 		this.container.empty();
-		this.buildSubTabs();
+		this.buildSubTabs(tabColors);
 
 		if (this.currentList) {
 			this.buildListView(this.currentList);
@@ -788,7 +989,7 @@ export class CustomListsTab {
 		btn.addEventListener('click', () => this.promptCreateList());
 	}
 
-	private buildSubTabs(): void {
+	private buildSubTabs(tabColors: Map<string, string>): void {
 		const tabBar = this.container.createDiv({ cls: 'wl-cl-sub-tabs' });
 		let dragFromName: string | null = null;
 
@@ -799,6 +1000,8 @@ export class CustomListsTab {
 			tab.setAttribute('draggable', 'true');
 
 			const nameSpan = tab.createSpan({ cls: 'wl-cl-sub-tab-name', text: name });
+			const tabColor = tabColors.get(name);
+			if (tabColor) nameSpan.style.color = tabColor;
 			nameSpan.addEventListener('dblclick', (e) => {
 				e.stopPropagation();
 				this.startRenameTab(tab, nameSpan, name);
@@ -878,7 +1081,12 @@ export class CustomListsTab {
 	private promptCreateList(): void {
 		new ListNameModal(this.plugin.app, this.listNames, (trimmed) => {
 			const defaultCols = (this.plugin.settings.defaultCustomColumns ?? [])
-				.map(c => ({ ...c, id: c.id, options: c.options ? [...c.options] : undefined }));
+				.map(c => ({
+					...c,
+					id: c.id,
+					options: c.options ? [...c.options] : undefined,
+					optionColors: c.optionColors ? { ...c.optionColors } : undefined,
+				}));
 
 			const newList: CustomList = { name: trimmed, columns: defaultCols, rows: [], notes: '' };
 
@@ -944,10 +1152,14 @@ export class CustomListsTab {
 
 		// Export
 		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Export' })
-			.addEventListener('click', () => void this.exportToClipboard(list));
+			.addEventListener('click', () => this.exportToClipboard(list));
 
-		// Edit Columns
-		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Edit columns' })
+		// Import
+		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Import' })
+			.addEventListener('click', () => this.openImport(list));
+
+		// Table settings
+		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Table settings' })
 			.addEventListener('click', () => {
 				new EditColumnsModal(
 					this.plugin.app,
@@ -1040,23 +1252,45 @@ export class CustomListsTab {
 		return panel;
 	}
 
-	private async exportToClipboard(list: CustomList): Promise<void> {
+	/** Gather the export table (headers + plain string cells) once, reused by every format. */
+	private gatherExportData(list: CustomList): { headers: string[]; rows: string[][] } {
 		const nonLockedCols = list.columns.filter(c => !c.locked);
 		const allCols = [{ id: '#', label: '#' }, { id: 'name', label: 'Name' }, ...nonLockedCols];
-		const header = '| ' + allCols.map(c => c.label).join(' | ') + ' |';
-		const sep = '| ' + allCols.map(() => '---').join(' | ') + ' |';
-		const rows = this.getFilteredSortedRows(list).map((row, i) => {
-			const cells = allCols.map(c => {
-				if (c.id === '#') return String(i + 1);
-				const val = (row as Record<string, string | number | null | undefined>)[c.id];
-				return val !== undefined && val !== null ? String(val) : '';
-			});
-			return '| ' + cells.join(' | ') + ' |';
-		});
-		try {
-			await navigator.clipboard.writeText([header, sep, ...rows].join('\n'));
-			new Notice('Copied to clipboard!');
-		} catch { new Notice('Failed to copy to clipboard.'); }
+		const headers = allCols.map(c => c.label);
+		const rows = this.getFilteredSortedRows(list).map((row, i) => allCols.map(c => {
+			if (c.id === '#') return String(i + 1);
+			const val = (row as Record<string, string | number | null | undefined>)[c.id];
+			return val !== undefined && val !== null ? String(val) : '';
+		}));
+		return { headers, rows };
+	}
+
+	private buildMarkdown(data: { headers: string[]; rows: string[][] }): string {
+		const header = '| ' + data.headers.join(' | ') + ' |';
+		const sep = '| ' + data.headers.map(() => '---').join(' | ') + ' |';
+		const rows = data.rows.map(cells => '| ' + cells.join(' | ') + ' |');
+		return [header, sep, ...rows].join('\n');
+	}
+
+	private buildTsv(data: { headers: string[]; rows: string[][] }): string {
+		return [data.headers, ...data.rows].map(cells => cells.join('\t')).join('\n');
+	}
+
+	private exportToClipboard(list: CustomList): void {
+		new ExportFormatModal(this.plugin.app, (format) => {
+			const data = this.gatherExportData(list);
+			const text = format === 'tsv' ? this.buildTsv(data) : this.buildMarkdown(data);
+			navigator.clipboard.writeText(text)
+				.then(() => new Notice('Copied to clipboard!'))
+				.catch(() => new Notice('Failed to copy to clipboard.'));
+		}).open();
+	}
+
+	private openImport(list: CustomList): void {
+		new ImportListModal(this.plugin.app, list, this.manager, async () => {
+			await this.manager.saveList(list);
+			await this.render();
+		}).open();
 	}
 
 	private getFilteredSortedRows(list: CustomList): CustomListRow[] {
@@ -1094,12 +1328,28 @@ export class CustomListsTab {
 		// Header
 		const thead = table.createDiv({ cls: 'wl-cl-thead' });
 		const hRow = thead.createDiv({ cls: 'wl-cl-tr wl-cl-tr-header' });
-		hRow.createDiv({ cls: 'wl-cl-th wl-cl-th-tick' }); // tick column header
+		// Tick column header: two-state select-all toggle over the visible rows.
+		const tickTh = hRow.createDiv({ cls: 'wl-cl-th wl-cl-th-tick' });
+		const allChecked = visibleRows.length > 0 && visibleRows.every(r => r.checked === true);
+		const selectAllBtn = tickTh.createDiv({ cls: `wl-cl-tick-btn${allChecked ? ' is-checked' : ''}` });
+		selectAllBtn.title = allChecked ? 'Uncheck all visible rows' : 'Check all visible rows';
+		selectAllBtn.textContent = allChecked ? '✓' : '○';
+		selectAllBtn.addEventListener('click', () => {
+			// Only affect currently visible (filtered/searched) rows.
+			const visibleIds = new Set(visibleRows.map(r => r.id));
+			const next = !allChecked;
+			for (const r of list.rows) if (visibleIds.has(r.id)) r.checked = next;
+			void this.manager.saveList(list).then(() => { container.empty(); this.buildTable(container, list, countEl); });
+		});
 		hRow.createDiv({ cls: 'wl-cl-th wl-cl-th-num', text: '#' });
-		hRow.createDiv({ cls: 'wl-cl-th', text: 'Name' });
+		const nameTh = hRow.createDiv({ cls: 'wl-cl-th', text: 'Name' });
+		nameTh.dataset.wlCol = '__name';
+		this.addResizeHandle(nameTh, '__name', list, table);
 		for (const col of nonLockedCols) {
 			const th = hRow.createDiv({ cls: 'wl-cl-th' });
+			th.dataset.wlCol = col.id;
 			th.createSpan({ text: col.label });
+			this.addResizeHandle(th, col.id, list, table);
 			if (col.type === 'number' && col.autoTime) {
 				const refreshBtn = th.createSpan({ cls: 'wl-cl-autotime-refresh', text: '↻' });
 				refreshBtn.title = 'Refresh remaining time values';
@@ -1139,10 +1389,12 @@ export class CustomListsTab {
 			tr.createDiv({ cls: 'wl-cl-td wl-cl-td-num', text: String(displayIdx + 1) });
 
 			const nameCell = tr.createDiv({ cls: 'wl-cl-td wl-cl-td-name' });
+			nameCell.dataset.wlCol = '__name';
 			this.renderNameCell(nameCell, row, list, countEl, nonLockedCols, container);
 
 			for (const col of nonLockedCols) {
 				const td = tr.createDiv({ cls: 'wl-cl-td' });
+				td.dataset.wlCol = col.id;
 				this.renderCustomCell(td, row, col, list);
 			}
 
@@ -1197,6 +1449,9 @@ export class CustomListsTab {
 			});
 		});
 
+		// Apply any persisted column widths (switches the table into resizable mode).
+		this.applyColumnWidths(table, list);
+
 		// Add row
 		const addRowEl = container.createDiv({ cls: 'wl-cl-add-row' });
 		addRowEl.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-success', text: '+ add row' })
@@ -1213,6 +1468,101 @@ export class CustomListsTab {
 					}, 0);
 				});
 			});
+	}
+
+	// ── Column resize (Excel-style) ─────────────────────────────────────────────
+
+	/** True when the Name column or any custom column has an explicit width set. */
+	private isTableResizable(list: CustomList): boolean {
+		return list.nameWidth !== undefined || list.columns.some((c) => !c.locked && c.width !== undefined);
+	}
+
+	private getColWidth(list: CustomList, key: string): number | undefined {
+		if (key === '__name') return list.nameWidth;
+		return list.columns.find((c) => c.id === key)?.width;
+	}
+
+	private setColWidth(list: CustomList, key: string, width: number): void {
+		if (key === '__name') { list.nameWidth = width; return; }
+		const col = list.columns.find((c) => c.id === key);
+		if (col) col.width = width;
+	}
+
+	/**
+	 * Applies persisted widths to every resizable column. Once any width exists the
+	 * table enters explicit-width mode (no flex redistribution, horizontal scroll);
+	 * resizable columns without a stored width fall back to a default fixed width so
+	 * they cannot compress to absorb a neighbour's resize. Lists never resized keep
+	 * the original flex layout untouched.
+	 */
+	private applyColumnWidths(table: HTMLElement, list: CustomList): void {
+		if (!this.isTableResizable(list)) {
+			table.removeClass('wl-cl-table-resizable');
+			return;
+		}
+		table.addClass('wl-cl-table-resizable');
+		const apply = (key: string, width: number | undefined): void => {
+			const w = width ?? DEFAULT_COL_WIDTH;
+			table.querySelectorAll<HTMLElement>(`[data-wl-col="${key}"]`).forEach((el) => {
+				el.addClass('wl-cl-col-fixed');
+				el.setCssProps({ '--wl-cl-cw': `${w}px` });
+			});
+		};
+		apply('__name', list.nameWidth);
+		for (const col of list.columns) {
+			if (col.locked) continue;
+			apply(col.id, col.width);
+		}
+	}
+
+	/**
+	 * Pins every resizable column to its current rendered width. Called the first
+	 * time a handle is grabbed so switching into explicit-width mode does not make
+	 * the columns jump.
+	 */
+	private pinCurrentWidths(table: HTMLElement, list: CustomList): void {
+		const measure = (key: string): number => {
+			const el = table.querySelector<HTMLElement>(`.wl-cl-th[data-wl-col="${key}"]`);
+			return el ? Math.round(el.getBoundingClientRect().width) : DEFAULT_COL_WIDTH;
+		};
+		if (list.nameWidth === undefined) list.nameWidth = measure('__name');
+		for (const col of list.columns) {
+			if (col.locked || col.width !== undefined) continue;
+			col.width = measure(col.id);
+		}
+	}
+
+	/** Adds a right-edge drag handle to a resizable header cell (desktop only). */
+	private addResizeHandle(th: HTMLElement, key: string, list: CustomList, table: HTMLElement): void {
+		if (Platform.isMobile) return;
+		th.addClass('wl-cl-th-resizable');
+		const handle = th.createDiv({ cls: 'wl-cl-col-resize' });
+		handle.addEventListener('mousedown', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			// Pin every column to its current width, then switch to explicit-width mode.
+			this.pinCurrentWidths(table, list);
+			this.applyColumnWidths(table, list);
+			const startX = e.clientX;
+			const startWidth = this.getColWidth(list, key) ?? DEFAULT_COL_WIDTH;
+			const onMove = (ev: MouseEvent): void => {
+				const newWidth = Math.max(MIN_COL_WIDTH, Math.round(startWidth + (ev.clientX - startX)));
+				this.setColWidth(list, key, newWidth);
+				table.querySelectorAll<HTMLElement>(`[data-wl-col="${key}"]`).forEach((el) => {
+					el.setCssProps({ '--wl-cl-cw': `${newWidth}px` });
+				});
+			};
+			const onUp = (): void => {
+				activeDocument.removeEventListener('mousemove', onMove);
+				activeDocument.removeEventListener('mouseup', onUp);
+				activeDocument.body.removeClass('wl-cl-col-resizing');
+				// Persist only on drag end.
+				void this.manager.saveList(list);
+			};
+			activeDocument.addEventListener('mousemove', onMove);
+			activeDocument.addEventListener('mouseup', onUp);
+			activeDocument.body.addClass('wl-cl-col-resizing');
+		});
 	}
 
 	// ── Cell rendering ─────────────────────────────────────────────────────────
@@ -1402,8 +1752,18 @@ export class CustomListsTab {
 
 		if (col.type === 'select') {
 			const strVal = String(val ?? '');
-			if (strVal) cell.createSpan({ cls: 'wl-cl-select-badge', text: strVal });
-			else cell.createSpan({ cls: 'wl-cl-cell-empty', text: '—' });
+			if (strVal) {
+				const badge = cell.createSpan({ cls: 'wl-cl-select-badge', text: strVal });
+				const optColor = col.optionColors?.[strVal];
+				// No colour assigned → leave the badge exactly as the default CSS renders it.
+				if (optColor) {
+					badge.style.backgroundColor = deriveFillColor(optColor);
+					badge.style.borderColor = deriveBorderColor(optColor);
+					badge.style.color = deriveBorderColor(optColor);
+				}
+			} else {
+				cell.createSpan({ cls: 'wl-cl-cell-empty', text: '—' });
+			}
 		} else {
 			const strVal = val !== undefined && val !== null && val !== '' ? String(val) : '';
 			if (strVal) {
@@ -1415,7 +1775,44 @@ export class CustomListsTab {
 			}
 		}
 
-		cell.addEventListener('click', () => this.startCustomEdit(cell, row, col, list), { once: true });
+		// Select cells open the shared dropdown directly on a single click (the
+		// native <select> needed a second click to open). Other types enter the
+		// inline editor.
+		cell.addEventListener('click', () => {
+			if (col.type === 'select') this.openSelectDropdown(cell, row, col, list);
+			else this.startCustomEdit(cell, row, col, list);
+		}, { once: true });
+	}
+
+	/** Opens the shared status-style dropdown for a select cell, colouring each
+	 *  option's dot from the column's per-option colours (unset → default dot). */
+	private openSelectDropdown(
+		cell: HTMLElement,
+		row: CustomListRow,
+		col: CustomListColumn,
+		list: CustomList,
+	): void {
+		const currentVal = String((row as Record<string, string | number | undefined>)[col.id] ?? '');
+		const options = [
+			{ value: '', label: '—' },
+			...(col.options ?? []).map((opt) => ({ value: opt, label: opt })),
+		];
+		openStatusDropdown({
+			anchor: cell,
+			container: activeDocument.body,
+			options,
+			getOptionColor: (value) => col.optionColors?.[value] ?? null,
+			onSelect: (value) => {
+				if (value !== currentVal) {
+					(row as Record<string, unknown>)[col.id] = value === '' ? undefined : value;
+					void this.manager.saveList(list).then(() => this.renderCustomCell(cell, row, col, list));
+				} else {
+					this.renderCustomCell(cell, row, col, list);
+				}
+			},
+			// Re-render to re-attach the cell's (once-only) click handler.
+			onClose: () => this.renderCustomCell(cell, row, col, list),
+		});
 	}
 
 	private startCustomEdit(
@@ -1463,23 +1860,9 @@ export class CustomListsTab {
 			if (!cancel && navDirection) this.navigateCell(cell, navDirection);
 		};
 
-		if (col.type === 'select') {
-			const select = cell.createEl('select', { cls: 'wl-select wl-cl-cell-select' });
-			select.createEl('option', { value: '', text: '—' });
-			for (const opt of (col.options ?? [])) {
-				const o = select.createEl('option', { value: opt, text: opt });
-				if (currentVal === opt) o.selected = true;
-			}
-			getValue = () => select.value;
-			select.focus();
-			select.addEventListener('change', () => void doSave(false));
-			select.addEventListener('blur', () => void doSave(false));
-			select.addEventListener('keydown', (e) => {
-				if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); void doSave(true); }
-				else if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); navDirection = 'shift-tab'; void doSave(false); }
-				else if (e.key === 'Tab') { e.preventDefault(); navDirection = 'tab'; void doSave(false); }
-			});
-		} else if (col.type === 'number') {
+		// Note: select cells never reach startCustomEdit — they open the shared
+		// dropdown directly (see openSelectDropdown).
+		if (col.type === 'number') {
 			const input = cell.createEl('input', {
 				cls: 'wl-cl-cell-input',
 				attr: { type: 'number', value: currentVal !== undefined && currentVal !== null ? String(currentVal) : '' },
@@ -1614,5 +1997,295 @@ export class CustomListsTab {
 				target?.click();
 			}, 50);
 		});
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ExportFormatModal — minimal chooser for the Custom Lists export format
+// ─────────────────────────────────────────────────────────────────────────────
+
+export class ExportFormatModal extends Modal {
+	private onChoose: (format: 'tsv' | 'md') => void;
+
+	constructor(app: App, onChoose: (format: 'tsv' | 'md') => void) {
+		super(app);
+		this.onChoose = onChoose;
+	}
+
+	onOpen(): void {
+		this.titleEl.setText('Export list');
+		this.contentEl.addClass('wl-export-modal');
+
+		this.contentEl.createDiv({
+			cls: 'wl-settings-info',
+			text: 'TSV pastes into spreadsheets as columns. Markdown produces a table you can paste into notes.',
+		});
+
+		const row = this.contentEl.createDiv({ cls: 'wl-modal-btn-row' });
+		const tsvBtn = row.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Copy as TSV' });
+		tsvBtn.addEventListener('click', () => { this.close(); this.onChoose('tsv'); });
+		const mdBtn = row.createEl('button', { cls: 'wl-btn', text: 'Copy as Markdown' });
+		mdBtn.addEventListener('click', () => { this.close(); this.onChoose('md'); });
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ImportListModal — paste TSV from a spreadsheet, preview, and append rows
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Result of analysing the pasted TSV against the list's current columns. */
+interface ImportAnalysis {
+	header: string[];
+	dataRows: string[][];
+	rowCount: number;
+	/** Max column count across every pasted line (header + data). */
+	totalCols: number;
+	/** How many existing data columns there are (Name + non-locked columns). */
+	existingCount: number;
+	/** New text columns that will be auto-created to match wider pasted data. */
+	newColCount: number;
+	/** Per select column: distinct new option values that will be added. */
+	selectAdditions: { label: string; values: string[] }[];
+	/** Labels of number columns receiving non-numeric values (blocking). */
+	numberConflicts: string[];
+}
+
+export class ImportListModal extends Modal {
+	private list: CustomList;
+	private manager: CustomListManager;
+	private onApplied: () => Promise<void>;
+
+	private textarea!: HTMLTextAreaElement;
+	private previewEl!: HTMLElement;
+	private addBtn!: HTMLButtonElement;
+	private firstRowIsHeader = true;
+
+	constructor(app: App, list: CustomList, manager: CustomListManager, onApplied: () => Promise<void>) {
+		super(app);
+		this.list = list;
+		this.manager = manager;
+		this.onApplied = onApplied;
+	}
+
+	onOpen(): void {
+		this.titleEl.setText('Import rows');
+		this.contentEl.addClass('wl-import-modal');
+
+		this.contentEl.createDiv({
+			cls: 'wl-settings-info',
+			text: 'Paste tab-separated values copied from a spreadsheet (Google Sheets / Excel). Rows are appended to the end of the list. Do not include an index/# column — rows are numbered automatically.',
+		});
+
+		this.textarea = this.contentEl.createEl('textarea', {
+			cls: 'wl-modal-textarea wl-import-textarea',
+			attr: { placeholder: 'Paste here…', rows: '8' },
+		});
+		this.textarea.addEventListener('input', () => this.refreshPreview());
+
+		const headerToggleRow = this.contentEl.createDiv({ cls: 'wl-import-header-toggle' });
+		const headerCheckbox = headerToggleRow.createEl('input', {
+			cls: 'wl-import-header-checkbox',
+			attr: { type: 'checkbox', id: 'wl-import-header-cb' },
+		});
+		headerCheckbox.checked = this.firstRowIsHeader;
+		headerToggleRow.createEl('label', {
+			text: 'First row is a header (column names, not imported as data)',
+			attr: { for: 'wl-import-header-cb' },
+		});
+		headerCheckbox.addEventListener('change', () => {
+			this.firstRowIsHeader = headerCheckbox.checked;
+			this.refreshPreview();
+		});
+
+		this.previewEl = this.contentEl.createDiv({ cls: 'wl-import-preview' });
+
+		const btnRow = this.contentEl.createDiv({ cls: 'wl-modal-btn-row' });
+		this.addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add' });
+		this.addBtn.addEventListener('click', () => void this.apply());
+		btnRow.createEl('button', { cls: 'wl-btn', text: 'Cancel' })
+			.addEventListener('click', () => this.close());
+
+		this.refreshPreview();
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+
+	/** Splits the pasted text into header + data rows (tab-delimited, newline-separated). */
+	private parse(): { header: string[]; dataRows: string[][] } | null {
+		const lines = this.textarea.value
+			.replace(/\r\n?/g, '\n')
+			.split('\n')
+			.filter(l => l.length > 0);
+		if (lines.length === 0) return null;
+		if (!this.firstRowIsHeader) {
+			// Every line is a data row; columns map purely positionally and no
+			// line is consumed as a header (lets a single lone row be imported).
+			return {
+				header: [],
+				dataRows: lines.map(l => l.split('\t').map(c => c.trim())),
+			};
+		}
+		const [headerLine, ...rest] = lines;
+		return {
+			header: headerLine!.split('\t').map(c => c.trim()),
+			dataRows: rest.map(l => l.split('\t').map(c => c.trim())),
+		};
+	}
+
+	/** The positional data columns the import maps onto: Name first, then non-locked
+	 *  columns — the exact inverse of the export column set (minus the # column). */
+	private nonLockedColumns(): CustomListColumn[] {
+		return this.list.columns.filter(c => !c.locked);
+	}
+
+	private analyse(): ImportAnalysis | null {
+		const parsed = this.parse();
+		if (!parsed || parsed.dataRows.length === 0) return null;
+
+		const nonLocked = this.nonLockedColumns();
+		const existingCount = 1 + nonLocked.length; // Name + non-locked columns
+		const totalCols = Math.max(
+			parsed.header.length,
+			...parsed.dataRows.map(r => r.length),
+		);
+		const newColCount = Math.max(0, totalCols - existingCount);
+
+		const numberConflicts = new Set<string>();
+		const selectNewValues = new Map<number, { label: string; values: Set<string> }>();
+
+		for (const row of parsed.dataRows) {
+			for (let i = 1; i < row.length && i < existingCount; i++) {
+				const col = nonLocked[i - 1]!; // i === 0 is Name (text, no conflict)
+				const cell = row[i]!;
+				if (cell === '') continue;
+				if (col.type === 'number') {
+					if (!Number.isFinite(Number(cell))) numberConflicts.add(col.label || '(unnamed)');
+				} else if (col.type === 'select') {
+					const known = new Set(col.options ?? []);
+					if (!known.has(cell)) {
+						let entry = selectNewValues.get(i);
+						if (!entry) { entry = { label: col.label || '(unnamed)', values: new Set() }; selectNewValues.set(i, entry); }
+						entry.values.add(cell);
+					}
+				}
+			}
+		}
+
+		return {
+			header: parsed.header,
+			dataRows: parsed.dataRows,
+			rowCount: parsed.dataRows.length,
+			totalCols,
+			existingCount,
+			newColCount,
+			selectAdditions: [...selectNewValues.values()].map(e => ({ label: e.label, values: [...e.values] })),
+			numberConflicts: [...numberConflicts],
+		};
+	}
+
+	private refreshPreview(): void {
+		this.previewEl.empty();
+		const a = this.analyse();
+
+		if (!a) {
+			this.addBtn.disabled = true;
+			this.previewEl.createDiv({ cls: 'wl-import-counts', text: 'Paste TSV data to preview the import.' });
+			return;
+		}
+
+		this.previewEl.createDiv({
+			cls: 'wl-import-counts',
+			text: `${a.rowCount} row${a.rowCount === 1 ? '' : 's'} × ${a.totalCols} column${a.totalCols === 1 ? '' : 's'} detected.`,
+		});
+
+		const blocking = a.numberConflicts.length > 0;
+
+		if (a.newColCount > 0) {
+			this.previewEl.createDiv({
+				cls: 'wl-import-banner',
+				text: `⚠ ${a.newColCount} new text column${a.newColCount === 1 ? '' : 's'} will be created to match the pasted data.`,
+			});
+		}
+
+		for (const sel of a.selectAdditions) {
+			this.previewEl.createDiv({
+				cls: 'wl-import-banner',
+				text: `⚠ Select column "${sel.label}" will gain ${sel.values.length} new option${sel.values.length === 1 ? '' : 's'}: ${sel.values.join(', ')}.`,
+			});
+		}
+
+		if (a.totalCols < a.existingCount) {
+			this.previewEl.createDiv({
+				cls: 'wl-import-banner',
+				text: '⚠ Fewer columns than the list — missing trailing cells will be left empty.',
+			});
+		}
+
+		for (const label of a.numberConflicts) {
+			this.previewEl.createDiv({
+				cls: 'wl-import-banner-error',
+				text: `⛔ Number column "${label}" received non-numeric values. Reorder your columns or change the column type, then paste again.`,
+			});
+		}
+
+		this.addBtn.disabled = blocking;
+	}
+
+	private async apply(): Promise<void> {
+		const a = this.analyse();
+		if (!a || a.numberConflicts.length > 0) return;
+
+		const list = this.list;
+		const nonLocked = this.nonLockedColumns();
+
+		// 1. Auto-create the missing trailing text columns.
+		const newCols: CustomListColumn[] = [];
+		for (let pos = a.existingCount; pos < a.totalCols; pos++) {
+			const label = (a.header[pos] ?? '').trim() || `Column ${pos + 1}`;
+			const col: CustomListColumn = {
+				id: this.manager.generateColId(list.columns),
+				label,
+				type: 'text',
+				bold: false,
+				italic: false,
+			};
+			list.columns.push(col);
+			newCols.push(col);
+		}
+
+		// 2. Positional slots: index 0 = Name, then non-locked columns, then new columns.
+		const slots: (CustomListColumn | 'name')[] = ['name', ...nonLocked, ...newCols];
+
+		// 3. Add any new select options encountered (text only, no colour).
+		for (const sel of a.selectAdditions) {
+			const col = nonLocked.find(c => (c.label || '(unnamed)') === sel.label && c.type === 'select');
+			if (!col) continue;
+			col.options = [...(col.options ?? [])];
+			for (const v of sel.values) if (!col.options.includes(v)) col.options.push(v);
+		}
+
+		// 4. Append the parsed rows as NEW rows (never touch existing rows).
+		for (const cells of a.dataRows) {
+			const row: CustomListRow = { id: this.manager.generateRowId(list.rows), name: '' };
+			list.rows.push(row); // push first so the next generated id stays unique
+			for (let i = 0; i < a.totalCols; i++) {
+				const slot = slots[i];
+				if (!slot) continue;
+				const cell = (cells[i] ?? '').trim();
+				if (slot === 'name') { row.name = cell; continue; }
+				if (cell === '') { row[slot.id] = undefined; continue; }
+				row[slot.id] = slot.type === 'number' ? Number(cell) : cell;
+			}
+		}
+
+		this.close();
+		await this.onApplied();
+		new Notice(`Imported ${a.rowCount} row${a.rowCount === 1 ? '' : 's'}.`);
 	}
 }

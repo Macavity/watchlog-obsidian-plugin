@@ -1,23 +1,31 @@
-import { App, Modal } from 'obsidian';
+import { App, Modal, Notice, setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, Season, TagDefinition } from './types';
-import { formatTime, formatDateDisplay, parseDateInput, getThemedColor, getDisplayPoster } from './types';
+import { formatTime, formatDateDisplay, parseDateInput, getThemedColor, getDisplayPoster, getDisplayTrailer, getApiGroupForType, getDisplayCredits, isCreditsUnfetched, needsCreditsFetch, CREDITS_NONE } from './types';
 import { appendNoteLinkButton } from './NoteLinkButton';
 import { EditTitleModal } from './EditTitleModal';
 import { ConfirmModal } from './ConfirmModal';
 import { renderCommunityRating, maybeAutoRefreshCommunityRating } from './CommunityRating';
+import { openStatusDropdown } from './StatusDropdown';
+
+// Titles whose director/cast backfill is currently in flight — de-dupes rapid
+// modal re-opens (same pattern as CommunityRating's in-flight set).
+const creditsBackfillInFlight = new Set<string>();
 
 export class TitleDetailModal extends Modal {
 	private plugin: WatchLogPlugin;
 	private dataManager: DataManager;
 	private title: WatchLogTitle;
 	private onChanged?: () => void;
+	private onPersonClick?: (name: string) => void;
 	private changed = false;
+	private notesEditedByUser = false;
 	private collapsedSeasons: Set<number> = new Set();
 
 	// Section anchors so we can re-render incrementally
 	private statsBoxEl: HTMLElement | null = null;
+	private creditsEl: HTMLElement | null = null;
 	private episodesSectionEl: HTMLElement | null = null;
 	private starsWrapEl: HTMLElement | null = null;
 
@@ -26,12 +34,14 @@ export class TitleDetailModal extends Modal {
 		plugin: WatchLogPlugin,
 		title: WatchLogTitle,
 		onChanged?: () => void,
+		onPersonClick?: (name: string) => void,
 	) {
 		super(app);
 		this.plugin = plugin;
 		this.dataManager = plugin.dataManager;
 		this.title = title;
 		this.onChanged = onChanged;
+		this.onPersonClick = onPersonClick;
 		this.collapsedSeasons = this.dataManager.getCollapsedSeasonsForTitle(title.id);
 	}
 
@@ -81,6 +91,10 @@ export class TitleDetailModal extends Modal {
 	// ── Header ────────────────────────────────────────────────────────────────
 	private renderHeader(parent: HTMLElement): void {
 		const header = parent.createDiv({ cls: 'wl-detail-header' });
+
+		// Cover on the left, mirroring ReadingTab's in-flow aspect-ratio cover box.
+		this.renderCover(header);
+
 		const left = header.createDiv({ cls: 'wl-detail-header-left' });
 		left.createEl('h2', { cls: 'wl-detail-title', text: this.title.title });
 
@@ -119,8 +133,105 @@ export class TitleDetailModal extends Modal {
 		const statusWrap = badgeRow.createSpan({ cls: 'wl-reading-detail-status-wrap' });
 		this.renderStatusBadge(statusWrap);
 
-		this.statsBoxEl = header.createDiv({ cls: 'wl-detail-stats-box' });
+		this.statsBoxEl = left.createDiv({ cls: 'wl-detail-stats-box' });
 		this.renderStatsBox();
+
+		// Director / Cast rows directly below the stats row. Missing fields kick
+		// off the one-time lazy backfill; the section re-renders when it lands.
+		this.creditsEl = left.createDiv({ cls: 'wl-detail-credits' });
+		this.renderCreditsSection();
+		this.maybeBackfillCredits();
+	}
+
+	// ── Credits (director / cast) ─────────────────────────────────────────────
+	private renderCreditsSection(): void {
+		if (!this.creditsEl) return;
+		this.creditsEl.empty();
+		renderCreditsRows(
+			this.creditsEl,
+			this.title,
+			this.onPersonClick
+				? (name) => {
+					this.close();
+					this.onPersonClick!(name);
+				}
+				: undefined,
+		);
+	}
+
+	/**
+	 * One-time director/cast backfill for titles that predate the fields. Fetches
+	 * from the title's stored IMDb link, then persists through the normal update
+	 * path (data.json + markdown frontmatter in the same operation). A failed or
+	 * empty fetch marks the fields 'none' so no later open re-attempts it.
+	 */
+	private maybeBackfillCredits(): void {
+		const t = this.dataManager.getTitle(this.title.id);
+		if (!t || !needsCreditsFetch(t) || creditsBackfillInFlight.has(t.id)) return;
+		creditsBackfillInFlight.add(t.id);
+		void (async () => {
+			try {
+				const fetched = await this.plugin.apiService.fetchCredits(
+					t,
+					this.plugin.settings.activeApi ?? 'OMDb',
+				);
+				// Only absent fields are filled; fields that already hold data (or a
+				// 'none' marker) are kept as-is.
+				const director = isCreditsUnfetched(t.director) ? (fetched?.director ?? [CREDITS_NONE]) : t.director!;
+				const cast = isCreditsUnfetched(t.cast) ? (fetched?.cast ?? [CREDITS_NONE]) : t.cast!;
+				await this.dataManager.updateCredits(t.id, director, cast);
+			} catch {
+				// Persistence failed — fields stay unfetched, so the next open retries.
+			} finally {
+				creditsBackfillInFlight.delete(t.id);
+			}
+			this.refreshTitle();
+			this.renderCreditsSection();
+		})();
+	}
+
+	// Cover box mirroring the Cards view: shows the title's poster when one is
+	// available (manual or auto-fetched), otherwise the type-colored letter
+	// placeholder — same resolution the card uses, so the modal reflects the card
+	// cover. The box reserves its aspect-ratio space from first paint (no shift).
+	private renderCover(parent: HTMLElement): void {
+		const cover = parent.createDiv({ cls: 'wl-detail-cover' });
+		const typeDef = this.getTagDef(this.title.type, this.plugin.settings.types);
+		const typeColor = typeDef
+			? getThemedColor(this.title.type, typeDef.color, this.plugin.settings.colorTheme)
+			: '#888780';
+
+		const placeholder = cover.createDiv({ cls: 'wl-detail-cover-placeholder' });
+		placeholder.style.backgroundColor = typeColor;
+		const letter = (this.title.title.trim().charAt(0) || '?').toUpperCase();
+		placeholder.createSpan({ text: letter });
+
+		const img = cover.createEl('img', { cls: 'wl-detail-cover-img' });
+		img.alt = this.title.title;
+
+		const showImg = (url: string): void => {
+			img.src = url;
+			cover.addClass('has-poster');
+		};
+		const showPlaceholder = (): void => {
+			cover.removeClass('has-poster');
+		};
+
+		const display = getDisplayPoster(this.title);
+		const isManual = !!(this.title.manualPosterUrl && this.title.manualPosterUrl.trim() !== '');
+		if (display && display.startsWith('http')) {
+			showImg(display);
+			img.onerror = () => {
+				showPlaceholder();
+				if (!isManual) void this.dataManager.updatePosterUrl(this.title.id, 'none');
+			};
+		} else if (!isManual && this.title.posterUrl === '') {
+			placeholder.addClass('is-loading');
+			void this.plugin.posterService?.enqueue(this.title).then((url) => {
+				placeholder.removeClass('is-loading');
+				if (url) showImg(url);
+			});
+		}
 	}
 
 	private renderStatsBox(): void {
@@ -297,10 +408,79 @@ export class TitleDetailModal extends Modal {
 				toRemove.parentNode?.removeChild(toRemove);
 			}
 			renderCommunityRating(wrap, this.plugin, this.title.id, rerenderCommunity);
+			this.renderTrailerControl(wrap);
 			this.refreshTitle();
 		};
 		renderCommunityRating(wrap, this.plugin, this.title.id, rerenderCommunity);
+		// Trailer sits at the tail of the row: rating badge → refresh → YouTube.
+		this.renderTrailerControl(wrap);
 		maybeAutoRefreshCommunityRating(this.plugin, this.title.id, rerenderCommunity);
+	}
+
+	/** Appends the trailer control (its own container) to the rating row. */
+	private renderTrailerControl(parent: HTMLElement): void {
+		const container = parent.createSpan({ cls: 'wl-trailer-control' });
+		this.paintTrailerControl(container);
+	}
+
+	/**
+	 * Paints the trailer control into its container:
+	 *  - has a trailer  → clickable YouTube icon (opens externally), no refresh.
+	 *  - no trailer ('' or 'none') → a refresh button that re-fetches from source.
+	 * Re-read from the store so an override saved via the edit modal is reflected.
+	 */
+	private paintTrailerControl(container: HTMLElement): void {
+		container.empty();
+		const title = this.dataManager.getTitle(this.title.id) ?? this.title;
+		const url = getDisplayTrailer(title);
+		if (url) {
+			const btn = container.createEl('button', {
+				cls: 'wl-trailer-btn',
+				attr: { type: 'button', title: 'Watch trailer on YouTube', 'aria-label': 'Watch trailer on YouTube' },
+			});
+			setIcon(btn, 'youtube');
+			btn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				window.open(url, '_blank');
+			});
+			return;
+		}
+		const refreshBtn = container.createEl('button', {
+			cls: 'wl-community-refresh wl-trailer-refresh',
+			attr: { type: 'button', title: 'Fetch trailer', 'aria-label': 'Fetch trailer' },
+		});
+		setIcon(refreshBtn, 'refresh-cw');
+		refreshBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			void this.refreshTrailer(refreshBtn, container);
+		});
+	}
+
+	/**
+	 * Re-fetches the trailer from the title's source (same path as add-time). On a
+	 * hit it stores the URL and repaints the control (now the YouTube icon); on a
+	 * miss it marks the trailer 'none', notifies, and keeps the refresh button.
+	 */
+	private async refreshTrailer(btn: HTMLElement, container: HTMLElement): Promise<void> {
+		const title = this.dataManager.getTitle(this.title.id);
+		if (!title) return;
+		btn.addClass('is-loading');
+		try {
+			const animeSource = this.plugin.settings.animeApiSource ?? 'jikan';
+			const group = getApiGroupForType(title.type, this.plugin.settings.typeApiMapping);
+			const url = await this.plugin.apiService.fetchTrailer(title, animeSource, group);
+			const hit = !!url && url !== 'none';
+			this.dataManager.updateTrailerUrl(title.id, hit ? url : 'none');
+			if (hit) {
+				this.paintTrailerControl(container);
+			} else {
+				new Notice('No trailer found');
+				btn.removeClass('is-loading');
+			}
+		} catch {
+			new Notice('No trailer found');
+			btn.removeClass('is-loading');
+		}
 	}
 
 	private renderStars(): void {
@@ -338,8 +518,25 @@ export class TitleDetailModal extends Modal {
 			textarea.setCssProps({ height: 'auto' });
 			textarea.setCssProps({ height: `${textarea.scrollHeight}px` });
 		};
-		textarea.addEventListener('input', autoResize);
+		textarea.addEventListener('input', () => {
+			this.notesEditedByUser = true;
+			autoResize();
+		});
 		window.setTimeout(autoResize, 0);
+
+		// Pull the on-disk `## Notes` body into the field so edits made directly in
+		// the .md file show up here (mirrors EditTitleModal / Reading's read-back).
+		// Skipped once the user starts typing, to avoid clobbering their input.
+		void this.dataManager.readNotesFromFile(this.title).then((fileNotes) => {
+			if (fileNotes === null || this.notesEditedByUser) return;
+			if (fileNotes !== textarea.value) {
+				textarea.value = fileNotes;
+				autoResize();
+			}
+			// Align the in-memory model so an unchanged field isn't re-saved on blur.
+			this.title.notes = fileNotes;
+		});
+
 		textarea.addEventListener('blur', () => {
 			if (textarea.value === this.title.notes) return;
 			void (async () => {
@@ -420,34 +617,15 @@ export class TitleDetailModal extends Modal {
 	}
 
 	private openStatusDropdown(anchor: HTMLElement, wrap: HTMLElement): void {
-		this.contentEl.querySelectorAll('.wl-reading-status-dropdown').forEach((el) => el.remove());
-		const rect = anchor.getBoundingClientRect();
-		const dropdown = this.contentEl.createDiv({ cls: 'wl-reading-status-dropdown' });
-		dropdown.style.top = `${rect.bottom + 4}px`;
-		dropdown.style.left = `${rect.left}px`;
-		// Capture the owning document once so add/remove can't desync across popout windows.
-		const doc = this.contentEl.ownerDocument;
-
-		for (const s of this.plugin.settings.statuses) {
-			if (s.name === 'To be released') continue;
-			const opt = dropdown.createDiv({ cls: 'wl-reading-status-option' });
-			const dot = opt.createSpan({ cls: 'wl-reading-status-option-dot' });
-			dot.style.backgroundColor = this.statusColor(s.name);
-			opt.createSpan({ text: s.name });
-			opt.addEventListener('click', () => {
-				dropdown.remove();
-				doc.removeEventListener('mousedown', closeListener, true);
-				void this.saveStatus(s.name).then(() => this.renderStatusBadge(wrap));
-			});
-		}
-
-		const closeListener = (e: MouseEvent): void => {
-			if (!dropdown.contains(e.target as Node)) {
-				dropdown.remove();
-				doc.removeEventListener('mousedown', closeListener, true);
-			}
-		};
-		window.setTimeout(() => doc.addEventListener('mousedown', closeListener, true), 0);
+		openStatusDropdown({
+			anchor,
+			container: this.contentEl,
+			options: this.plugin.settings.statuses
+				.filter((s) => s.name !== 'To be released')
+				.map((s) => s.name),
+			getOptionColor: (name) => this.statusColor(name),
+			onSelect: (name) => void this.saveStatus(name).then(() => this.renderStatusBadge(wrap)),
+		});
 	}
 
 	private async saveStatus(status: string): Promise<void> {
@@ -494,6 +672,42 @@ export class TitleDetailModal extends Modal {
 	}
 }
 
+// ── Credits rows (shared) ───────────────────────────────────────────────────
+// Renders the Director / Cast rows used by both the detail modal and the List
+// view's expanded row. Unfetched fields render nothing; the 'none' sentinel
+// renders the row with an em-dash fallback; real names render as clickable
+// person-filter chips when a handler is provided.
+export function renderCreditsRows(
+	parent: HTMLElement,
+	title: WatchLogTitle,
+	onPersonClick?: (name: string) => void,
+): void {
+	const renderRow = (label: string, names: string[] | undefined): void => {
+		if (isCreditsUnfetched(names)) return;
+		const row = parent.createDiv({ cls: 'wl-credits-row' });
+		row.createSpan({ cls: 'wl-credits-label', text: label });
+		const values = getDisplayCredits(names);
+		if (values.length === 0) {
+			row.createSpan({ cls: 'wl-credits-empty', text: '—' });
+			return;
+		}
+		values.forEach((name, i) => {
+			if (i > 0) row.createSpan({ cls: 'wl-credits-sep', text: ', ' });
+			const el = row.createSpan({ cls: 'wl-credits-name', text: name });
+			if (onPersonClick) {
+				el.addClass('is-clickable');
+				el.title = `Show titles with ${name}`;
+				el.addEventListener('click', (e) => {
+					e.stopPropagation();
+					onPersonClick(name);
+				});
+			}
+		});
+	};
+	renderRow('Director', title.director);
+	renderRow('Cast', title.cast);
+}
+
 // ── Group detail modal ──────────────────────────────────────────────────────
 export class GroupDetailModal extends Modal {
 	private plugin: WatchLogPlugin;
@@ -501,6 +715,7 @@ export class GroupDetailModal extends Modal {
 	private group: WatchLogGroup;
 	private members: WatchLogTitle[];
 	private onChanged?: () => void;
+	private onPersonClick?: (name: string) => void;
 	private changed = false;
 
 	constructor(
@@ -509,6 +724,7 @@ export class GroupDetailModal extends Modal {
 		group: WatchLogGroup,
 		members: WatchLogTitle[],
 		onChanged?: () => void,
+		onPersonClick?: (name: string) => void,
 	) {
 		super(app);
 		this.plugin = plugin;
@@ -516,6 +732,7 @@ export class GroupDetailModal extends Modal {
 		this.group = group;
 		this.members = members;
 		this.onChanged = onChanged;
+		this.onPersonClick = onPersonClick;
 	}
 
 	onOpen(): void {
@@ -563,7 +780,7 @@ export class GroupDetailModal extends Modal {
 					new TitleDetailModal(this.plugin.app, this.plugin, m, () => {
 						this.changed = true;
 						if (this.onChanged) this.onChanged();
-					}).open();
+					}, this.onPersonClick).open();
 				},
 				onEdit: () => {
 					this.close();

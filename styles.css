@@ -25,6 +25,45 @@
   padding: 8px 10px 0;
   border-bottom: 0.5px solid var(--background-modifier-border);
   flex-shrink: 0;
+  /* Clip the button row so it can never extend past the panel and let the whole
+     view be dragged sideways ("loose sheet" pan). On mobile the tabs go icon-only
+     (below) so nothing is actually clipped. */
+  overflow-x: hidden;
+}
+
+/* ── Mobile: icon-only tabs ─────────────────────────────────
+   Seven text labels overflow a phone-width panel; render Lucide icons instead
+   and let them share the row equally so all seven fit with no horizontal scroll. */
+.wl-view.wl-mobile .wl-tab-bar {
+  gap: 0;
+  padding: 6px 4px 0;
+}
+
+.wl-tab-btn-icon {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 0;
+  position: relative;
+}
+
+.wl-tab-btn-icon .svg-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* Count badge in icon mode: a small purple dot on the icon (vs. "(N)" on desktop). */
+.wl-tab-btn-icon.wl-tab-has-badge::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: calc(50% - 13px);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #7F77DD;
 }
 
 .wl-tab-btn {
@@ -54,6 +93,11 @@
   flex: 1 1 0%;
   min-height: 0;
   overflow-y: auto;
+  /* Clip horizontal overflow so the view can't be panned sideways like a loose
+     sheet. Without this, overflow-y:auto + the default overflow-x:visible forces
+     overflow-x to compute to `auto` (per the CSS overflow spec), turning the
+     scroller into a horizontal scroll container on mobile. */
+  overflow-x: hidden;
   padding: 12px 10px;
 }
 
@@ -79,9 +123,19 @@
 /* ── Rings grid ─────────────────────────────────────────── */
 .wl-rings-grid {
   display: grid;
+  /* Desktop: fixed 3-column layout (original look). Mobile overrides this with a
+     container-responsive auto-fit grid below. */
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin-bottom: 16px;
+}
+
+/* Mobile: reflow on the actual panel width (not the viewport). Wide enough panels
+   show up to 3 columns at full ring size and degrade to 2 then 1 as it narrows.
+   min(110px, 100%) caps the track at the container width so a panel narrower than
+   one card can never force horizontal overflow. */
+.wl-view.wl-mobile .wl-rings-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(110px, 100%), 1fr));
 }
 
 /* ── Unified Total / Time card ──────────────────────────── */
@@ -147,6 +201,8 @@
   align-items: center;
   gap: 4px;
   position: relative;
+  /* Let the grid track shrink below the card's intrinsic content width. */
+  min-width: 0;
 }
 
 /* Accent ring: anchored to the SVG circle rather than the whole card.
@@ -169,7 +225,11 @@
 
 .wl-ring-svg {
   width: var(--wl-ring-size);
-  height: var(--wl-ring-size);
+  /* Scale down (keeping the square aspect) if the cell is narrower than the
+     gauge, so a column can drop below 110px without overflowing. */
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
   overflow: visible;
 }
 
@@ -988,6 +1048,36 @@
   flex-shrink: 0;
 }
 
+/* Two labelled fields sharing one row, with fixed-width inputs anchored into
+   two columns (rather than stretched to 50%) to save vertical space. */
+.wl-modal-pair-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Right group anchors to the row's right edge, leaving empty space in the
+   middle, so its input's right edge meets the full-width fields' right edge. */
+.wl-modal-pair-cell-right {
+  margin-left: auto;
+}
+
+/* Left cell keeps the standard 110px label so its input's left edge lines up
+   with the full-width (Title) input; the right cell's label is natural width. */
+.wl-modal-pair-cell-right .wl-modal-label {
+  width: auto;
+}
+
+/* All four paired fields (two number inputs + two selects) share one fixed,
+   narrow width — only their left/right edges align with the full-width fields;
+   they intentionally do not span the row. */
+.wl-modal-pair-cell .wl-modal-input,
+.wl-modal-pair-cell .wl-select {
+  flex: 0 0 auto;
+  width: 110px;
+  min-width: 0;
+}
+
 .wl-modal-input {
   flex: 1;
   padding: 5px 8px;
@@ -1059,7 +1149,10 @@
 }
 
 .wl-modal-results {
-  max-height: 200px;
+  /* Grown by ~2 reclaimed form rows (Episodes/duration + Status/priority now
+     pair onto single rows) so the results list fills the freed vertical space
+     while the overall modal height stays the same. */
+  max-height: 272px;
   overflow-y: auto;
   border: 0.5px solid var(--background-modifier-border);
   border-radius: 5px;
@@ -1073,8 +1166,48 @@
   transition: background 0.1s;
 }
 
+/* Rows that carry a cover thumbnail lay out as a flex row (thumb · text). */
+.wl-result-item.wl-has-thumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .wl-result-item:last-child {
   border-bottom: none;
+}
+
+.wl-result-text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* Shared cover thumbnail for add-flow search-result rows (poster 2:3). */
+.wl-result-thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 60px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--background-modifier-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wl-result-thumb-icon {
+  font-size: 18px;
+  opacity: 0.6;
+  line-height: 1;
+}
+
+.wl-result-thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .wl-result-item:hover,
@@ -1145,6 +1278,71 @@
 
 .wl-btn:hover {
   background: var(--background-modifier-hover);
+}
+
+.wl-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wl-btn:disabled:hover {
+  background: var(--background-secondary);
+}
+
+/* ── Custom Lists import modal ─────────────────────────── */
+.wl-import-textarea {
+  min-height: 140px;
+  margin: 8px 0;
+  font-family: var(--font-monospace);
+}
+
+.wl-import-header-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 10px;
+}
+
+.wl-import-header-toggle label {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.wl-import-header-checkbox {
+  cursor: pointer;
+}
+
+.wl-import-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.wl-import-counts {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.wl-import-banner {
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--background-secondary) 80%, #BA7517 20%);
+  border: 0.5px solid color-mix(in srgb, var(--background-modifier-border) 60%, #BA7517 40%);
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.wl-import-banner-error {
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--background-modifier-error) 50%, transparent 50%);
+  border: 0.5px solid color-mix(in srgb, var(--background-modifier-border) 50%, #E24B4A 50%);
+  font-size: 11px;
+  color: var(--text-normal);
+  line-height: 1.5;
 }
 
 .wl-btn-primary {
@@ -1429,13 +1627,10 @@
 }
 
 @media (max-width: 400px) {
+  /* Tighten the rings-grid gap on very small screens; column count and ring
+     size are now handled by the auto-fit grid + scaling SVG above. */
   .wl-rings-grid {
-    grid-template-columns: 1fr 1fr;
     gap: 8px;
-  }
-
-  .wl-ring-item {
-    --wl-ring-size: 90px;
   }
 
   .wl-table-header-row,
@@ -1939,6 +2134,13 @@
   gap: 6px;
   flex: 1;
   min-width: 0;
+}
+
+/* Toolbar action-button wrapper — display: contents so the buttons still lay
+   out as direct flex items of the controls row, while ListTab can rebuild them
+   in isolation (selection-mode toggles) without touching the search input. */
+.wl-toolbar-actions {
+  display: contents;
 }
 
 /* Add buttons pinned to the far right of the toolbar row */
@@ -3248,6 +3450,98 @@
   border-bottom: 0.5px solid var(--background-modifier-border);
 }
 
+/* ── Column resize (Excel-style) ──────────────────────────── */
+/* Resizable mode: explicit column widths, no flex redistribution, horizontal scroll. */
+.wl-cl-table-resizable {
+  width: max-content;
+  min-width: 100%;
+  /* Let the scroll container (.wl-cl-table-wrap) own the horizontal scroll so
+     the sticky actions cell clamps to the viewport edge, not the table edge. */
+  overflow: visible;
+}
+
+.wl-cl-table-resizable .wl-cl-tr {
+  min-width: 100%;
+}
+
+.wl-cl-table-resizable .wl-cl-th.wl-cl-col-fixed,
+.wl-cl-table-resizable .wl-cl-td.wl-cl-col-fixed {
+  flex: 0 0 var(--wl-cl-cw);
+}
+
+/* ── Sticky row actions (resizable mode only) ─────────────── */
+/* Keep the actions cell pinned to the visible right edge while the table
+   scrolls horizontally. Opaque backgrounds (base colour + translucent state
+   overlay) match the row so scrolled cell content does not show through. */
+.wl-cl-table-resizable .wl-cl-td-actions {
+  /* margin-left:auto pushes the cell flush to the right edge when the table fits
+     (free space to the right); it resolves to 0 when the table overflows, letting
+     sticky pin it to the visible right edge. The opaque background (matched to the
+     row state below) means revealed controls never let cell content bleed through —
+     the reveal animates only the inner controls' opacity, not this cell. */
+  margin-left: auto;
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background-color: var(--background-primary);
+}
+
+.wl-cl-table-resizable .wl-cl-th-actions {
+  margin-left: auto;
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  background-color: var(--background-secondary);
+}
+
+.wl-cl-table-resizable .wl-cl-tr-body:hover .wl-cl-td-actions {
+  background-image: linear-gradient(var(--background-modifier-hover), var(--background-modifier-hover));
+}
+
+.wl-cl-table-resizable .wl-cl-tr-body.wl-cl-tr-checked .wl-cl-td-actions,
+.wl-cl-table-resizable .wl-cl-tr-body.wl-cl-tr-checked:hover .wl-cl-td-actions {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--color-green) 5%, transparent),
+    color-mix(in srgb, var(--color-green) 5%, transparent)
+  );
+}
+
+.wl-cl-th-resizable {
+  position: relative;
+}
+
+.wl-cl-col-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+/* Always-visible quiet separator; brighter + thicker on hover to signal resize. */
+.wl-cl-col-resize::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 6px;
+  width: 1px;
+  background: var(--background-modifier-border);
+  transition: background 0.12s, width 0.12s;
+}
+
+.wl-cl-col-resize:hover::after {
+  width: 2px;
+  background: var(--interactive-accent);
+}
+
+body.wl-cl-col-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .wl-cl-tr {
   display: flex;
   align-items: stretch;
@@ -4396,6 +4690,9 @@
   max-width: 28px;
   flex-shrink: 0;
   padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .wl-cl-td-tick {
@@ -4450,6 +4747,11 @@
   position: relative;
   width: 100%;
   overflow-y: auto;
+  /* Reserve the scrollbar gutter so clientWidth (which the virtual-scroll math
+     reads to size cards) doesn't change when the scrollbar appears — otherwise
+     the cards would re-layout to a new width/height the first time content
+     overflows, a one-off layout shift. */
+  scrollbar-gutter: stable;
   /* Fill remaining vertical space inside the watchlist container. */
   flex: 1 1 auto;
   min-height: 0;
@@ -4467,15 +4769,28 @@
   right: 0;
   display: grid;
   grid-template-columns: repeat(var(--wl-cards-cols, 1), 1fr);
+  /* Pin every row to the exact height the virtual-scroll math uses for the
+     spacer/padding offset. Without this, auto rows size to content and a card
+     whose intrinsic height exceeds --wl-card-height would stretch the whole
+     row, desyncing rendered height from reserved height (the CLS source). */
+  grid-auto-rows: var(--wl-card-height, auto);
+  align-content: start;
   gap: 12px;
+  /* The virtual-scroll row offset is an inline padding-top set by ListTab —
+     deliberately NOT transform: translateY, which made Chromium's layout-shift
+     tracker report a row of stationary cards as shifted on every row advance. */
   padding: 0;
   box-sizing: border-box;
-  will-change: transform;
 }
 
 .wl-cards-grid.wl-cards-grid-virtual .wl-card {
   width: 100%;
   height: var(--wl-card-height, auto);
+  /* --wl-card-height is the single source of truth for card height. Explicitly
+     cancel the base .wl-card aspect-ratio:2/3 here: in the grid it would give the
+     card an intrinsic height of trackWidth*1.5, which (when the real 1fr track is
+     wider than the computed cardWidth) overflows the reserved row and stretches
+     the card after layout — shifting the absolute poster (the logged CLS). */
   aspect-ratio: auto;
 }
 
@@ -4490,7 +4805,6 @@
 .wl-detail-header {
   display: flex;
   flex-direction: row;
-  justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
   flex-wrap: wrap;
@@ -4500,7 +4814,55 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1;
   min-width: 0;
+}
+
+/* Cover box: in-flow aspect-ratio slot (reserves its space from first paint,
+   same as ReadingTab's cover). Placeholder + poster are stacked absolutely and
+   swapped by opacity via .has-poster so revealing the image causes no shift. */
+.wl-detail-cover {
+  position: relative;
+  width: 96px;
+  aspect-ratio: 2 / 3;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--background-secondary);
+}
+
+.wl-detail-cover-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.6rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.wl-detail-cover-placeholder.is-loading {
+  animation: wl-poster-pulse 1.5s ease-in-out infinite;
+}
+
+.wl-detail-cover-placeholder span {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.wl-detail-cover-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.wl-detail-cover.has-poster .wl-detail-cover-img {
+  opacity: 1;
 }
 
 .wl-detail-title {
@@ -4528,6 +4890,56 @@
   padding: 8px 12px;
   border: 1px solid var(--background-modifier-border, rgba(255,255,255,0.1));
   border-radius: 6px;
+}
+
+/* Narrow widths: same font, tighter item gap + container padding so the
+   4-block bar (left / watched / episodes / progress) fits without clipping. */
+@media (max-width: 600px) {
+  .wl-detail-stats-box {
+    gap: 7px;
+    padding: 8px 7px;
+  }
+}
+
+/* ── Credits (director / cast) rows — detail modal + List expanded row ────── */
+.wl-detail-credits {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.wl-acc-credits {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 2px;
+}
+
+.wl-credits-row {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  min-width: 0;
+}
+
+.wl-credits-label {
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.wl-credits-label::after {
+  content: ':';
+}
+
+.wl-credits-name.is-clickable {
+  cursor: pointer;
+  color: var(--text-normal);
+}
+
+.wl-credits-name.is-clickable:hover {
+  color: var(--text-accent, var(--interactive-accent));
+  text-decoration: underline;
 }
 
 .wl-detail-episodes {
@@ -4599,6 +5011,24 @@
 .wl-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Selected card in selection mode — border only (no background tint), in the
+   theme accent used by the Watched checkbox. Drawn as an inset outline rather
+   than a border: outlines paint above the absolutely-positioned poster, follow
+   the border-radius, and never change the card's layout box. */
+/* Drawn as an ::after overlay, not an outline/border on the card itself: the
+   absolutely-positioned poster paints above a negative-offset outline, leaving
+   only the ~1px sliver outside the padding box visible. The overlay is the
+   card's last paint-order child, so the full border width shows over the poster
+   without affecting layout or intercepting clicks. */
+.wl-card.wl-card-selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 3px solid var(--wl-watched-color);
+  border-radius: inherit;
+  pointer-events: none;
 }
 
 .wl-card-poster-placeholder {
@@ -4735,16 +5165,20 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: none;
-}
-
-/* Poster loaded: swap the letter placeholder for the image. */
-.wl-card.has-poster .wl-card-poster {
+  /* display:block from first paint so the absolute inset:0 box is reserved
+     before the image data arrives; the unloaded poster is hidden with opacity
+     (which keeps the box) and fades in on load over the letter placeholder.
+     Note: the scroll-CLS logged against this img was NOT the reveal — it was
+     the grid's translateY offset (see .wl-cards-grid-virtual / ListTab). */
   display: block;
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 
-.wl-card.has-poster .wl-card-poster-placeholder {
-  display: none;
+/* Poster loaded: fade the image in on top of the letter placeholder (which
+   stays behind it). Opacity — not display — so the swap causes zero layout shift. */
+.wl-card.has-poster .wl-card-poster {
+  opacity: 1;
 }
 
 .wl-card-overlay {
@@ -4888,6 +5322,50 @@
 .wl-community-refresh.is-loading {
   animation: wl-spin 0.9s linear infinite;
   pointer-events: none;
+}
+
+/* Trailer control at the tail of the rating row (rating badge → refresh → YouTube). */
+.wl-trailer-control {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.wl-trailer-btn {
+  /* Wide clickable frame (~3× the icon) with the YouTube glyph centred at its
+     natural proportions — only the frame widens, never the icon. */
+  min-width: 66px;
+  padding: 2px 20px;
+  margin-left: 8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #FF0000; /* Permanent red, not hover-only. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  box-shadow: none;
+}
+
+.wl-trailer-btn:hover {
+  color: #CC0000; /* Discreet darker-red + subtle wash so it still reads as clickable. */
+  background: var(--background-modifier-hover);
+}
+
+.wl-trailer-btn .svg-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.wl-trailer-refresh {
+  margin-left: 8px;
+}
+
+.wl-trailer-refresh .svg-icon {
+  width: 14px;
+  height: 14px;
 }
 
 @keyframes wl-spin {
@@ -5248,6 +5726,11 @@
 }
 
 .wl-reading-card-cover-img {
+  /* Absolutely fill the 2:3 cover box so a lazily-loaded cover image causes ZERO
+     layout shift — the box size is fixed by .wl-reading-card-cover's aspect-ratio
+     before the image arrives, and the in-flow icon fallback stays centred. */
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -5564,10 +6047,18 @@
 }
 
 .wl-reading-lookup-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 8px 10px;
   border-radius: 4px;
   cursor: pointer;
   border: 1px solid transparent;
+}
+
+.wl-reading-lookup-item-text {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .wl-reading-status-rating-row {
@@ -6065,6 +6556,9 @@
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  /* Default (neutral) dot for options without an assigned colour. Status
+     options always set an inline background-color, which overrides this. */
+  background: var(--background-modifier-border);
 }
 
 /* ── Editable date cells ─────────────────────────────── */
@@ -6350,6 +6844,34 @@
   border-color: rgba(0, 0, 0, 0.35);
 }
 
+/* Per-list tab colour row in the Table settings modal. */
+.wl-editcols-tabcolor-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.wl-editcols-tabcolor-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.wl-editcols-tabcolor-dot.is-unset,
+.wl-editcol-opt-color-dot.is-unset {
+  background: repeating-conic-gradient(
+    var(--background-modifier-border) 0% 25%,
+    var(--background-primary) 0% 50%
+  ) 0 / 8px 8px;
+}
+
+.wl-editcol-opt-color-dot {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+
 .wl-reading-col-palette {
   position: fixed;
   display: grid;
@@ -6380,6 +6902,50 @@
 .wl-reading-col-palette-swatch.is-active {
   outline: 2px solid var(--text-normal);
   outline-offset: 1px;
+}
+
+/* Custom full-spectrum swatch in the shared colour picker. */
+.wl-color-custom-swatch {
+  position: relative;
+  overflow: hidden;
+}
+
+.wl-color-custom-swatch.wl-color-custom-rainbow {
+  background: conic-gradient(
+    from 90deg,
+    #f43f5e, #f59e0b, #facc15, #22c55e, #06b6d4, #3b82f6, #8b5cf6, #f43f5e
+  );
+  border-color: var(--background-modifier-border);
+}
+
+.wl-color-custom-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Clear / "no colour" swatch — checkerboard with a diagonal slash. */
+.wl-color-clear-swatch {
+  border-color: var(--background-modifier-border);
+  background:
+    linear-gradient(
+      to top left,
+      transparent 0%,
+      transparent calc(50% - 1px),
+      var(--text-error, #e5484d) 50%,
+      transparent calc(50% + 1px),
+      transparent 100%
+    ),
+    repeating-conic-gradient(
+      var(--background-modifier-border) 0% 25%,
+      var(--background-primary) 0% 50%
+    ) 0 / 10px 10px;
 }
 
 /* ── Manage columns modal ──────────────────────────────────── */

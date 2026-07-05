@@ -48,6 +48,19 @@ interface TmdbMultiResult {
 	results?: Array<{ poster_path?: string | null }>;
 }
 
+interface TmdbPosterSearchResult {
+	results?: Array<{
+		poster_path?: string | null;
+		release_date?: string;
+		first_air_date?: string;
+	}>;
+}
+
+interface TmdbFindPosterResult {
+	movie_results?: Array<{ poster_path?: string | null }>;
+	tv_results?: Array<{ poster_path?: string | null }>;
+}
+
 interface OmdbResult {
 	Poster?: string;
 	Response?: string;
@@ -195,22 +208,120 @@ export class PosterService {
 		return jpg?.large_image_url ?? jpg?.image_url ?? null;
 	}
 
+	/** Extracts an IMDb id (`tt…`) from an external link, or '' if none present. */
+	private extractImdbId(externalLink: string | undefined): string {
+		const m = (externalLink ?? '').match(/tt\d+/);
+		return m ? m[0] : '';
+	}
+
+	/** The 4-digit year from the entry's stored releaseDate, or null if unusable. */
+	private getReleaseYear(title: WatchLogTitle): number | null {
+		const m = (title.releaseDate ?? '').match(/^(\d{4})/);
+		return m && m[1] ? parseInt(m[1], 10) : null;
+	}
+
+	/**
+	 * Resolves whether a title should be searched as a movie or a TV series.
+	 * Explicit Movie / TV Show types win; otherwise (custom type) infer from
+	 * totalEpisodes (1 → movie, >1 → series). Returns null when there's no signal
+	 * (missing/0 episodes) so the caller can fall back to the legacy multi-search.
+	 */
+	private resolveMediaKind(title: WatchLogTitle): 'movie' | 'tv' | null {
+		if (title.type === 'Movie') return 'movie';
+		if (title.type === 'TV Show' || title.type === 'TvShow') return 'tv';
+		const eps = title.totalEpisodes;
+		if (eps === 1) return 'movie';
+		if (eps > 1) return 'tv';
+		return null;
+	}
+
+	/**
+	 * Picks the best poster from TMDB search results: prefers the candidate whose
+	 * release year matches the entry, then falls back to the first result that has
+	 * a poster. Returns the raw poster_path (not the full URL) or null.
+	 */
+	private pickTmdbPoster(
+		results: TmdbPosterSearchResult['results'],
+		year: number | null,
+	): string | null {
+		if (!results || results.length === 0) return null;
+		if (year !== null) {
+			const yearStr = String(year);
+			const matched = results.find((r) => {
+				const date = r.release_date ?? r.first_air_date ?? '';
+				return date.startsWith(yearStr) && r.poster_path;
+			});
+			if (matched?.poster_path) return matched.poster_path;
+		}
+		const first = results.find((r) => r.poster_path);
+		return first?.poster_path ?? null;
+	}
+
 	private async fetchMediaPoster(title: WatchLogTitle): Promise<string | null> {
 		const settings = this.getSettings();
 		const searchName = this.cleanTitleForSearch(title.title);
+		const imdbId = this.extractImdbId(title.externalLink);
+		const year = this.getReleaseYear(title);
+		const kind = this.resolveMediaKind(title);
+
 		if (settings.tmdbApiKey) {
+			const headers = { Authorization: `Bearer ${settings.tmdbApiKey}` };
+			// 1. Most precise: resolve by IMDb id directly.
+			if (imdbId) {
+				const url = `${TMDB_BASE}/find/${encodeURIComponent(imdbId)}?external_source=imdb_id`;
+				const data = (await this.fetchJson(url, headers)) as TmdbFindPosterResult | null;
+				const hit = data?.movie_results?.[0] ?? data?.tv_results?.[0] ?? null;
+				if (hit?.poster_path) return `${TMDB_IMG_BASE}${hit.poster_path}`;
+				// No poster on the exact match — fall through to a typed/legacy search.
+			}
+			// 2/3/4. Type-aware movie/tv search with year preference.
+			if (kind !== null) {
+				const endpoint = kind === 'movie' ? 'movie' : 'tv';
+				const q = encodeURIComponent(searchName);
+				const url = `${TMDB_BASE}/search/${endpoint}?query=${q}&page=1`;
+				const data = (await this.fetchJson(url, headers)) as TmdbPosterSearchResult | null;
+				const poster = this.pickTmdbPoster(data?.results, year);
+				if (poster) return `${TMDB_IMG_BASE}${poster}`;
+				return null;
+			}
+			// Safety net: no type signal → legacy multi-search.
 			const q = encodeURIComponent(searchName);
 			const url = `${TMDB_BASE}/search/multi?query=${q}&page=1`;
-			const data = (await this.fetchJson(url, {
-				Authorization: `Bearer ${settings.tmdbApiKey}`,
-			})) as TmdbMultiResult | null;
+			const data = (await this.fetchJson(url, headers)) as TmdbMultiResult | null;
 			const poster = data?.results?.[0]?.poster_path;
 			if (poster) return `${TMDB_IMG_BASE}${poster}`;
 			return null;
 		}
+
 		if (settings.omdbApiKey) {
+			const key = encodeURIComponent(settings.omdbApiKey);
+			// 1. Most precise: resolve by IMDb id directly.
+			if (imdbId) {
+				const url = `${OMDB_BASE}/?i=${encodeURIComponent(imdbId)}&apikey=${key}`;
+				const data = (await this.fetchJson(url)) as OmdbResult | null;
+				const poster = data?.Poster;
+				if (poster && poster !== 'N/A') return poster;
+				// No poster on the exact match — fall through to a typed/legacy search.
+			}
 			const q = encodeURIComponent(searchName);
-			const url = `${OMDB_BASE}/?t=${q}&apikey=${encodeURIComponent(settings.omdbApiKey)}`;
+			// 2/3/4. Type-aware movie/series search, preferring the matching year.
+			if (kind !== null) {
+				const omdbType = kind === 'movie' ? 'movie' : 'series';
+				const base = `${OMDB_BASE}/?t=${q}&type=${omdbType}&apikey=${key}`;
+				let poster: string | undefined;
+				if (year !== null) {
+					const data = (await this.fetchJson(`${base}&y=${year}`)) as OmdbResult | null;
+					poster = data?.Poster;
+				}
+				if (!poster || poster === 'N/A') {
+					const data = (await this.fetchJson(base)) as OmdbResult | null;
+					poster = data?.Poster;
+				}
+				if (poster && poster !== 'N/A') return poster;
+				return null;
+			}
+			// Safety net: no type signal → legacy untyped lookup.
+			const url = `${OMDB_BASE}/?t=${q}&apikey=${key}`;
 			const data = (await this.fetchJson(url)) as OmdbResult | null;
 			const poster = data?.Poster;
 			if (poster && poster !== 'N/A') return poster;

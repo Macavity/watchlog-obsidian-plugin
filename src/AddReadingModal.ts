@@ -3,6 +3,7 @@ import type WatchLogPlugin from './main';
 import type { ReadingDataManager } from './ReadingDataManager';
 import type { BookSearchResult, MangaSearchResult } from './ApiService';
 import { googleBooksErrorMessage } from './ApiService';
+import { renderSearchThumbnail } from './SearchThumbnail';
 import {
 	Book,
 	Manga,
@@ -333,9 +334,11 @@ export class AddReadingModal extends Modal {
 		}
 		for (const r of results) {
 			const item = this.lookupResultsEl.createDiv({ cls: 'wl-reading-lookup-item' });
-			this.renderLookupItemTitle(item, r.title, r.url);
+			renderSearchThumbnail(item, r.coverUrl, r.title, '📖');
+			const text = item.createDiv({ cls: 'wl-reading-lookup-item-text' });
+			this.renderLookupItemTitle(text, r.title, r.url);
 			const meta = [r.author || 'Unknown author', r.year ? String(r.year) : ''].filter(Boolean).join(' · ');
-			item.createDiv({ cls: 'wl-reading-lookup-item-meta', text: meta });
+			text.createDiv({ cls: 'wl-reading-lookup-item-meta', text: meta });
 			item.addEventListener('click', () => this.applyBookResult(r));
 		}
 	}
@@ -363,9 +366,11 @@ export class AddReadingModal extends Modal {
 		}
 		for (const r of results) {
 			const item = this.lookupResultsEl.createDiv({ cls: 'wl-reading-lookup-item' });
-			this.renderLookupItemTitle(item, r.title, r.url);
+			renderSearchThumbnail(item, r.coverUrl, r.title, '📓');
+			const text = item.createDiv({ cls: 'wl-reading-lookup-item-text' });
+			this.renderLookupItemTitle(text, r.title, r.url);
 			const meta = [r.author || 'Unknown author', r.year ? String(r.year) : ''].filter(Boolean).join(' · ');
-			item.createDiv({ cls: 'wl-reading-lookup-item-meta', text: meta });
+			text.createDiv({ cls: 'wl-reading-lookup-item-meta', text: meta });
 			item.addEventListener('click', () => this.applyMangaResult(r));
 		}
 	}
