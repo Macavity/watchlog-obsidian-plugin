@@ -2136,11 +2136,18 @@
   min-width: 0;
 }
 
-/* Toolbar action-button wrapper — display: contents so the buttons still lay
-   out as direct flex items of the controls row, while ListTab can rebuild them
-   in isolation (selection-mode toggles) without touching the search input. */
+/* Toolbar action-button wrapper — a nested flex row that fills the space left
+   by the (max-width-capped) search input, mirroring the controls row's gap so
+   the buttons lay out exactly as if they were direct flex items. ListTab can
+   rebuild the wrapper in isolation (selection-mode toggles) without touching
+   the search input; margin-left:auto children (wl-header-controls-right) still
+   pin to the row's right edge because the wrapper spans the remaining width. */
 .wl-toolbar-actions {
-  display: contents;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* Add buttons pinned to the far right of the toolbar row */
@@ -2156,6 +2163,18 @@
 .wl-btn-sm {
   padding: 3px 8px;
   font-size: 11px;
+}
+
+/* Cancel button inside the persistent rewrite-frontmatter progress notice */
+.wl-notice-cancel-btn {
+  margin-left: 8px;
+}
+
+/* Overflow guard (WatchLogView.guardOverflow): re-enables scrolling when an
+   outside mutation forces the tab content to overflow: hidden. !important so
+   the class also beats inline styles, which the old inline fix overwrote. */
+.wl-force-overflow-auto {
+  overflow: auto !important;
 }
 
 /* ── Mobile toolbar crossfade slot ──────────────────────────
@@ -6856,6 +6875,17 @@ body.wl-cl-col-resizing {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-normal);
+}
+
+/* Chosen colour flows through CSS vars set by CustomListsTab; the .is-unset
+   class swaps in the checkerboard below instead. */
+.wl-editcols-tabcolor-dot:not(.is-unset) {
+  background-color: var(--wl-dot-fill);
+}
+
+.wl-editcol-opt-color-dot:not(.is-unset) {
+  background-color: var(--wl-dot-fill);
+  border-color: var(--wl-dot-border);
 }
 
 .wl-editcols-tabcolor-dot.is-unset,

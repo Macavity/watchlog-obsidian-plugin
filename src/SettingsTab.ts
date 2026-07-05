@@ -457,8 +457,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		// Settings, where the header bar isn't visible). Persistent (timeout 0).
 		const notice = new Notice('', 0);
 		const label = notice.messageEl.createSpan({ text: `Rewriting frontmatter… 0 / ${total}` });
-		const cancelBtn = notice.messageEl.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Cancel' });
-		cancelBtn.setCssProps({ 'margin-left': '8px' });
+		const cancelBtn = notice.messageEl.createEl('button', { cls: 'wl-btn wl-btn-sm wl-notice-cancel-btn', text: 'Cancel' });
 		cancelBtn.addEventListener('click', cancelFn);
 
 		const CHUNK_SIZE = 10;

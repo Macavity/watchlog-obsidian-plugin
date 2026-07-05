@@ -541,7 +541,7 @@ export class WatchLogView extends ItemView {
 			if (Date.now() - renderTime > 300) return;
 			const computed = window.getComputedStyle(el).overflow;
 			if (computed === 'hidden') {
-				el.setCssProps({ overflow: 'auto' });
+				el.addClass('wl-force-overflow-auto');
 			}
 		});
 		this.overflowObserver.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
