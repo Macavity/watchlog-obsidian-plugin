@@ -732,6 +732,9 @@ export class ReadingDataManager {
 		lines.push(`dateFinished: ${item.dateFinished ?? 'null'}`);
 		lines.push(`releaseDate: ${item.releaseDate ?? 'null'}`);
 		lines.push(`dateAdded: ${yamlEscape(item.dateAdded)}`);
+		lines.push(`dateModified: ${yamlEscape(item.dateModified)}`);
+		if (item.coverUrl) lines.push(`coverUrl: ${yamlEscape(item.coverUrl)}`);
+		if (item.externalLink) lines.push(`externalLink: ${yamlEscape(item.externalLink)}`);
 		lines.push(`type: ${kind === 'book' ? 'book' : 'manga'}`);
 		lines.push('---');
 		return lines.join('\n');
@@ -801,6 +804,25 @@ export class ReadingDataManager {
 		const filePath = this.noteFilePath(kind, item.title);
 		if (this.plugin.app.vault.getAbstractFileByPath(filePath) instanceof TFile) return false;
 		await this.writeReadingNote(kind, item);
+		return true;
+	}
+
+	/**
+	 * Rewrites ONLY the frontmatter block of an existing reading note, preserving
+	 * the body verbatim (`## Notes` / `## Quotes`). Does NOT create the file when
+	 * missing — returns false. Mirrors writeReadingNote's update branch but never
+	 * creates; used by the bulk "Rewrite all frontmatter" action.
+	 */
+	async rewriteFrontmatterIfExists(kind: ReadingKind, item: Book | Manga): Promise<boolean> {
+		const filePath = this.noteFilePath(kind, item.title);
+		const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return false;
+		const current = await this.plugin.app.vault.read(file);
+		const updated = this.rebuildWithFrontmatter(current, this.buildFrontmatter(kind, item));
+		if (updated !== current) {
+			await this.plugin.app.vault.modify(file, updated);
+		}
+		this.lastNotePathById.set(`${kind}:${item.id}`, filePath);
 		return true;
 	}
 

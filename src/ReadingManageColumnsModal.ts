@@ -1,8 +1,9 @@
 import { App, Modal, Notice } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { ReadingDataManager } from './ReadingDataManager';
-import { ReadingCustomColumn, FIELD_COLORS, DEFAULT_FIELD_COLOR } from './types';
+import { ReadingCustomColumn, DEFAULT_FIELD_COLOR } from './types';
 import { ConfirmModal } from './ConfirmModal';
+import { openColorPicker } from './ColorPicker';
 
 type Kind = 'book' | 'manga';
 
@@ -225,37 +226,13 @@ export class ReadingManageColumnsModal extends Modal {
 	}
 
 	private openColorPalette(anchor: HTMLElement, col: ReadingCustomColumn): void {
-		// Remove any existing palette
-		this.contentEl.querySelectorAll('.wl-reading-col-palette').forEach((el) => el.remove());
-
-		const rect = anchor.getBoundingClientRect();
-		const palette = this.contentEl.createDiv({ cls: 'wl-reading-col-palette' });
-		palette.style.top = `${rect.bottom + 4}px`;
-		palette.style.left = `${rect.left}px`;
-		// Capture the owning document once so add/remove can't desync across popout windows.
-		const doc = this.contentEl.ownerDocument;
-
-		const currentColor = col.color ?? DEFAULT_FIELD_COLOR;
-		for (const { color600, color50 } of FIELD_COLORS) {
-			const swatch = palette.createEl('button', { cls: 'wl-reading-col-palette-swatch' });
-			swatch.style.backgroundColor = color50;
-			swatch.style.borderColor = color600;
-			if (currentColor === color600) swatch.addClass('is-active');
-			swatch.title = color600;
-			swatch.addEventListener('click', (e) => {
-				e.stopPropagation();
-				palette.remove();
-				void this.updateColumn({ ...col, color: color600 });
-			});
-		}
-
-		const close = (e: MouseEvent): void => {
-			if (!palette.contains(e.target as Node) && e.target !== anchor) {
-				palette.remove();
-				doc.removeEventListener('mousedown', close, true);
-			}
-		};
-		window.setTimeout(() => doc.addEventListener('mousedown', close, true), 0);
+		openColorPicker({
+			anchor,
+			container: this.contentEl,
+			current: col.color ?? DEFAULT_FIELD_COLOR,
+			allowCustom: true,
+			onPick: (color) => { void this.updateColumn({ ...col, color: color ?? undefined }); },
+		});
 	}
 
 	private renderAddSection(parent: HTMLElement): void {

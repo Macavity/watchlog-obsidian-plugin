@@ -1,4 +1,4 @@
-import { ItemView, Platform, WorkspaceLeaf } from 'obsidian';
+import { ItemView, Platform, setIcon, WorkspaceLeaf } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import { DashboardTab } from './DashboardTab';
@@ -286,38 +286,22 @@ export class WatchLogView extends ItemView {
 		const root = this.contentEl;
 		root.empty();
 		root.addClass('wl-view');
+		// Mobile gets icon-only tabs and the container-responsive dashboard grid;
+		// desktop keeps text labels and the fixed 3-column layout. Toggled via this
+		// class so styling keys off the established Platform.isMobile check, not a
+		// viewport media query.
+		root.toggleClass('wl-mobile', Platform.isMobile);
 		this.applyColorTheme(root);
 
 		// Tab bar
 		const tabBar = root.createDiv({ cls: 'wl-tab-bar' });
-		const dashBtn = tabBar.createEl('button', {
-			cls: `wl-tab-btn${this.activeTab === 'dashboard' ? ' is-active' : ''}`,
-			text: 'Dashboard',
-		});
-		const listBtn = tabBar.createEl('button', {
-			cls: `wl-tab-btn${this.activeTab === 'watchlist' ? ' is-active' : ''}`,
-			text: 'Watchlist',
-		});
-		const readingBtn = tabBar.createEl('button', {
-			cls: `wl-tab-btn${this.activeTab === 'reading' ? ' is-active' : ''}`,
-			text: 'Reading',
-		});
-		this.airtimeBtn = tabBar.createEl('button', {
-			cls: `wl-tab-btn${this.activeTab === 'upcoming' ? ' is-active' : ''}`,
-			text: 'Upcoming',
-		});
-		const customListsBtn = tabBar.createEl('button', {
-			cls: `wl-tab-btn${this.activeTab === 'custom-lists' ? ' is-active' : ''}`,
-			text: 'Custom lists',
-		});
-		this.draftsBtn = tabBar.createEl('button', {
-			cls: `wl-tab-btn${this.activeTab === 'drafts' ? ' is-active' : ''}`,
-			text: 'Drafts',
-		});
-		const logBtn = tabBar.createEl('button', {
-			cls: `wl-tab-btn${this.activeTab === 'log' ? ' is-active' : ''}`,
-			text: 'Log',
-		});
+		const dashBtn = this.makeTabBtn(tabBar, 'dashboard', 'Dashboard', 'layout-dashboard');
+		const listBtn = this.makeTabBtn(tabBar, 'watchlist', 'Watchlist', 'tv');
+		const readingBtn = this.makeTabBtn(tabBar, 'reading', 'Reading', 'book-open');
+		this.airtimeBtn = this.makeTabBtn(tabBar, 'upcoming', 'Upcoming', 'calendar');
+		const customListsBtn = this.makeTabBtn(tabBar, 'custom-lists', 'Custom lists', 'list');
+		this.draftsBtn = this.makeTabBtn(tabBar, 'drafts', 'Drafts', 'square-pen');
+		const logBtn = this.makeTabBtn(tabBar, 'log', 'Log', 'history');
 
 		const allBtns = [dashBtn, listBtn, this.airtimeBtn, readingBtn, customListsBtn, this.draftsBtn, logBtn];
 		this.tabButtons = {
@@ -410,6 +394,37 @@ export class WatchLogView extends ItemView {
 	}
 
 	/**
+	 * Creates a tab-bar button. On mobile it renders icon-only (Lucide via setIcon)
+	 * with the label as the accessible name; on desktop it shows the text label.
+	 */
+	private makeTabBtn(tabBar: HTMLElement, tab: TabName, label: string, icon: string): HTMLButtonElement {
+		const btn = tabBar.createEl('button', {
+			cls: `wl-tab-btn${this.activeTab === tab ? ' is-active' : ''}`,
+		});
+		if (Platform.isMobile) {
+			btn.addClass('wl-tab-btn-icon');
+			setIcon(btn, icon);
+			btn.setAttribute('aria-label', label);
+		} else {
+			btn.setText(label);
+		}
+		return btn;
+	}
+
+	/**
+	 * Applies a count badge to a tab button. Desktop shows "Label (N)" text; mobile
+	 * (icon mode) can't overwrite the icon, so it toggles a small purple dot.
+	 */
+	private setTabBadge(btn: HTMLButtonElement | null, label: string, count: number): void {
+		if (!btn) return;
+		if (Platform.isMobile) {
+			btn.toggleClass('wl-tab-has-badge', count > 0);
+		} else {
+			btn.textContent = count > 0 ? `${label} (${count})` : label;
+		}
+	}
+
+	/**
 	 * Programmatically switch tabs (e.g. from the status-bar Upcoming counter).
 	 * Mirrors a tab-button click: updates active state and re-renders the content.
 	 */
@@ -451,9 +466,7 @@ export class WatchLogView extends ItemView {
 			this.listTab.render();
 		} else if (this.activeTab === 'upcoming') {
 			this.airtimeTab = new AirtimeTab(this.tabContentEl, this.plugin, this.dataManager, (count) => {
-				if (this.airtimeBtn) {
-					this.airtimeBtn.textContent = count > 0 ? `Upcoming (${count})` : 'Upcoming';
-				}
+				this.setTabBadge(this.airtimeBtn, 'Upcoming', count);
 			});
 			this.airtimeTab.render();
 		} else if (this.activeTab === 'reading') {
@@ -537,13 +550,11 @@ export class WatchLogView extends ItemView {
 	private updateUpcomingBadge(): void {
 		if (!this.airtimeBtn) return;
 		const count = AirtimeTab.getAiredDueCount(this.dataManager, this.plugin.readingDataManager) + AirtimeTab.getMaybeDueCount(this.dataManager);
-		this.airtimeBtn.textContent = count > 0 ? `Upcoming (${count})` : 'Upcoming';
+		this.setTabBadge(this.airtimeBtn, 'Upcoming', count);
 	}
 
 	private setDraftsBadge(count: number): void {
-		if (this.draftsBtn) {
-			this.draftsBtn.textContent = count > 0 ? `Drafts (${count})` : 'Drafts';
-		}
+		this.setTabBadge(this.draftsBtn, 'Drafts', count);
 	}
 
 	/** Count-only drafts scan to keep the tab badge correct even before the Drafts tab is opened. */

@@ -1,7 +1,7 @@
 import { App, Notice, Platform, PluginSettingTab, Setting, normalizePath } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { TagDefinition, ReadingStatus, ReadingData } from './types';
-import { SELECTABLE_READING_STATUSES } from './types';
+import { SELECTABLE_READING_STATUSES, LAST_USED_TYPE_SENTINEL } from './types';
 import { CsvModal } from './CsvModal';
 import { ReadingCsvChoiceModal } from './ReadingCsvChoiceModal';
 import { ReadingCsvModal } from './ReadingCsvModal';
@@ -126,6 +126,21 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 						this.app,
 						`This will clear cached images for all ${titles.length} watch titles and ${readingCount} reading entries. Items without API access will show placeholder cards. Continue?`,
 						() => { void this.refetchAllPosters(); },
+					).open();
+				}),
+			);
+
+		new Setting(el)
+			.setName('Rewrite all note frontmatter')
+			.setDesc('Rewrites the YAML frontmatter on every existing Watchlist and Reading note, applying newer frontmatter fields to older notes. Body content (## Notes / ## Quotes) is preserved. Notes without a file on disk are skipped — use Regenerate to create them.')
+			.addButton((b) =>
+				b.setButtonText('Rewrite frontmatter').onClick(() => {
+					const titles = this.plugin.dataManager.getTitles();
+					const readingCount = this.plugin.readingDataManager.getBooks().length + this.plugin.readingDataManager.getMangaList().length;
+					new ConfirmModal(
+						this.app,
+						`This will rewrite the YAML frontmatter on all existing notes for ${titles.length} watch titles and ${readingCount} reading entries. Body content is preserved; notes without a file on disk are skipped. Continue?`,
+						() => { void this.rewriteAllFrontmatter(); },
 					).open();
 				}),
 			);
@@ -402,6 +417,76 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		await reading.saveAndNotify();
 
 		new Notice('Cached posters and covers cleared. Watch posters reload as you browse; refresh reading covers from each card\'s ⋮ menu.');
+	}
+
+	/**
+	 * Retroactively rewrites the frontmatter block on every existing note
+	 * (Watchlist titles + Reading books/manga), preserving each body. Reuses the
+	 * body-preserving frontmatter-only update path; missing files are skipped (no
+	 * creation). Processes in chunks with a live, cancelable progress notice and
+	 * exposes cancellation via the shared importProgress infrastructure.
+	 */
+	private async rewriteAllFrontmatter(): Promise<void> {
+		const dm = this.plugin.dataManager;
+		const reading = this.plugin.readingDataManager;
+		const titles = dm.getTitles();
+		const books = reading.getBooks();
+		const manga = reading.getMangaList();
+		const total = titles.length + books.length + manga.length;
+		if (total === 0) {
+			new Notice('No notes to rewrite.');
+			return;
+		}
+
+		// One flat list of work units; each returns true when a file was rewritten,
+		// false when it was skipped (no file on disk).
+		const jobs: Array<() => Promise<boolean>> = [
+			...titles.map((t) => () => dm.rewriteFrontmatterIfExists(t)),
+			...books.map((b) => () => reading.rewriteFrontmatterIfExists('book', b)),
+			...manga.map((m) => () => reading.rewriteFrontmatterIfExists('manga', m)),
+		];
+
+		let cancelled = false;
+		const cancelFn = (): void => { cancelled = true; };
+		// Expose to the shared progress infra (Watchlist header renders its cancel
+		// button) and re-render so it appears.
+		this.plugin.importProgress = { current: 0, total, cancel: cancelFn };
+		dm.notifyChange();
+
+		// Live, in-place progress notice with its own cancel button (the user is in
+		// Settings, where the header bar isn't visible). Persistent (timeout 0).
+		const notice = new Notice('', 0);
+		const label = notice.messageEl.createSpan({ text: `Rewriting frontmatter… 0 / ${total}` });
+		const cancelBtn = notice.messageEl.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Cancel' });
+		cancelBtn.setCssProps({ 'margin-left': '8px' });
+		cancelBtn.addEventListener('click', cancelFn);
+
+		const CHUNK_SIZE = 10;
+		let rewritten = 0;
+		let skipped = 0;
+		let done = 0;
+		try {
+			for (let i = 0; i < jobs.length; i++) {
+				if (cancelled) break;
+				if (await jobs[i]!()) rewritten++; else skipped++;
+				done++;
+				// Update progress and yield to the event loop every chunk so the UI
+				// can repaint and stays responsive across 700+ notes.
+				if (done % CHUNK_SIZE === 0 || done === total) {
+					this.plugin.importProgress = { current: done, total, cancel: cancelFn };
+					label.textContent = `Rewriting frontmatter… ${done} / ${total}`;
+					await new Promise((r) => window.setTimeout(r, 0));
+				}
+			}
+		} finally {
+			this.plugin.importProgress = null;
+			dm.notifyChange();
+			notice.hide();
+		}
+
+		const skippedMsg = skipped > 0 ? `, ${skipped} skipped (no file)` : '';
+		const prefix = cancelled ? 'Cancelled — ' : 'Done — ';
+		new Notice(`${prefix}${rewritten} note${rewritten !== 1 ? 's' : ''} rewritten${skippedMsg}.`);
 	}
 
 	private async runRegenerate(
@@ -975,6 +1060,22 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 						activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
 					}),
 			);
+
+		new Setting(el)
+			.setName('Default type for new titles')
+			.setDesc('Type preselected when adding a title. "Last type used" follows whatever you added last.')
+			.addDropdown((d) => {
+				d.addOption(LAST_USED_TYPE_SENTINEL, '* Last type used');
+				for (const t of this.plugin.settings.types) {
+					d.addOption(t.name, t.name);
+				}
+				d.setValue(this.plugin.settings.defaultAddType ?? LAST_USED_TYPE_SENTINEL).onChange(
+					async (v) => {
+						this.plugin.settings.defaultAddType = v;
+						await this.plugin.saveSettings();
+					},
+				);
+			});
 
 		new Setting(el)
 			.setName('Auto-complete on last episode')

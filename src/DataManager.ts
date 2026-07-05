@@ -3,6 +3,7 @@ import type WatchLogPlugin from './main';
 import type { WatchLogData, WatchLogTitle, WatchLogGroup, AirtimeEntry, MaybeTitle, SavedFilterPreset, WatchLogPluginSettings, Book, Manga } from './types';
 import type { HistoryManager } from './HistoryManager';
 import { formatHistoryDate } from './HistoryManager';
+import { getDisplayPoster, getDisplayTrailer, getDisplayCredits } from './types';
 
 function isValidWatchLogData(data: unknown): data is WatchLogData {
 	return (
@@ -104,6 +105,8 @@ export class DataManager {
 
 			if (title.posterUrl === undefined) { title.posterUrl = ''; changed = true; }
 			if (title.manualPosterUrl === undefined) { title.manualPosterUrl = ''; changed = true; }
+			if (title.trailerUrl === undefined) { title.trailerUrl = ''; changed = true; }
+			if (title.manualTrailerUrl === undefined) { title.manualTrailerUrl = ''; changed = true; }
 			if (title.anilistId === undefined) { title.anilistId = 0; changed = true; }
 			if (title.communityRating === undefined) { title.communityRating = 0; changed = true; }
 			if (title.communityVotes === undefined) { title.communityVotes = 0; changed = true; }
@@ -154,6 +157,33 @@ export class DataManager {
 		title.communitySource = source;
 		title.communityRatingLastFetched = new Date().toISOString();
 		void this.saveOnly();
+	}
+
+	/**
+	 * Silent trailer URL update (manual refresh). Writes the value in memory and
+	 * saves to disk without notifying listeners — the caller re-renders its own row.
+	 */
+	updateTrailerUrl(titleId: string, url: string): void {
+		const title = this.data.titles.find((t) => t.id === titleId);
+		if (!title) return;
+		title.trailerUrl = url;
+		void this.saveOnly();
+	}
+
+	/**
+	 * Persists a director/cast backfill through the normal update path: data.json
+	 * AND the title's markdown frontmatter are written in the same operation (NOT
+	 * the poster-style silent save, which skips the .md file). Deliberately does
+	 * not stamp dateModified — a background backfill is not a user edit and must
+	 * not reshuffle "recently modified" sorts.
+	 */
+	async updateCredits(titleId: string, director: string[], cast: string[]): Promise<void> {
+		const title = this.getTitle(titleId);
+		if (!title) return;
+		title.director = director;
+		title.cast = cast;
+		await this.save();
+		await this.updateMarkdownFile(title);
 	}
 
 	private schedulePosterSave(): void {
@@ -300,6 +330,11 @@ export class DataManager {
 	}
 
 	async addTitle(title: WatchLogTitle): Promise<void> {
+		// Ensure a freshly-added title carries an empty-string posterUrl (not undefined)
+		// so the Cards "needs-poster" gate enqueues an auto-fetch on first render.
+		if (title.posterUrl === undefined) title.posterUrl = '';
+		if (title.trailerUrl === undefined) title.trailerUrl = '';
+		if (title.manualTrailerUrl === undefined) title.manualTrailerUrl = '';
 		const autoUpcoming = this.canAutoAddToUpcoming(title);
 		if (autoUpcoming) {
 			title.status = 'To be released';
@@ -1101,11 +1136,87 @@ export class DataManager {
 
 		const existing = this.app.vault.getAbstractFileByPath(filePath);
 		if (existing instanceof TFile) {
-			await this.app.vault.modify(existing, content);
+			// Body-preserving update: swap the leading frontmatter block, then
+			// replace ONLY the `## Notes` section body with the title's notes.
+			// Everything else — frontmatter aside, other headings, any prose the
+			// user wrote outside `## Notes` — is kept verbatim (no append/dup).
+			// Mirrors how Reading rewrites frontmatter while preserving its body.
+			const current = await this.app.vault.read(existing);
+			let updated = this.rebuildWithFrontmatter(current, this.buildFrontmatter(title, progress));
+			updated = this.replaceNotesSection(updated, title.notes);
+			if (updated !== current) {
+				await this.app.vault.modify(existing, updated);
+			}
 		} else {
+			// New file: write the full template (frontmatter + ## Notes from title.notes).
 			await this.app.vault.create(filePath, content);
 		}
 		this.lastMarkdownPathById.set(title.id, filePath);
+	}
+
+	/**
+	 * Replaces only the leading `---…---` frontmatter block, preserving the body.
+	 * If the file has no frontmatter, the new block is prepended. Mirrors the
+	 * Reading note path (ReadingDataManager.rebuildWithFrontmatter).
+	 */
+	private rebuildWithFrontmatter(existing: string, frontmatter: string): string {
+		const fmMatch = existing.match(/^---\n[\s\S]*?\n---\n?/);
+		if (fmMatch) {
+			return frontmatter + '\n' + existing.slice(fmMatch[0].length);
+		}
+		// No frontmatter found — prepend it.
+		return frontmatter + '\n\n' + existing;
+	}
+
+	/**
+	 * Reads back the `## Notes` section body from an existing title note file.
+	 * Returns null when the file or section is absent. Lets manual edits made
+	 * directly in the .md file flow back into the plugin (mirrors how Reading
+	 * reads its Quotes section from the file).
+	 */
+	async readNotesFromFile(title: WatchLogTitle): Promise<string | null> {
+		const filePath = this.getNoteFilePath(title);
+		const file = this.app.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) {
+			// Diagnostic: the resolved path didn't match a real file on disk — the
+			// likely culprit if read-back ever stops working (sanitization / folder
+			// / rename mismatch). Logged so it can be verified against the vault.
+			console.warn(
+				`[WatchLog] Notes read: no note file at resolved path "${filePath}" for title "${title.title}"`,
+			);
+			return null;
+		}
+		const content = await this.app.vault.read(file);
+		const match = content.match(/(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/);
+		if (!match) return null;
+		// Strip the leading blank line the template inserts and any trailing whitespace,
+		// but keep the user's internal line breaks intact.
+		return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
+	}
+
+	/**
+	 * Replaces the body of the `## Notes` section with `notesBody`, preserving the
+	 * heading, every other section, the frontmatter, and any prose outside it. When
+	 * no `## Notes` heading exists, one is appended at the end (never duplicated).
+	 * The section boundary matches `readNotesFromFile` (next `## ` / `# ` heading or
+	 * EOF) so a read-then-write round-trips cleanly.
+	 */
+	private replaceNotesSection(existing: string, notesBody: string): string {
+		const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
+		if (!headingMatch || headingMatch.index === undefined) {
+			const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+			return `${existing}${sep}\n## Notes\n\n${notesBody}\n`;
+		}
+		const bodyStart = headingMatch.index + headingMatch[0].length;
+		const after = existing.slice(bodyStart);
+		const nextHeading = after.match(/\n(?:## |# )/);
+		const bodyEnd =
+			nextHeading && nextHeading.index !== undefined
+				? bodyStart + nextHeading.index
+				: existing.length;
+		const before = existing.slice(0, bodyStart);
+		const rest = existing.slice(bodyEnd);
+		return `${before}\n${notesBody}\n${rest}`;
 	}
 
 	async createMarkdownFileIfMissing(title: WatchLogTitle): Promise<boolean> {
@@ -1120,19 +1231,80 @@ export class DataManager {
 		return true;
 	}
 
+	/**
+	 * Rewrites ONLY the frontmatter block of an existing title note, preserving the
+	 * entire body verbatim (`## Notes` and anything else). Does NOT create the file
+	 * when missing — returns false in that case. Powers the bulk "Rewrite all
+	 * frontmatter" action that applies newer frontmatter fields to old notes.
+	 */
+	async rewriteFrontmatterIfExists(title: WatchLogTitle): Promise<boolean> {
+		const filePath = this.getNoteFilePath(title);
+		const file = this.app.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return false;
+		const current = await this.app.vault.read(file);
+		const updated = this.rebuildWithFrontmatter(current, this.buildFrontmatter(title, this.getProgress(title)));
+		if (updated !== current) {
+			await this.app.vault.modify(file, updated);
+		}
+		this.lastMarkdownPathById.set(title.id, filePath);
+		return true;
+	}
+
+	/**
+	 * YAML-quotes a string value (escaping backslashes and double quotes) so a
+	 * title or URL containing `:` can't break the frontmatter. Same helper Reading
+	 * uses; empty strings become `""`.
+	 */
+	private yamlEscape(value: string): string {
+		if (value === '') return '""';
+		return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+	}
+
+	/** The leading `---…---` frontmatter block (no trailing newline). */
+	private buildFrontmatter(title: WatchLogTitle, progress: number): string {
+		const esc = (v: string): string => this.yamlEscape(v);
+		const lines: string[] = ['---'];
+		// Text values are routed through yamlEscape; numbers/booleans/dates emit
+		// unquoted. Optional fields are omitted when absent to avoid noise.
+		lines.push(`title: ${esc(title.title)}`);
+		lines.push(`type: ${esc(title.type)}`);
+		lines.push(`status: ${esc(title.status)}`);
+		lines.push(`priority: ${esc(title.priority)}`);
+		if (title.review) lines.push(`review: ${esc(title.review)}`);
+		lines.push(`rating: ${title.rating}`);
+		lines.push(`progress: ${progress}%`);
+		lines.push(`totalEpisodes: ${title.totalEpisodes}`);
+		lines.push(`episodeDuration: ${title.episodeDuration}`);
+		lines.push(`dateStarted: ${title.dateStarted ?? 'null'}`);
+		lines.push(`dateFinished: ${title.dateFinished ?? 'null'}`);
+		lines.push(`dateAdded: ${esc(title.dateAdded)}`);
+		lines.push(`dateModified: ${esc(title.dateModified)}`);
+		if (title.releaseDate) lines.push(`releaseDate: ${title.releaseDate}`);
+		if (title.malId !== undefined) lines.push(`malId: ${title.malId}`);
+		if (title.anilistId !== undefined) lines.push(`anilistId: ${title.anilistId}`);
+		if (title.communityRating !== undefined) lines.push(`communityRating: ${title.communityRating}`);
+		if (title.communityVotes !== undefined) lines.push(`communityVotes: ${title.communityVotes}`);
+		if (title.communitySource) lines.push(`communitySource: ${esc(title.communitySource)}`);
+		// Inline YAML arrays; unfetched and 'none' credits are both omitted.
+		const director = getDisplayCredits(title.director);
+		if (director.length > 0) lines.push(`director: [${director.map(esc).join(', ')}]`);
+		const cast = getDisplayCredits(title.cast);
+		if (cast.length > 0) lines.push(`cast: [${cast.map(esc).join(', ')}]`);
+		// Single resolved poster (manual override if set, else auto-fetched).
+		const poster = getDisplayPoster(title);
+		if (poster && poster !== 'none') lines.push(`poster: ${esc(poster)}`);
+		// Single resolved trailer (manual override if set, else auto-fetched).
+		const trailer = getDisplayTrailer(title);
+		if (trailer) lines.push(`trailer: ${esc(trailer)}`);
+		if (title.externalLink) lines.push(`externalLink: ${esc(title.externalLink)}`);
+		if (title.pinned) lines.push(`pinned: true`);
+		lines.push('---');
+		return lines.join('\n');
+	}
+
+	/** Full note template (frontmatter + ## Notes body). Used only when creating a new file. */
 	private buildMarkdownContent(title: WatchLogTitle, progress: number): string {
-		return `---
-title: ${title.title.replace(/[*"\\/<>:|?]/g, '-')}
-type: ${title.type}
-status: ${title.status}
-priority: ${title.priority}
-rating: ${title.rating}
-dateStarted: ${title.dateStarted ?? 'null'}
-dateFinished: ${title.dateFinished ?? 'null'}
-progress: ${progress}%
-totalEpisodes: ${title.totalEpisodes}
-externalLink: ${title.externalLink}
----
+		return `${this.buildFrontmatter(title, progress)}
 
 ## Notes
 

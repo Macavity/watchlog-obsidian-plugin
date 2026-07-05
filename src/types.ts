@@ -38,6 +38,52 @@ export interface WatchLogTitle {
 	posterUrl?: string;
 	/** User-supplied override — takes priority over posterUrl when non-empty. */
 	manualPosterUrl?: string;
+	/** '' = unfetched, 'none' = source without a trailer (e.g. OMDb), or a YouTube URL. */
+	trailerUrl?: string;
+	/** User-supplied override — takes priority over trailerUrl when non-empty. */
+	manualTrailerUrl?: string;
+	/** Director name(s). Absent/empty = unfetched, ['none'] = fetch failed or unavailable. */
+	director?: string[];
+	/** Cast names, capped at MAX_CAST. Absent/empty = unfetched, ['none'] = fetch failed or unavailable. */
+	cast?: string[];
+}
+
+// ── Credits (director / cast) ────────────────────────────────────────────────
+
+/**
+ * Hardcoded cast cap applied to every source, so a title looks the same
+ * whether it came from OMDb (4 actors natively) or TMDB (full cast, sliced).
+ */
+export const MAX_CAST = 4;
+
+/** Sentinel marking a credits field whose fetch failed or returned nothing (posterUrl's 'none' pattern). */
+export const CREDITS_NONE = 'none';
+
+/** True when the field was fetched but yielded nothing — never re-fetch. */
+export function isCreditsNone(names: string[] | undefined): boolean {
+	return names?.length === 1 && names[0] === CREDITS_NONE;
+}
+
+/** True when the field has never been fetched (absent or empty). */
+export function isCreditsUnfetched(names: string[] | undefined): boolean {
+	return !names || names.length === 0;
+}
+
+/** True when either credits field still needs its one-time fetch. */
+export function needsCreditsFetch(title: WatchLogTitle): boolean {
+	return isCreditsUnfetched(title.director) || isCreditsUnfetched(title.cast);
+}
+
+/** Names to render/search: real values only — unfetched and 'none' both yield []. */
+export function getDisplayCredits(names: string[] | undefined): string[] {
+	if (!names || isCreditsNone(names)) return [];
+	return names;
+}
+
+/** Normalizes a fetched name list for storage: caps cast, maps empty to the 'none' sentinel. */
+export function normalizeCreditsForStore(names: string[]): string[] {
+	const cleaned = names.map((n) => n.trim()).filter((n) => n !== '' && n !== 'N/A');
+	return cleaned.length > 0 ? cleaned.slice(0, MAX_CAST) : [CREDITS_NONE];
 }
 
 export interface WatchLogGroup {
@@ -60,9 +106,12 @@ export interface CustomListColumn {
 	type: 'text' | 'number' | 'select';
 	locked?: boolean;
 	options?: string[];   // only for type: 'select'
+	optionColors?: Record<string, string>; // option value → hex; only for type: 'select'
 	bold?: boolean;       // only for type: 'text' | 'number'
 	italic?: boolean;     // only for type: 'text' | 'number'
 	autoTime?: boolean;   // only for type: 'number' — auto-populate with remaining watch time
+	/** Explicit rendered width in px. Absent = use the default flex width. Dropped with the column. */
+	width?: number;
 }
 
 export interface CustomListRow {
@@ -89,6 +138,9 @@ export interface CustomList {
 	columns: CustomListColumn[];
 	rows: CustomListRow[];
 	notes: string;
+	tabColor?: string; // hex; colours this list's tab name. Unset = default.
+	/** Explicit width in px for the built-in Name column. Absent = default flex width. */
+	nameWidth?: number;
 }
 
 // ── Drafts types ─────────────────────────────────────────────────────────────
@@ -121,6 +173,13 @@ export interface WatchLogPluginSettings {
 	seasonPalette: string[];
 	dashboardCardStyle: 'circles' | 'rectangles';
 	episodeNumbering: 'absolute' | 'per-season';
+	/**
+	 * Default type preselected in the Add modal. Either a real type slug (a
+	 * `types[].name`) or `LAST_USED_TYPE_SENTINEL` to follow the last added type.
+	 */
+	defaultAddType: string;
+	/** Type slug of the most recently added title. Updated silently on every add. */
+	lastAddedType: string;
 	/** User-configurable colors for the Reading type badges (Manga / Book). */
 	readingTypeColors: { manga: string; book: string };
 	customListsFolder: string;
@@ -371,6 +430,12 @@ export function getAirtimeScheduleString(schedule: AirtimeSchedule): string {
 	return '—';
 }
 
+/**
+ * Sentinel value for `defaultAddType` meaning "use the last type the user added".
+ * A real type slug (a `types[].name`) can never collide with this.
+ */
+export const LAST_USED_TYPE_SENTINEL = '__wl_last_used__';
+
 export const DEFAULT_SETTINGS: WatchLogPluginSettings = {
 	colorTheme: 'default',
 	defaultWatchlistView: 'cards',
@@ -409,8 +474,10 @@ export const DEFAULT_SETTINGS: WatchLogPluginSettings = {
 	rootFolder: 'WatchLog',
 	autoCreateFolders: true,
 	coloredTypeBadges: true,
-	dashboardCardStyle: 'circles',
+	dashboardCardStyle: 'rectangles',
 	episodeNumbering: 'absolute',
+	defaultAddType: LAST_USED_TYPE_SENTINEL,
+	lastAddedType: '',
 	readingTypeColors: { manga: '#D4537E', book: '#D85A30' },
 	customListsFolder: 'WatchLog/CustomLists',
 	defaultCustomColumns: [],
@@ -547,6 +614,18 @@ export function getDisplayPoster(title: WatchLogTitle): string {
 	return title.posterUrl ?? '';
 }
 
+/**
+ * Returns the trailer URL to render for a title. A non-empty `manualTrailerUrl`
+ * takes priority over the auto-fetched `trailerUrl`; `'none'` (source without a
+ * trailer) and `''` (unfetched) both resolve to an empty string.
+ */
+export function getDisplayTrailer(title: WatchLogTitle): string {
+	if (title.manualTrailerUrl && title.manualTrailerUrl.trim() !== '') {
+		return title.manualTrailerUrl;
+	}
+	return title.trailerUrl && title.trailerUrl !== 'none' ? title.trailerUrl : '';
+}
+
 export function formatVoteCount(votes: number): string {
 	if (!votes || votes < 0) return '0';
 	if (votes >= 1_000_000) return (votes / 1_000_000).toFixed(1) + 'M';
@@ -579,6 +658,8 @@ export interface AnimeSearchResult {
 	averageScore?: number;
 	genres?: string[];
 	posterUrl?: string;
+	/** '' = unresolved, 'none' = no trailer, or a YouTube watch URL. */
+	trailerUrl?: string;
 }
 
 // ── AniList API shapes ───────────────────────────────────────────────────────
@@ -614,6 +695,7 @@ export interface AniListMedia {
 	coverImage?: AniListCoverImage | null;
 	description?: string | null;
 	genres?: string[] | null;
+	trailer?: { id?: string | null; site?: string | null } | null;
 	nextAiringEpisode?: {
 		airingAt?: number | null;
 		episode?: number | null;
@@ -640,6 +722,13 @@ export interface MediaSearchResult {
 	releaseDate: string;
 	url: string;
 	seasons: Season[];
+	posterUrl?: string;
+	/** '' = unresolved, 'none' = no trailer, or a YouTube watch URL. */
+	trailerUrl?: string;
+	/** Only set by detail lookups: normalized name list or ['none'] (see CREDITS_NONE). */
+	director?: string[];
+	/** Only set by detail lookups: normalized name list (capped at MAX_CAST) or ['none']. */
+	cast?: string[];
 }
 
 // ── Jikan API shapes ─────────────────────────────────────────────────────────
@@ -652,6 +741,10 @@ export interface JikanAnime {
 	duration: string | null;
 	aired: { from: string | null } | null;
 	url: string;
+	images?: { jpg?: { image_url?: string | null; small_image_url?: string | null } | null } | null;
+	// Jikan often leaves youtube_id / url null while embed_url still carries the id,
+	// so all three are parsed defensively (see ApiService.extractYoutubeId).
+	trailer?: { youtube_id?: string | null; url?: string | null; embed_url?: string | null } | null;
 }
 
 // ── OMDb API shapes ───────────────────────────────────────────────────────────
@@ -681,6 +774,10 @@ export interface OmdbDetailResponse {
 	Error?: string;
 	imdbRating?: string;
 	imdbVotes?: string;
+	/** Comma-separated director name(s), or 'N/A'. */
+	Director?: string;
+	/** Comma-separated actor names (OMDb returns at most 4), or 'N/A'. */
+	Actors?: string;
 }
 
 export interface OmdbSeasonResponse {
@@ -697,10 +794,28 @@ export interface TmdbSearchItem {
 	name?: string;
 	release_date?: string;
 	first_air_date?: string;
+	poster_path?: string | null;
 }
 
 export interface TmdbSearchResponse {
 	results?: TmdbSearchItem[];
+}
+
+export interface TmdbVideo {
+	key: string;
+	site: string;
+	type: string;
+	official?: boolean;
+	name?: string;
+}
+
+export interface TmdbVideosResult {
+	results?: TmdbVideo[];
+}
+
+export interface TmdbCreditsResult {
+	cast?: Array<{ name?: string }>;
+	crew?: Array<{ name?: string; job?: string }>;
 }
 
 export interface TmdbMovieDetail {
@@ -709,6 +824,10 @@ export interface TmdbMovieDetail {
 	runtime?: number;
 	release_date?: string;
 	imdb_id?: string;
+	/** Present only when the detail call uses append_to_response=videos. */
+	videos?: TmdbVideosResult;
+	/** Present only when the detail call uses append_to_response=credits. */
+	credits?: TmdbCreditsResult;
 }
 
 export interface TmdbTvSeason {
@@ -724,6 +843,10 @@ export interface TmdbTvDetail {
 	first_air_date?: string;
 	number_of_episodes?: number;
 	seasons?: TmdbTvSeason[];
+	/** Present only when the detail call uses append_to_response=videos. */
+	videos?: TmdbVideosResult;
+	/** Present only when the detail call uses append_to_response=credits. */
+	credits?: TmdbCreditsResult;
 }
 
 export interface TmdbExternalIds {

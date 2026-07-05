@@ -87,6 +87,9 @@ export class AddFromUrlModal extends Modal {
 				releaseDate: result.releaseDate,
 				link: result.url,
 				seasons: result.seasons,
+				trailerUrl: result.trailerUrl ?? '',
+				director: result.director,
+				cast: result.cast,
 			}).open();
 		} finally {
 			if (this.addBtn) {

@@ -1,6 +1,44 @@
 # Changelog
 
 All notable changes to WatchLog are documented here.
+## [2.2.0] - 2026-07-05
+
+##### Added
+- **Per-list tab color** - each custom list tab can now be assigned a color, applied to its tab name. Set it via a color picker in Table settings (renamed from "Edit columns").
+- **Per-option colors for select columns** - each option of a select-type column can be given its own color, defined per table; the colored badge reflects the option's color in both the cell and the selection dropdown.
+- **Custom colors everywhere** - the color picker now offers the 8 presets plus a full-spectrum custom color, with a built-in reset-to-default. Available for Custom Lists tab/option colors and Reading field colors alike.
+- **Column resizing** - Columns now can be resized
+- **TSV export** - Export now offers a format chooser: copy as TSV (pastes cleanly into Google Sheets / Excel as columns) or as Markdown (for pasting into notes).
+- **Import rows** - a new Import button lets you paste tab-separated data copied from a spreadsheet to append rows to the current list
+- **Select-all tick** - a tick in the table header checks or unchecks all visible rows at once.
+- Now you can select default content type for adding titles - pick a fixed type or `* Last type used` (remembers your last choice) in Settings → Watchlist.
+- Richer note frontmatter — Watchlist notes now carry review, dates, episode duration, IDs, community rating, a single resolved poster, and more; Reading notes add cover, external link, and modified date. Makes notes portable and `.base`-friendly.
+- "Rewrite frontmatter on all notes" button (Settings → General) to apply the enriched frontmatter to existing notes - chunked, cancelable, preserves note bodies.
+- Cover thumbnails in search results when adding titles, books, and manga, so you can tell same-named entries apart.
+- **Director & cast fields** on Watchlist titles (`director`, `cast` — both `string[]`). Cast is hardcoded-capped at 4 across every source, so a title looks identical regardless of which API supplied it.
+- **Lazy backfill on modal open**: opening `TitleDetailModal` for an older title missing the fields triggers a one-time fetch keyed off the IMDb id in its external link (prefers active API, falls back to the other keyed one). Persists through a new `DataManager.updateCredits()` that writes both `data.json` and the note frontmatter in one operation — not the silent poster path.
+- **UI**: shared `renderCreditsRows` renders Director/Cast in the modal (below the stats box) and in the List view expanded row (under the "Not started" line). Names render as clickable chips (theme-variable CSS).
+- **Click-to-filter**: clicking a name routes it into the existing search bar — visible, clearable, and matching typed-search behaviour.
+- **YouTube trailers** — auto-fetched at add-time (TMDB, Jikan, AniList; OMDb has none), stored per title, shown as a red YouTube icon on the detail row and saved to note frontmatter. Manual override field in Edit. Existing titles get a refresh button to fetch on demand.
+- Added the cover image to the left of the title detail modal (Movie/Series), with the full header block (title + badges + stats) moved to its right, mirroring the Reading modal layout. Letter-placeholder fallback when no poster exists.
+
+##### Improved
+- Add-title form compacted (Episodes/Duration and Status/Priority paired onto single rows), giving the search results more room.
+- Dashboard grid now adapts to panel width on mobile (3→2→1 columns); desktop unchanged.
+- Mobile tab bar switched to icons so all tabs fit on one row without scrolling.
+##### Changed
+- Switching a column to **select** now populates its options from the distinct values already present in that column's cells (in order of first appearance), preserving existing cell values instead of resurrecting stale options.
+- **Dashboard** — default card style is now rectangles for new installs.
+- **Edit modal** — Status/Priority, Total episodes/Ep. duration, and Date started/Date finished now share rows; added the "Add to group / create new group" section.
+
+##### Fixed
+- **Cover art accuracy** - posters are now matched by media type (Movie vs TV Show), preferring the correct release year, and resolved directly via IMDb id when available, instead of blindly taking the first multi-search result. Fixes cases where the wrong image was pulled (e.g. a film getting its TV series' poster). Applies to both TMDB and OMDb.
+- Watchlist notes no longer overwrite content you wrote by hand directly in the `.md` file.
+- Title frontmatter now escapes special characters - titles or links containing `:` no longer break the YAML.
+- Dashboard no longer overflows off-screen on mobile.
+- Fixed the whole view dragging sideways like a loose sheet on mobile.
+- **Cards view** — selection now works (click a card to select, 3px purple border on selected); fixed the flicker when entering/exiting selection mode (no more full tab rebuild).
+- Fixed the progressively-climbing CLS on scroll in Cards View.
 
 
 ## [2.1.0] - 2026-06-17

@@ -3,14 +3,16 @@ import type WatchLogPlugin from './main';
 import type { ReadingDataManager } from './ReadingDataManager';
 import {
 	Book, Manga, ReadingCustomColumn, ReadingStatus, SELECTABLE_READING_STATUSES,
-	FIELD_COLOR_50, DEFAULT_FIELD_COLOR,
+	DEFAULT_FIELD_COLOR,
 	formatDateDisplay, parseDateInput,
 } from './types';
+import { deriveFillColor, deriveBorderColor } from './ColorPicker';
 import { googleBooksErrorMessage } from './ApiService';
 import { appendNoteLinkButton } from './NoteLinkButton';
 import { ConfirmModal } from './ConfirmModal';
 import { VaultFilePicker } from './AddReadingModal';
 import { readingStatusColor, coverFallbackColor } from './ReadingTab';
+import { openStatusDropdown } from './StatusDropdown';
 import { ReadingManageColumnsModal } from './ReadingManageColumnsModal';
 
 interface ParsedQuote {
@@ -365,33 +367,14 @@ export class ReadingDetailModal extends Modal {
 	}
 
 	private openStatusDropdown(anchor: HTMLElement, wrap: HTMLElement): void {
-		this.contentEl.querySelectorAll('.wl-reading-status-dropdown').forEach((el) => el.remove());
-		const rect = anchor.getBoundingClientRect();
-		const dropdown = this.contentEl.createDiv({ cls: 'wl-reading-status-dropdown' });
-		dropdown.style.top = `${rect.bottom + 4}px`;
-		dropdown.style.left = `${rect.left}px`;
-		// Capture the owning document once so add/remove can't desync across popout windows.
-		const doc = this.contentEl.ownerDocument;
-
-		for (const status of SELECTABLE_READING_STATUSES) {
-			const opt = dropdown.createDiv({ cls: 'wl-reading-status-option' });
-			const dot = opt.createSpan({ cls: 'wl-reading-status-option-dot' });
-			dot.style.backgroundColor = readingStatusColor(status);
-			opt.createSpan({ text: status });
-			opt.addEventListener('click', () => {
-				dropdown.remove();
-				doc.removeEventListener('mousedown', closeListener, true);
-				void this.saveStatus(status).then(() => this.renderStatusBadge(wrap));
-			});
-		}
-
-		const closeListener = (e: MouseEvent): void => {
-			if (!dropdown.contains(e.target as Node)) {
-				dropdown.remove();
-				doc.removeEventListener('mousedown', closeListener, true);
-			}
-		};
-		window.setTimeout(() => doc.addEventListener('mousedown', closeListener, true), 0);
+		openStatusDropdown({
+			anchor,
+			container: this.contentEl,
+			options: [...SELECTABLE_READING_STATUSES],
+			getOptionColor: (status) => readingStatusColor(status as ReadingStatus),
+			onSelect: (status) =>
+				void this.saveStatus(status as ReadingStatus).then(() => this.renderStatusBadge(wrap)),
+		});
 	}
 
 	private async saveStatus(status: ReadingStatus): Promise<void> {
@@ -1153,15 +1136,14 @@ export class ReadingDetailModal extends Modal {
 		const style = this.mode === 'book'
 			? (settings.bookCustomFieldStyle ?? 'fill')
 			: (settings.mangaCustomFieldStyle ?? 'fill');
-		const color600 = col.color ?? DEFAULT_FIELD_COLOR;
+		const color = col.color ?? DEFAULT_FIELD_COLOR;
 
 		// Fill/border looks live in CSS keyed off the table's is-border-mode class;
-		// only the per-column colour is dynamic.
+		// only the per-column colour is dynamic. Derivation handles custom hex too.
 		if (style === 'fill') {
-			const color50 = FIELD_COLOR_50[color600] ?? '#F1EFE8';
-			labelCell.setCssProps({ '--wl-field-bg': color50 });
+			labelCell.setCssProps({ '--wl-field-bg': deriveFillColor(color) });
 		} else {
-			labelCell.setCssProps({ '--wl-field-border': color600 });
+			labelCell.setCssProps({ '--wl-field-border': deriveBorderColor(color) });
 		}
 
 		const raw = item.customFields?.[col.id];
