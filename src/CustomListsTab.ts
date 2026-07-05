@@ -389,10 +389,10 @@ function renderColumnList(
 						const c = col.optionColors?.[col.options?.[oi] ?? ''];
 						if (c) {
 							colorDot.removeClass('is-unset');
-							colorDot.setCssProps({ 'background-color': deriveFillColor(c), 'border-color': deriveBorderColor(c) });
+							// Colours flow through CSS vars; .is-unset gates whether they apply.
+							colorDot.setCssProps({ '--wl-dot-fill': deriveFillColor(c), '--wl-dot-border': deriveBorderColor(c) });
 						} else {
 							colorDot.addClass('is-unset');
-							colorDot.setCssProps({ 'background-color': '', 'border-color': '' });
 						}
 					};
 					syncDot();
@@ -541,10 +541,10 @@ export class EditColumnsModal extends Modal {
 		const sync = (): void => {
 			if (this.tabColor) {
 				dot.removeClass('is-unset');
-				dot.setCssProps({ 'background-color': this.tabColor });
+				// Colour flows through a CSS var; .is-unset gates whether it applies.
+				dot.setCssProps({ '--wl-dot-fill': this.tabColor });
 			} else {
 				dot.addClass('is-unset');
-				dot.setCssProps({ 'background-color': '' });
 			}
 		};
 		sync();
@@ -1410,9 +1410,9 @@ export class CustomListsTab {
 				const realIdx = list.rows.findIndex(r => r.id === row.id);
 				if (realIdx < 0) return;
 				const newRow: CustomListRow = {
-					...(list.rows[realIdx] as object),
+					...list.rows[realIdx],
 					id: this.manager.generateRowId(list.rows),
-				} as CustomListRow;
+				};
 				list.rows.splice(realIdx + 1, 0, newRow);
 				this.duplicatedRowIds.add(newRow.id);
 				void this.manager.saveList(list).then(() => { container.empty(); this.buildTable(container, list, countEl); });

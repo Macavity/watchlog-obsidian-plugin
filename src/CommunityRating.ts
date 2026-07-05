@@ -89,13 +89,14 @@ export function maybeAutoRefreshCommunityRating(
 	if (!hasFetchableSource(title, plugin.settings.animeApiSource ?? 'jikan', plugin.settings.typeApiMapping)) return;
 	if (pendingRatingRefreshes.has(titleId)) return;
 	pendingRatingRefreshes.add(titleId);
-	void backgroundRefresh(plugin, titleId)
-		.then((ok) => {
+	void (async () => {
+		try {
+			const ok = await backgroundRefresh(plugin, titleId);
 			if (ok && onUpdated) onUpdated();
-		})
-		.finally(() => {
+		} finally {
 			pendingRatingRefreshes.delete(titleId);
-		});
+		}
+	})();
 }
 
 function hasFetchableSource(

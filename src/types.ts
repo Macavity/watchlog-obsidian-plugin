@@ -310,8 +310,12 @@ export const FIELD_COLORS: FieldColorEntry[] = [
 	{ color600: '#5F5E5A', color50: '#F1EFE8' },
 ];
 
-export const FIELD_COLOR_50: Record<string, string> = Object.fromEntries(
-	FIELD_COLORS.map(({ color600, color50 }) => [color600, color50]),
+export const FIELD_COLOR_50: Record<string, string> = FIELD_COLORS.reduce<Record<string, string>>(
+	(map, { color600, color50 }) => {
+		map[color600] = color50;
+		return map;
+	},
+	{},
 );
 
 export const DEFAULT_FIELD_COLOR = '#5F5E5A';

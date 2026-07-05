@@ -515,7 +515,8 @@ export class TitleDetailModal extends Modal {
 		});
 		textarea.value = this.title.notes;
 		const autoResize = (): void => {
-			textarea.setCssProps({ height: 'auto' });
+			// Reset to intrinsic height so scrollHeight reflects the content.
+			textarea.style.removeProperty('height');
 			textarea.setCssProps({ height: `${textarea.scrollHeight}px` });
 		};
 		textarea.addEventListener('input', () => {
