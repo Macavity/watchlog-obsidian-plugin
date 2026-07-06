@@ -2171,10 +2171,11 @@
 }
 
 /* Overflow guard (WatchLogView.guardOverflow): re-enables scrolling when an
-   outside mutation forces the tab content to overflow: hidden. !important so
-   the class also beats inline styles, which the old inline fix overwrote. */
-.wl-force-overflow-auto {
-  overflow: auto !important;
+   outside mutation forces the tab content to overflow: hidden. The two-class
+   selector outranks single-class rules; inline overrides are stripped by the
+   guard itself (style.removeProperty) so no !important is needed. */
+.wl-tab-content.wl-force-overflow-auto {
+  overflow: auto;
 }
 
 /* ── Mobile toolbar crossfade slot ──────────────────────────
