@@ -1346,8 +1346,7 @@ export class AirtimeTab {
 			(isMovie && countdown.kind === 'due') ||
 			(!isMovie && countdown.kind === 'aired');
 
-		const cell = activeDocument.createElement('div');
-		cell.className = 'wl-tracker-cell';
+		const cell = createDiv({ cls: 'wl-tracker-cell' });
 		cell.dataset.entryId = entry.id;
 
 		// poster box (the Watchlist card)

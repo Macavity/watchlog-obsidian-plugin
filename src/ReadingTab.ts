@@ -1240,7 +1240,7 @@ export class ReadingTab {
 				buildItem: (i) => {
 					const item = bucket[i];
 					if (!item) return null;
-					const tmp = activeDocument.createElement('div');
+					const tmp = createDiv();
 					if (isBooks) this.renderBookCard(tmp, item as Book);
 					else this.renderMangaCard(tmp, item as Manga);
 					return tmp.firstElementChild as HTMLElement | null;
@@ -1373,7 +1373,7 @@ export class ReadingTab {
 		const cover = card.querySelector<HTMLElement>('.wl-reading-card-cover');
 		if (!cover) return;
 		const icon = cover.querySelector('.wl-reading-card-cover-icon');
-		const img = activeDocument.createElement('img');
+		const img = createEl('img');
 		img.className = 'wl-reading-card-cover-img';
 		img.alt = alt;
 		img.loading = 'lazy';

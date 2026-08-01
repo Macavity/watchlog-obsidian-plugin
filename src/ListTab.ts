@@ -568,7 +568,7 @@ export class ListTab {
 				buildItem: (i, w, h) => {
 					const title = bucketTitles[i];
 					if (!title) return null;
-					const tmp = activeDocument.createElement('div');
+					const tmp = createDiv();
 					this.renderTitleCard(tmp, title, w, h);
 					return tmp.firstElementChild as HTMLElement | null;
 				},
@@ -715,7 +715,7 @@ export class ListTab {
 	): HTMLElement | null {
 		const item = this.cardsDisplayItems[index];
 		if (!item) return null;
-		const tmp = activeDocument.createElement('div');
+		const tmp = createDiv();
 		if (item.kind === 'title') {
 			this.renderTitleCard(tmp, item.data, cardWidth, cardHeight);
 		} else {

@@ -10,6 +10,12 @@ export default tseslint.config(
 				...globals.browser,
 				activeDocument: 'readonly',
 				activeWindow: 'readonly',
+				// Obsidian DOM helpers (obsidian.d.ts globals)
+				createEl: 'readonly',
+				createDiv: 'readonly',
+				createSpan: 'readonly',
+				createSvg: 'readonly',
+				createFragment: 'readonly',
 			},
 			parserOptions: {
 				projectService: {

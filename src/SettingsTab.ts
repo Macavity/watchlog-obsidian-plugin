@@ -269,7 +269,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			btn.createDiv({ cls: 'wl-card-style-hint', text: opt.hint });
 			if (unanimous() === opt.value) btn.addClass('is-active');
 			btn.addEventListener('click', () => {
-				applyStyles(Object.fromEntries(tabs.map((t) => [t.key, opt.value])));
+				// typed record, not Object.fromEntries — that returns `any`
+				const all: Partial<Record<CardStyleTab, CardTextStyle>> = {};
+				for (const t of tabs) all[t.key] = opt.value;
+				applyStyles(all);
 			});
 		}
 
@@ -591,7 +594,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		const blob = new Blob([json], { type: 'application/json' });
 		const url = URL.createObjectURL(blob);
-		const a = activeDocument.createElement('a');
+		const a = createEl('a');
 		a.href = url;
 		a.download = filename;
 		activeDocument.body.appendChild(a);

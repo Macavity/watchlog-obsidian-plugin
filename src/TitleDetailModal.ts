@@ -1394,7 +1394,7 @@ export function buildTitleCardElement(
 		? getThemedColor(title.type, typeDef.color, settings.colorTheme)
 		: '#888780';
 
-	const tmp = activeDocument.createElement('div');
+	const tmp = createDiv();
 	const card = tmp.createDiv({ cls: 'wl-card' });
 	card.dataset.titleId = title.id;
 
