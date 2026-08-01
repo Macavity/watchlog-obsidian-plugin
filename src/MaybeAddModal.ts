@@ -2,7 +2,8 @@ import { App, Modal, Notice } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { MaybeTitle, AnimeSearchResult, MediaSearchResult } from './types';
-import { parseReleaseDateInput, getApiGroupForType } from './types';
+import { formatDateDisplay, getApiGroupForType } from './types';
+import { createDatePicker } from './DatePicker';
 
 type SearchResult = AnimeSearchResult | MediaSearchResult;
 
@@ -138,7 +139,7 @@ export class MaybeAddModal extends Modal {
 			const item = this.resultsEl!.createDiv({ cls: 'wl-result-item' });
 			const epText = isAnimeResult(result) ? `${result.episodes} eps` : result.episodes > 0 ? `${result.episodes} eps` : result.mediaType;
 			item.createDiv({ cls: 'wl-result-title', text: result.title });
-			item.createDiv({ cls: 'wl-result-meta', text: `${epText} · ${result.releaseDate}` });
+			item.createDiv({ cls: 'wl-result-meta', text: `${epText} · ${formatDateDisplay(result.releaseDate)}` });
 			item.dataset['idx'] = String(idx);
 			item.addEventListener('click', () => void this.selectResult(result, item));
 		});
@@ -194,24 +195,21 @@ export class MaybeAddModal extends Modal {
 		const epsRow = makeRow('Episodes');
 		const epsInput = epsRow.createEl('input', { cls: 'wl-modal-input wl-modal-input-sm', attr: { type: 'number', min: '0', placeholder: '0' } });
 		epsInput.value = String(this.fieldEpisodes);
-		epsInput.addEventListener('input', () => { this.fieldEpisodes = parseInt(epsInput.value) || 0; });
+		epsInput.addEventListener('input', () => { this.fieldEpisodes = parseInt(epsInput.value, 10) || 0; });
 
 		const durRow = makeRow('Ep. duration (min)');
 		const durInput = durRow.createEl('input', { cls: 'wl-modal-input wl-modal-input-sm', attr: { type: 'number', min: '0', placeholder: '24' } });
 		durInput.value = String(this.fieldDuration);
-		durInput.addEventListener('input', () => { this.fieldDuration = parseInt(durInput.value) || 0; });
+		durInput.addEventListener('input', () => { this.fieldDuration = parseInt(durInput.value, 10) || 0; });
 
 		const relRow = makeRow('Release date');
 		const relStack = relRow.createDiv({ cls: 'wl-modal-input-stack' });
-		const relInput = relStack.createEl('input', { cls: 'wl-modal-input', attr: { type: 'text', placeholder: 'Date (dd-mm-yyyy or yyyy-mm-dd)' } });
-		relInput.value = this.fieldReleaseDate;
-		const relErrorEl = relStack.createDiv({ cls: 'wl-modal-error wl-hidden' });
-		relInput.addEventListener('change', () => {
-			const raw = relInput.value.trim();
-			if (!raw) { this.fieldReleaseDate = ''; relErrorEl.addClass('wl-hidden'); return; }
-			const parsed = parseReleaseDateInput(raw);
-			if (parsed) { this.fieldReleaseDate = parsed; relInput.value = parsed; relErrorEl.addClass('wl-hidden'); }
-			else { this.fieldReleaseDate = raw; relErrorEl.textContent = 'Unrecognised format.'; relErrorEl.removeClass('wl-hidden'); }
+		createDatePicker({
+			parent: relStack,
+			inputCls: 'wl-modal-input',
+			value: this.fieldReleaseDate || null,
+			lenient: true,
+			onChange: (iso) => { this.fieldReleaseDate = iso ?? ''; },
 		});
 
 		const linkRow = makeRow('External link');

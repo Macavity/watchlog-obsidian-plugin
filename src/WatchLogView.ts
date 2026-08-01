@@ -7,13 +7,14 @@ import { AirtimeTab } from './AirtimeTab';
 import { CustomListsTab } from './CustomListsTab';
 import { DraftsTab } from './DraftsTab';
 import { ReadingTab } from './ReadingTab';
+import { GamesTab } from './GamesTab';
 import { LogTab } from './LogTab';
 
 export const WATCHLOG_VIEW_TYPE = 'watchlog-view';
 
-export type TabName = 'dashboard' | 'watchlist' | 'upcoming' | 'reading' | 'custom-lists' | 'drafts' | 'log';
+export type TabName = 'dashboard' | 'watchlist' | 'upcoming' | 'reading' | 'games' | 'custom-lists' | 'drafts' | 'log';
 
-const TAB_CLASSES = ['wl-dashboard', 'wl-list', 'wl-airtime', 'wl-reading-tab', 'wl-custom-lists', 'wl-log-tab'];
+const TAB_CLASSES = ['wl-dashboard', 'wl-list', 'wl-airtime', 'wl-reading-tab', 'wl-games-tab', 'wl-custom-lists', 'wl-log-tab'];
 
 export class WatchLogView extends ItemView {
 	private plugin: WatchLogPlugin;
@@ -23,6 +24,7 @@ export class WatchLogView extends ItemView {
 	private listTab: ListTab | null = null;
 	private airtimeTab: AirtimeTab | null = null;
 	private readingTab: ReadingTab | null = null;
+	private gamesTab: GamesTab | null = null;
 	private customListsTab: CustomListsTab | null = null;
 	private draftsTab: DraftsTab | null = null;
 	private logTab: LogTab | null = null;
@@ -34,7 +36,7 @@ export class WatchLogView extends ItemView {
 	private mobileResizeObserver: ResizeObserver | null = null;
 	private mobileSizerRaf: number | null = null;
 	private lastAppliedTabHeight = -1;
-	// --- Mobile keyboard "edit pin" state (see edit-pin block below) ---
+	// mobile keyboard "edit pin" state (see the edit-pin block below)
 	private editPinActive = false;
 	private smallestEditHeight = -1;
 	private pinReleaseTimer: number | null = null;
@@ -44,9 +46,9 @@ export class WatchLogView extends ItemView {
 		super(leaf);
 		this.plugin = plugin;
 		this.dataManager = dataManager;
-		// The panel always opens on the Dashboard tab.
+		// the panel always opens on the Dashboard tab
 		this.activeTab = 'dashboard';
-		// Re-render in-place so tab instances (and their state) are preserved
+		// re-render in place so tab instances (and their state) are preserved
 		this.dataChangeListener = () => {
 			this.refreshActiveTab();
 		};
@@ -74,22 +76,17 @@ export class WatchLogView extends ItemView {
 		}
 	}
 
-	// ===================== Mobile keyboard layout fix =====================
-	// Permanent fix for the iOS/Android on-screen-keyboard layout collapse.
-	// When the keyboard opens, this WebView freezes .wl-tab-content at its
-	// content height instead of distributing .wl-view's free space via
-	// flex-grow, leaving the tab content the wrong size until a reflow forces
-	// it. Fix: observe .wl-view (contentEl) and, on every settle (keyboard
-	// open/close, rotation, split resize), imperatively set an explicit pixel
-	// height (+ flex:none !important) on the *current* .wl-tab-content. The
-	// element is re-queried in the callback so it survives tab-content rebuilds.
-	// =====================================================================
+	// Mobile keyboard layout fix. When the keyboard opens, this WebView freezes .wl-tab-content at its
+	// content height instead of distributing .wl-view's free space via flex-grow, leaving the tab the
+	// wrong size until a reflow forces it. Fix: observe .wl-view and, on every settle (keyboard
+	// open/close, rotation, split resize), imperatively set an explicit px height (+ flex:none
+	// !important) on the *current* .wl-tab-content — re-queried in the callback so it survives
+	// tab-content rebuilds.
 	private setupTabContentSizer(): void {
-		// Never run more than one observer (onOpen could run again, etc.).
+		// never run more than one observer (onOpen could run again)
 		this.mobileResizeObserver?.disconnect();
 		this.mobileResizeObserver = new ResizeObserver(() => {
-			// Coalesce bursts of resize events (keyboard animation fires many)
-			// into a single write per frame so we don't thrash the DOM.
+			// coalesce resize bursts (keyboard animation fires many) into one write per frame
 			if (this.mobileSizerRaf !== null) return;
 			this.mobileSizerRaf = window.requestAnimationFrame(() => {
 				this.mobileSizerRaf = null;
@@ -98,9 +95,8 @@ export class WatchLogView extends ItemView {
 		});
 		this.mobileResizeObserver.observe(this.contentEl);
 
-		// --- Mobile keyboard fix, layer 2: the "edit pin" (focus listeners) ---
-		// Detect when an inline editor inside the scroller (.wl-tab-content) gains
-		// or loses focus, so we can pin/release the scroller height. Bound once.
+		// layer 2, focus listeners: detect an inline editor inside the scroller gaining or losing focus, so
+		// the scroller height can be pinned/released. Bound once.
 		if (!this.focusListenersBound) {
 			this.registerDomEvent(this.contentEl, 'focusin', (e: FocusEvent) => this.onScrollerFocusIn(e));
 			this.registerDomEvent(this.contentEl, 'focusout', (e: FocusEvent) => this.onScrollerFocusOut(e));
@@ -108,17 +104,12 @@ export class WatchLogView extends ItemView {
 		}
 	}
 
-	// ===================== Mobile keyboard fix — edit pin =====================
-	// Layer 2 of the permanent mobile keyboard fix. On short lists (notably the
-	// Custom Lists tab) inline-editing a cell opens the keyboard, but some resize
-	// readings during that window momentarily report the FULL no-keyboard height.
-	// Honouring them re-expands .wl-tab-content below the keyboard and exposes a
-	// dark band under the short content. Fix: while an editor inside the scroller
-	// is focused, pin the scroller to the SMALLEST clientHeight observed and
-	// ignore any larger reading. Release is guaranteed on focusout (after a grace
-	// window, so cell-to-cell navigation doesn't flicker), with a safety net in
-	// applyTabContentHeight() for the case where focus leaves without a focusout.
-	// =========================================================================
+	// Mobile keyboard fix — edit pin. On short lists (notably Custom Lists) inline-editing a cell opens
+	// the keyboard, but some resize readings during that window momentarily report the FULL
+	// no-keyboard height; honouring them re-expands .wl-tab-content and exposes a dark band under the
+	// content. Fix: while an editor inside the scroller is focused, pin to the SMALLEST clientHeight
+	// observed and ignore any larger reading. Release is guaranteed on focusout (after a grace window,
+	// so cell-to-cell navigation doesn't flicker), with a safety net in applyTabContentHeight().
 
 	/** True when `target` is an input/textarea/contenteditable inside .wl-tab-content. */
 	private isEditorInScroller(target: EventTarget | null): boolean {
@@ -132,15 +123,15 @@ export class WatchLogView extends ItemView {
 
 	private onScrollerFocusIn(e: FocusEvent): void {
 		if (!Platform.isMobile || !this.isEditorInScroller(e.target)) return;
-		// Re-focusing within the grace window (cell navigation) — keep the pin.
+		// re-focusing within the grace window (cell navigation) — keep the pin
 		if (this.pinReleaseTimer !== null) {
 			window.clearTimeout(this.pinReleaseTimer);
 			this.pinReleaseTimer = null;
 		}
-		// Start a fresh editing session: re-measure the smallest height.
+		// start a fresh editing session: re-measure the smallest height
 		if (!this.editPinActive) this.smallestEditHeight = -1;
 		this.editPinActive = true;
-		// Force the next reading (keyboard-shrunk) to be applied & pinned.
+		// force the next reading (keyboard-shrunk) to be applied & pinned
 		this.lastAppliedTabHeight = -1;
 		this.applyTabContentHeight();
 	}
@@ -148,8 +139,7 @@ export class WatchLogView extends ItemView {
 	private onScrollerFocusOut(e: FocusEvent): void {
 		if (!this.isEditorInScroller(e.target)) return;
 		if (this.pinReleaseTimer !== null) window.clearTimeout(this.pinReleaseTimer);
-		// Grace window: only release if focus has truly left every editor in the
-		// scroller (cell-to-cell navigation re-focuses within this window).
+		// grace window: only release once focus has truly left every editor in the scroller
 		this.pinReleaseTimer = window.setTimeout(() => {
 			this.pinReleaseTimer = null;
 			const active = this.contentEl.ownerDocument.activeElement;
@@ -164,8 +154,7 @@ export class WatchLogView extends ItemView {
 		this.editPinActive = false;
 		this.smallestEditHeight = -1;
 		const tabContent = this.contentEl.querySelector<HTMLElement>(':scope > .wl-tab-content');
-		// Remove the pinned height and let the observer re-assert the correct
-		// full height now the keyboard has closed.
+		// remove the pinned height and let the observer re-assert the full height now the keyboard closed
 		tabContent?.removeClass('wl-tab-content-pinned');
 		this.lastAppliedTabHeight = -1;
 		this.applyTabContentHeight();
@@ -182,33 +171,31 @@ export class WatchLogView extends ItemView {
 		const tabBarHeight = tabBar ? tabBar.offsetHeight : 0;
 		let target = wlViewClientHeight - tabBarHeight;
 
-		// Guard: don't write until wl-view has a real measured height.
+		// guard: don't write until wl-view has a real measured height
 		if (target <= 0) return;
 
-		// --- Edit pin layer ---------------------------------------------------
+		// edit pin layer
 		if (this.editPinActive) {
-			// Safety net: focus left the scroller without a focusout firing
-			// (e.g. the editor element was removed on save). Release now so the
-			// scroller doesn't stay pinned at the keyboard-shrunk height.
+			// safety net: focus left the scroller without a focusout firing (e.g. the editor was removed on
+			// save) — release so it doesn't stay pinned at the keyboard-shrunk height
 			if (!this.isEditorInScroller(this.contentEl.ownerDocument.activeElement)) {
 				this.releaseEditPin();
 				return;
 			}
-			// Track the smallest height seen while editing and pin to it,
-			// ignoring any larger (no-keyboard) reading during this window.
+			// track the smallest height seen while editing and pin to it, ignoring larger (no-keyboard)
+			// readings during this window
 			if (this.smallestEditHeight < 0 || target < this.smallestEditHeight) {
 				this.smallestEditHeight = target;
 			}
 			target = this.smallestEditHeight;
 		}
 
-		// Guard: skip redundant writes when the height hasn't changed.
+		// guard: skip redundant writes when the height hasn't changed
 		if (target === this.lastAppliedTabHeight) return;
 		this.lastAppliedTabHeight = target;
 
-		// The pinned class applies an explicit px height (via CSS variable) +
-		// flex:none, beating the `flex: 1 1 0%` base rule, which this WebView
-		// fails to distribute. min-height:0 / overflow-y stay intact.
+		// the pinned class sets an explicit px height (via CSS variable) + flex:none, beating the
+		// `flex: 1 1 0%` base rule this WebView fails to distribute. min-height:0 / overflow-y stay intact.
 		tabContent.addClass('wl-tab-content-pinned');
 		tabContent.setCssProps({ '--wl-pinned-tab-height': `${target}px` });
 	}
@@ -216,8 +203,8 @@ export class WatchLogView extends ItemView {
 	/** Called after tab content changes on mobile to re-apply the height. */
 	refreshMobileLayout(): void {
 		if (!Platform.isMobile || !this.mobileResizeObserver) return;
-		// Tab switch recreates .wl-tab-content with no inline height; force a
-		// re-apply even if the wl-view height itself hasn't changed.
+		// a tab switch recreates .wl-tab-content with no inline height; force a re-apply even when the
+		// wl-view height itself hasn't changed
 		this.lastAppliedTabHeight = -1;
 		this.applyTabContentHeight();
 	}
@@ -235,14 +222,14 @@ export class WatchLogView extends ItemView {
 			window.cancelAnimationFrame(this.mobileSizerRaf);
 			this.mobileSizerRaf = null;
 		}
-		// Clear edit-pin timer/state (focus listeners auto-removed via registerDomEvent).
+		// clear edit-pin timer/state (focus listeners auto-removed via registerDomEvent)
 		if (this.pinReleaseTimer !== null) {
 			window.clearTimeout(this.pinReleaseTimer);
 			this.pinReleaseTimer = null;
 		}
 		this.editPinActive = false;
 		this.smallestEditHeight = -1;
-		// Clear the explicit sizing the mobile keyboard fix applied to wl-tab-content.
+		// clear the explicit sizing the mobile keyboard fix applied to wl-tab-content
 		const tabContent = this.contentEl.querySelector<HTMLElement>('.wl-tab-content');
 		if (tabContent) {
 			tabContent.removeClass('wl-tab-content-pinned');
@@ -251,8 +238,11 @@ export class WatchLogView extends ItemView {
 		this.destroyDraftsTab();
 		this.customListsTab?.destroy();
 		this.listTab?.destroy();
+		this.airtimeTab?.destroy();
 		this.readingTab?.destroy();
 		this.readingTab = null;
+		this.gamesTab?.destroy();
+		this.gamesTab = null;
 		this.logTab?.destroy();
 		this.logTab = null;
 	}
@@ -280,35 +270,35 @@ export class WatchLogView extends ItemView {
 	}
 
 	private buildUI(): void {
-		// Destroy any live drafts listener before rebuilding the UI
+		// destroy any live drafts listener before rebuilding the UI
 		this.destroyDraftsTab();
 
 		const root = this.contentEl;
 		root.empty();
 		root.addClass('wl-view');
-		// Mobile gets icon-only tabs and the container-responsive dashboard grid;
-		// desktop keeps text labels and the fixed 3-column layout. Toggled via this
-		// class so styling keys off the established Platform.isMobile check, not a
-		// viewport media query.
+		// mobile gets icon-only tabs and the container-responsive dashboard grid; desktop keeps text
+		// labels and the fixed 3-column layout. Toggled via this class so styling keys off Platform.isMobile,
+		// not a viewport media query.
 		root.toggleClass('wl-mobile', Platform.isMobile);
 		this.applyColorTheme(root);
 
-		// Tab bar
 		const tabBar = root.createDiv({ cls: 'wl-tab-bar' });
 		const dashBtn = this.makeTabBtn(tabBar, 'dashboard', 'Dashboard', 'layout-dashboard');
 		const listBtn = this.makeTabBtn(tabBar, 'watchlist', 'Watchlist', 'tv');
 		const readingBtn = this.makeTabBtn(tabBar, 'reading', 'Reading', 'book-open');
+		const gamesBtn = this.makeTabBtn(tabBar, 'games', 'Games', 'gamepad-2');
 		this.airtimeBtn = this.makeTabBtn(tabBar, 'upcoming', 'Upcoming', 'calendar');
 		const customListsBtn = this.makeTabBtn(tabBar, 'custom-lists', 'Custom lists', 'list');
 		this.draftsBtn = this.makeTabBtn(tabBar, 'drafts', 'Drafts', 'square-pen');
 		const logBtn = this.makeTabBtn(tabBar, 'log', 'Log', 'history');
 
-		const allBtns = [dashBtn, listBtn, this.airtimeBtn, readingBtn, customListsBtn, this.draftsBtn, logBtn];
+		const allBtns = [dashBtn, listBtn, this.airtimeBtn, readingBtn, gamesBtn, customListsBtn, this.draftsBtn, logBtn];
 		this.tabButtons = {
 			dashboard: dashBtn,
 			watchlist: listBtn,
 			upcoming: this.airtimeBtn,
 			reading: readingBtn,
+			games: gamesBtn,
 			'custom-lists': customListsBtn,
 			drafts: this.draftsBtn,
 			log: logBtn,
@@ -350,6 +340,15 @@ export class WatchLogView extends ItemView {
 			this.renderTabContent();
 		});
 
+		gamesBtn.addEventListener('click', () => {
+			if (this.activeTab === 'games') return;
+			this.destroyDraftsTab();
+			this.activeTab = 'games';
+			allBtns.forEach((b) => b.removeClass('is-active'));
+			gamesBtn.addClass('is-active');
+			this.renderTabContent();
+		});
+
 		customListsBtn.addEventListener('click', () => {
 			if (this.activeTab === 'custom-lists') return;
 			this.destroyDraftsTab();
@@ -379,14 +378,11 @@ export class WatchLogView extends ItemView {
 		this.tabContentEl = root.createDiv({ cls: 'wl-tab-content' });
 		this.renderTabContent();
 
-		// Initialize Upcoming badge immediately
 		this.updateUpcomingBadge();
 
-		// Initialize the Drafts badge. The count needs a count-only vault scan, so it
-		// only becomes correct once the metadata cache is ready — gate it on 'resolved'
-		// (also fires for changes made while Obsidian was closed, avoiding a stale count).
-		// A direct call handles the case where the cache is already resolved when the
-		// panel is (re)opened, since 'resolved' won't fire again then.
+		// the Drafts count needs a count-only vault scan, so it is only correct once the metadata cache is
+		// ready — gate on 'resolved' (which also fires for changes made while Obsidian was closed, avoiding
+		// a stale count). The direct call covers an already-resolved cache, where 'resolved' won't fire.
 		void this.updateDraftsBadge();
 		this.registerEvent(this.plugin.app.metadataCache.on('resolved', () => {
 			void this.updateDraftsBadge();
@@ -394,8 +390,8 @@ export class WatchLogView extends ItemView {
 	}
 
 	/**
-	 * Creates a tab-bar button. On mobile it renders icon-only (Lucide via setIcon)
-	 * with the label as the accessible name; on desktop it shows the text label.
+	 * Tab-bar button. Mobile renders icon-only (Lucide via setIcon) with the label as the accessible
+	 * name; desktop shows the text label.
 	 */
 	private makeTabBtn(tabBar: HTMLElement, tab: TabName, label: string, icon: string): HTMLButtonElement {
 		const btn = tabBar.createEl('button', {
@@ -412,8 +408,8 @@ export class WatchLogView extends ItemView {
 	}
 
 	/**
-	 * Applies a count badge to a tab button. Desktop shows "Label (N)" text; mobile
-	 * (icon mode) can't overwrite the icon, so it toggles a small purple dot.
+	 * Count badge on a tab button. Desktop shows "Label (N)"; mobile (icon mode) can't overwrite the
+	 * icon, so it toggles a small purple dot.
 	 */
 	private setTabBadge(btn: HTMLButtonElement | null, label: string, count: number): void {
 		if (!btn) return;
@@ -425,12 +421,12 @@ export class WatchLogView extends ItemView {
 	}
 
 	/**
-	 * Programmatically switch tabs (e.g. from the status-bar Upcoming counter).
-	 * Mirrors a tab-button click: updates active state and re-renders the content.
+	 * Programmatically switch tabs (e.g. from the status-bar Upcoming counter). Mirrors a tab-button
+	 * click: updates active state and re-renders the content.
 	 */
 	setActiveTab(tab: TabName): void {
 		if (this.activeTab === tab) return;
-		// UI not built yet — record the intent so the initial render reflects it.
+		// UI not built yet — record the intent so the initial render reflects it
 		if (!this.tabContentEl) { this.activeTab = tab; return; }
 		if (tab !== 'drafts') this.destroyDraftsTab();
 		this.activeTab = tab;
@@ -441,11 +437,15 @@ export class WatchLogView extends ItemView {
 
 	private renderTabContent(): void {
 		if (!this.tabContentEl) return;
-		// Tear down any active inline editors / document listeners from the previous tab
+		// tear down inline editors / document listeners from the previous tab
 		this.customListsTab?.destroy();
 		if (this.activeTab !== 'reading') {
 			this.readingTab?.destroy();
 			this.readingTab = null;
+		}
+		if (this.activeTab !== 'games') {
+			this.gamesTab?.destroy();
+			this.gamesTab = null;
 		}
 		if (this.activeTab !== 'log') {
 			this.logTab?.destroy();
@@ -458,13 +458,13 @@ export class WatchLogView extends ItemView {
 			this.dashboardTab = new DashboardTab(this.tabContentEl, this.plugin, this.dataManager, this.plugin.readingDataManager);
 			this.dashboardTab.render();
 		} else if (this.activeTab === 'watchlist') {
-			// Always create a new instance when switching to Watchlist tab so that the
-			// container element is correct; state (filters, expandedId) is preserved
-			// via the instance kept on this.listTab during data-change refreshes.
+			// always a new instance when switching to the Watchlist tab so the container element is correct;
+			// state (filters, expandedId) survives on this.listTab during data-change refreshes
 			this.listTab?.destroy();
 			this.listTab = new ListTab(this.tabContentEl, this.plugin, this.dataManager);
 			this.listTab.render();
 		} else if (this.activeTab === 'upcoming') {
+			this.airtimeTab?.destroy();
 			this.airtimeTab = new AirtimeTab(this.tabContentEl, this.plugin, this.dataManager, (count) => {
 				this.setTabBadge(this.airtimeBtn, 'Upcoming', count);
 			});
@@ -477,6 +477,10 @@ export class WatchLogView extends ItemView {
 				this.plugin.readingDataManager,
 			);
 			this.readingTab.render();
+		} else if (this.activeTab === 'games') {
+			this.gamesTab?.destroy();
+			this.gamesTab = new GamesTab(this.tabContentEl, this.plugin, this.plugin.gameDataManager);
+			this.gamesTab.render();
 		} else if (this.activeTab === 'drafts') {
 			this.draftsTab = new DraftsTab(
 				this.tabContentEl,
@@ -498,8 +502,8 @@ export class WatchLogView extends ItemView {
 	}
 
 	/**
-	 * Called by the data change listener.  Re-renders the active tab without
-	 * destroying the ListTab instance, so expandedId and filter state survive.
+	 * Called by the data change listener. Re-renders the active tab without destroying the ListTab
+	 * instance, so expandedId and filter state survive.
 	 */
 	private refreshActiveTab(): void {
 		this.applyColorTheme(this.contentEl);
@@ -514,6 +518,8 @@ export class WatchLogView extends ItemView {
 			this.airtimeTab.render();
 		} else if (this.activeTab === 'reading' && this.readingTab) {
 			this.readingTab.render();
+		} else if (this.activeTab === 'games' && this.gamesTab) {
+			this.gamesTab.render();
 		} else if (this.activeTab === 'custom-lists' && this.customListsTab) {
 			void this.customListsTab.render();
 		} else if (this.activeTab === 'drafts' && this.draftsTab) {
@@ -541,8 +547,7 @@ export class WatchLogView extends ItemView {
 			if (Date.now() - renderTime > 300) return;
 			const computed = window.getComputedStyle(el).overflow;
 			if (computed === 'hidden') {
-				// Strip any inline override so the class rule below can win
-				// without needing !important.
+				// strip any inline override so the class rule below wins without !important
 				el.style.removeProperty('overflow');
 				el.addClass('wl-force-overflow-auto');
 			}
@@ -552,7 +557,7 @@ export class WatchLogView extends ItemView {
 
 	private updateUpcomingBadge(): void {
 		if (!this.airtimeBtn) return;
-		const count = AirtimeTab.getAiredDueCount(this.dataManager, this.plugin.readingDataManager) + AirtimeTab.getMaybeDueCount(this.dataManager);
+		const count = AirtimeTab.getAiredDueCount(this.dataManager, this.plugin.readingDataManager, this.plugin.gameDataManager) + AirtimeTab.getMaybeDueCount(this.dataManager);
 		this.setTabBadge(this.airtimeBtn, 'Upcoming', count);
 	}
 
@@ -560,7 +565,7 @@ export class WatchLogView extends ItemView {
 		this.setTabBadge(this.draftsBtn, 'Drafts', count);
 	}
 
-	/** Count-only drafts scan to keep the tab badge correct even before the Drafts tab is opened. */
+	/** Count-only drafts scan, so the tab badge is correct before the Drafts tab is opened. */
 	private async updateDraftsBadge(): Promise<void> {
 		if (!this.draftsBtn) return;
 		const count = await DraftsTab.computePendingCount(this.plugin, this.dataManager);

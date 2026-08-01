@@ -10,7 +10,7 @@ const TMDB_IMG_BASE = 'https://image.tmdb.org/t/p/w300';
 const ANILIST_ENDPOINT = 'https://graphql.anilist.co';
 const API_TIMEOUT_MS = 8000;
 
-// Rate-limit delays between consecutive queued requests
+// rate-limit delays between consecutive queued requests
 const JIKAN_DELAY_MS = 400; // ≈2.5 req/sec (Jikan caps at 3/sec)
 const ANILIST_DELAY_MS = 700; // AniList caps at 90/min
 const TMDB_DELAY_MS = 30;   // ≈33 req/sec (TMDB caps at 40/sec)
@@ -30,7 +30,7 @@ interface JikanImagesShape {
 			};
 		};
 	};
-	// Search shape: data is an array
+	// search shape: data is an array
 }
 
 interface JikanSearchShape {
@@ -95,8 +95,8 @@ export class PosterService {
 	}
 
 	/**
-	 * Enqueue a poster fetch for the given title. Resolves with the URL or null.
-	 * The result is also persisted via DataManager.updatePosterUrl (silent + debounced).
+	 * Enqueue a poster fetch for a title. Resolves with the URL or null; the result is also persisted
+	 * via DataManager.updatePosterUrl (silent + debounced).
 	 */
 	enqueue(title: WatchLogTitle): Promise<string | null> {
 		return new Promise((resolve) => {
@@ -122,7 +122,7 @@ export class PosterService {
 			if (this.disposed) break;
 			const item = this.queue.shift();
 			if (!item) break;
-			// Manual override: don't auto-fetch, don't touch posterUrl.
+			// manual override: don't auto-fetch, don't touch posterUrl
 			if (item.title.manualPosterUrl && item.title.manualPosterUrl.trim() !== '') {
 				item.resolve(item.title.manualPosterUrl);
 				continue;
@@ -160,7 +160,7 @@ export class PosterService {
 	}
 
 	private async fetchPosterForTitle(title: WatchLogTitle): Promise<string | null> {
-		// Already cached
+		// already cached
 		if (title.posterUrl && title.posterUrl.startsWith('http')) return title.posterUrl;
 		if (title.posterUrl === 'none') return null;
 
@@ -208,23 +208,21 @@ export class PosterService {
 		return jpg?.large_image_url ?? jpg?.image_url ?? null;
 	}
 
-	/** Extracts an IMDb id (`tt…`) from an external link, or '' if none present. */
+	/** Extracts an IMDb id (`tt…`) from an external link, or '' when absent. */
 	private extractImdbId(externalLink: string | undefined): string {
 		const m = (externalLink ?? '').match(/tt\d+/);
 		return m ? m[0] : '';
 	}
 
-	/** The 4-digit year from the entry's stored releaseDate, or null if unusable. */
+	/** The 4-digit year from the entry's stored releaseDate, or null when unusable. */
 	private getReleaseYear(title: WatchLogTitle): number | null {
 		const m = (title.releaseDate ?? '').match(/^(\d{4})/);
 		return m && m[1] ? parseInt(m[1], 10) : null;
 	}
 
 	/**
-	 * Resolves whether a title should be searched as a movie or a TV series.
-	 * Explicit Movie / TV Show types win; otherwise (custom type) infer from
-	 * totalEpisodes (1 → movie, >1 → series). Returns null when there's no signal
-	 * (missing/0 episodes) so the caller can fall back to the legacy multi-search.
+	 * Movie or TV series? Explicit Movie / TV Show types win; otherwise infer from totalEpisodes
+	 * (1 → movie, >1 → series). null when there is no signal, so the caller falls back to multi-search.
 	 */
 	private resolveMediaKind(title: WatchLogTitle): 'movie' | 'tv' | null {
 		if (title.type === 'Movie') return 'movie';
@@ -236,9 +234,8 @@ export class PosterService {
 	}
 
 	/**
-	 * Picks the best poster from TMDB search results: prefers the candidate whose
-	 * release year matches the entry, then falls back to the first result that has
-	 * a poster. Returns the raw poster_path (not the full URL) or null.
+	 * Best poster from TMDB search results: prefers a candidate whose release year matches the entry,
+	 * else the first result that has one. Returns the raw poster_path, not the full URL.
 	 */
 	private pickTmdbPoster(
 		results: TmdbPosterSearchResult['results'],
@@ -266,15 +263,15 @@ export class PosterService {
 
 		if (settings.tmdbApiKey) {
 			const headers = { Authorization: `Bearer ${settings.tmdbApiKey}` };
-			// 1. Most precise: resolve by IMDb id directly.
+			// 1. most precise: resolve by IMDb id directly
 			if (imdbId) {
 				const url = `${TMDB_BASE}/find/${encodeURIComponent(imdbId)}?external_source=imdb_id`;
 				const data = (await this.fetchJson(url, headers)) as TmdbFindPosterResult | null;
 				const hit = data?.movie_results?.[0] ?? data?.tv_results?.[0] ?? null;
 				if (hit?.poster_path) return `${TMDB_IMG_BASE}${hit.poster_path}`;
-				// No poster on the exact match — fall through to a typed/legacy search.
+				// no poster on the exact match — fall through to a typed/legacy search
 			}
-			// 2/3/4. Type-aware movie/tv search with year preference.
+			// 2/3/4. type-aware movie/tv search with year preference
 			if (kind !== null) {
 				const endpoint = kind === 'movie' ? 'movie' : 'tv';
 				const q = encodeURIComponent(searchName);
@@ -284,7 +281,7 @@ export class PosterService {
 				if (poster) return `${TMDB_IMG_BASE}${poster}`;
 				return null;
 			}
-			// Safety net: no type signal → legacy multi-search.
+			// safety net: no type signal → legacy multi-search
 			const q = encodeURIComponent(searchName);
 			const url = `${TMDB_BASE}/search/multi?query=${q}&page=1`;
 			const data = (await this.fetchJson(url, headers)) as TmdbMultiResult | null;
@@ -295,16 +292,16 @@ export class PosterService {
 
 		if (settings.omdbApiKey) {
 			const key = encodeURIComponent(settings.omdbApiKey);
-			// 1. Most precise: resolve by IMDb id directly.
+			// 1. most precise: resolve by IMDb id directly
 			if (imdbId) {
 				const url = `${OMDB_BASE}/?i=${encodeURIComponent(imdbId)}&apikey=${key}`;
 				const data = (await this.fetchJson(url)) as OmdbResult | null;
 				const poster = data?.Poster;
 				if (poster && poster !== 'N/A') return poster;
-				// No poster on the exact match — fall through to a typed/legacy search.
+				// no poster on the exact match — fall through to a typed/legacy search
 			}
 			const q = encodeURIComponent(searchName);
-			// 2/3/4. Type-aware movie/series search, preferring the matching year.
+			// 2/3/4. type-aware movie/series search, preferring the matching year
 			if (kind !== null) {
 				const omdbType = kind === 'movie' ? 'movie' : 'series';
 				const base = `${OMDB_BASE}/?t=${q}&type=${omdbType}&apikey=${key}`;
@@ -320,7 +317,7 @@ export class PosterService {
 				if (poster && poster !== 'N/A') return poster;
 				return null;
 			}
-			// Safety net: no type signal → legacy untyped lookup.
+			// safety net: no type signal → legacy untyped lookup
 			const url = `${OMDB_BASE}/?t=${q}&apikey=${key}`;
 			const data = (await this.fetchJson(url)) as OmdbResult | null;
 			const poster = data?.Poster;

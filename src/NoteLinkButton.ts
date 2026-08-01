@@ -1,16 +1,12 @@
 import { App, Notice, TFile, setIcon } from 'obsidian';
 
 /**
- * Builds the shared "Open note" file-text icon button used by the Watchlist and
- * Reading detail modals. Callers resolve their own `.md` note path/file (paths
- * differ per tab) and pass the resolved target here; this helper only renders
- * the icon and wires the open-on-click with graceful failure handling.
+ * The shared "Open note" file-text icon button used by the Watchlist and Reading detail modals.
+ * Callers resolve their own `.md` target (paths differ per tab) and pass it here; this only renders
+ * the icon and wires open-on-click with graceful failure.
  *
- * @param app     Obsidian app, used to resolve the path and open the leaf.
- * @param parent  Element the button is appended to (sizing comes from the class).
- * @param target  The resolved note as a `TFile`, or a vault path string to look up.
- * @param onOpen  Optional callback fired after a successful open (e.g. close the modal).
- * @returns The created button element.
+ * @param target The resolved note as a `TFile`, or a vault path to look up.
+ * @param onOpen Optional callback after a successful open (e.g. close the modal).
  */
 export function appendNoteLinkButton(
 	app: App,
@@ -18,7 +14,7 @@ export function appendNoteLinkButton(
 	target: TFile | string,
 	onOpen?: () => void,
 ): HTMLElement {
-	// Sizing/alignment come from the .wl-acc-link-icon class (matches the globe).
+	// sizing/alignment come from .wl-acc-link-icon (matches the globe)
 	const noteIcon = parent.createEl('span', { cls: 'wl-acc-link-icon' });
 	setIcon(noteIcon, 'file-text');
 	noteIcon.setAttr('aria-label', 'Open note');

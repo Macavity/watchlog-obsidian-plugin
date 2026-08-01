@@ -1,19 +1,23 @@
-import { App, Modal, Notice, TFile } from 'obsidian';
+import { App, Modal, Notice, Platform, TFile, setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { ReadingDataManager } from './ReadingDataManager';
 import {
 	Book, Manga, ReadingCustomColumn, ReadingStatus, SELECTABLE_READING_STATUSES,
-	DEFAULT_FIELD_COLOR,
-	formatDateDisplay, parseDateInput,
+	DEFAULT_FIELD_COLOR, BookProgressUnit,
+	bookProgressUnit, bookUnitProgress, formatCount,
+	formatDateDisplay, todayIso,
 } from './types';
+import { createDatePicker } from './DatePicker';
 import { deriveFillColor, deriveBorderColor } from './ColorPicker';
 import { googleBooksErrorMessage } from './ApiService';
 import { appendNoteLinkButton } from './NoteLinkButton';
 import { ConfirmModal } from './ConfirmModal';
+import { renderStarRating } from './StarRating';
 import { VaultFilePicker } from './AddReadingModal';
 import { readingStatusColor, coverFallbackColor } from './ReadingTab';
-import { openStatusDropdown } from './StatusDropdown';
+import { openStatusDropdown, renderSegmentedToggle } from './StatusDropdown';
 import { ReadingManageColumnsModal } from './ReadingManageColumnsModal';
+import { pinModalFooter } from './StickyModal';
 
 interface ParsedQuote {
 	reference: string;
@@ -60,15 +64,23 @@ function parseQuotesSection(content: string): ParsedQuote[] {
 
 interface ProgressDraft {
 	pagesRead: number;
+	wordsRead: number;
 	chaptersRead: number;
 	volumesRead: number;
 }
 
 interface ProgressSnapshot {
 	pagesRead: number;
+	wordsRead: number;
 	chaptersRead: number;
 	volumesRead: number;
 }
+
+/**
+ * Step for the −/+ buttons in words mode — single-word steps are useless at six digits. The number
+ * input still takes an exact value.
+ */
+const WORDS_STEP = 100;
 
 export class ReadingDetailModal extends Modal {
 	private plugin: WatchLogPlugin;
@@ -97,6 +109,7 @@ export class ReadingDetailModal extends Modal {
 		const item = this.getItem();
 		this.draft = {
 			pagesRead: item && this.mode === 'book' ? (item as Book).pagesRead : 0,
+			wordsRead: item && this.mode === 'book' ? ((item as Book).wordsRead ?? 0) : 0,
 			chaptersRead: item ? (item).chaptersRead : 0,
 			volumesRead: item && this.mode === 'manga' ? (item as Manga).volumesRead : 0,
 		};
@@ -127,6 +140,7 @@ export class ReadingDetailModal extends Modal {
 	private async commitOnClose(): Promise<void> {
 		const draftChanged =
 			this.draft.pagesRead !== this.openSnapshot.pagesRead ||
+			this.draft.wordsRead !== this.openSnapshot.wordsRead ||
 			this.draft.chaptersRead !== this.openSnapshot.chaptersRead ||
 			this.draft.volumesRead !== this.openSnapshot.volumesRead;
 		if (!draftChanged) return;
@@ -139,6 +153,7 @@ export class ReadingDetailModal extends Modal {
 			const updated: Book = {
 				...book,
 				pagesRead: this.draft.pagesRead,
+				wordsRead: this.draft.wordsRead,
 				chaptersRead: this.draft.chaptersRead,
 			};
 			this.applyAutoComplete(updated);
@@ -164,9 +179,17 @@ export class ReadingDetailModal extends Modal {
 
 		if (this.mode === 'book') {
 			const book = item as Book;
-			if (this.draft.pagesRead !== snap.pagesRead && book.totalPages > 0) {
+			// only the unit the book is tracked in is worth a log line
+			if (bookProgressUnit(book) === 'words') {
+				if (this.draft.wordsRead !== snap.wordsRead && book.totalWords > 0) {
+					void this.plugin.historyManager?.log(
+						`${item.title} (${typeLabel}) At word ${formatCount(this.draft.wordsRead)} / ${formatCount(book.totalWords)}`,
+						{ source: 'Reading', action: 'watched', titleName: item.title },
+					);
+				}
+			} else if (this.draft.pagesRead !== snap.pagesRead && book.totalPages > 0) {
 				void this.plugin.historyManager?.log(
-					`${item.title} (${typeLabel}) At page ${this.draft.pagesRead} / ${book.totalPages}`,
+					`${item.title} (${typeLabel}) At page ${formatCount(this.draft.pagesRead)} / ${formatCount(book.totalPages)}`,
 					{ source: 'Reading', action: 'watched', titleName: item.title },
 				);
 			}
@@ -208,12 +231,12 @@ export class ReadingDetailModal extends Modal {
 		this.contentEl.createDiv({ cls: 'wl-reading-modal-divider' });
 		void this.renderQuotesSection(item);
 		this.renderFooter(item);
+		pinModalFooter(this.contentEl.querySelector<HTMLElement>('.wl-reading-detail-footer'));
 	}
 
 	private renderHeader(item: Book | Manga): void {
 		const header = this.contentEl.createDiv({ cls: 'wl-reading-detail-header' });
 
-		// Cover
 		const cover = header.createDiv({ cls: 'wl-reading-detail-cover' });
 		if (item.coverUrl) {
 			cover.createEl('img', {
@@ -228,26 +251,21 @@ export class ReadingDetailModal extends Modal {
 			});
 		}
 
-		// Info
 		const info = header.createDiv({ cls: 'wl-reading-detail-info' });
 
-		// Editable title
 		const titleWrap = info.createDiv({ cls: 'wl-reading-detail-title-wrap' });
 		this.renderTitleDisplay(titleWrap);
 
-		// Editable author
 		const authorWrap = info.createDiv({ cls: 'wl-reading-detail-author-wrap' });
 		this.renderAuthorDisplay(authorWrap);
 
 		const meta = info.createDiv({ cls: 'wl-reading-detail-meta-row' });
 
-		// Editable status badge
 		const statusWrap = meta.createSpan({ cls: 'wl-reading-detail-status-wrap' });
 		this.renderStatusBadge(statusWrap);
 
-		// Open this entry's .md note, inline between the status pill and the stars.
-		// Reading resolves its own note path (Books/Manga live in their own folder);
-		// the shared helper builds the button and handles opening / graceful failure.
+		// open this entry's .md note; Reading resolves its own path (Books/Manga have their own folder) and
+		// the shared helper handles the rest
 		appendNoteLinkButton(
 			this.plugin.app,
 			meta,
@@ -255,14 +273,21 @@ export class ReadingDetailModal extends Modal {
 			() => this.close(),
 		);
 
-		this.starsWrapEl = meta.createDiv({ cls: 'wl-stars wl-reading-detail-stars' });
+		// mobile: status pill + note icon fill the meta row, so the stars take their own line
+		const starsHost = Platform.isMobile
+			? info.createDiv({ cls: 'wl-reading-detail-stars-row' })
+			: meta;
+		this.starsWrapEl = starsHost.createDiv({ cls: 'wl-stars wl-reading-detail-stars' });
 		this.renderStars();
 
-		// External link + Link vault page
-		const actions = info.createDiv({ cls: 'wl-reading-detail-actions' });
+		// external link + vault page share one row; each keeps its own container so the two
+		// rebuild-in-place renderers stay independent
+		const links = info.createDiv({ cls: 'wl-reading-detail-links-row' });
+
+		const actions = links.createDiv({ cls: 'wl-reading-detail-actions' });
 		this.renderExternalLinkActions(actions);
 
-		const vaultRow = info.createDiv({ cls: 'wl-reading-detail-vault-row' });
+		const vaultRow = links.createDiv({ cls: 'wl-reading-detail-vault-row' });
 		this.renderVaultRow(vaultRow);
 	}
 
@@ -358,7 +383,7 @@ export class ReadingDetailModal extends Modal {
 		const fresh = this.getItem();
 		const status = fresh?.status ?? 'Plan to Read';
 		const badge = wrap.createSpan({ cls: 'wl-reading-detail-status', text: status });
-		badge.style.backgroundColor = readingStatusColor(status);
+		badge.style.backgroundColor = readingStatusColor(status, this.readingData.getSettings().statusColors);
 		badge.title = 'Click to change status';
 		badge.addEventListener('click', (e) => {
 			e.stopPropagation();
@@ -371,7 +396,7 @@ export class ReadingDetailModal extends Modal {
 			anchor,
 			container: this.contentEl,
 			options: [...SELECTABLE_READING_STATUSES],
-			getOptionColor: (status) => readingStatusColor(status as ReadingStatus),
+			getOptionColor: (status) => readingStatusColor(status as ReadingStatus, this.readingData.getSettings().statusColors),
 			onSelect: (status) =>
 				void this.saveStatus(status as ReadingStatus).then(() => this.renderStatusBadge(wrap)),
 		});
@@ -382,11 +407,7 @@ export class ReadingDetailModal extends Modal {
 		if (!curr) return;
 		const patch: Partial<Book & Manga> = { status };
 		if (status === 'Completed' && !curr.dateFinished) {
-			const now = new Date();
-			const yyyy = now.getFullYear();
-			const mm = String(now.getMonth() + 1).padStart(2, '0');
-			const dd = String(now.getDate()).padStart(2, '0');
-			patch.dateFinished = `${yyyy}-${mm}-${dd}`;
+			patch.dateFinished = todayIso();
 		}
 		if (this.mode === 'book') {
 			await this.readingData.updateBook({ ...(curr as Book), ...patch });
@@ -460,9 +481,10 @@ export class ReadingDetailModal extends Modal {
 		const item = this.getItem();
 		if (!item) return;
 
+		// the button carries the "Vault page" wording, so the value beside it is just the state
 		const linkBtn = row.createEl('button', {
 			cls: 'wl-btn wl-btn-sm',
-			text: item.vaultPage ? 'Change' : 'Link',
+			text: 'Vault page',
 		});
 		linkBtn.title = item.vaultPage
 			? `Linked: ${item.vaultPage}`
@@ -482,8 +504,6 @@ export class ReadingDetailModal extends Modal {
 			openBtn.title = 'Open the linked vault page in a new tab';
 			openBtn.addEventListener('click', () => this.openLinkedVaultPage());
 		}
-
-		row.createSpan({ cls: 'wl-reading-detail-vault-label', text: 'Vault page:' });
 
 		if (item.vaultPage) {
 			const filename = item.vaultPage.split('/').pop() || item.vaultPage;
@@ -526,47 +546,65 @@ export class ReadingDetailModal extends Modal {
 
 	private renderStars(): void {
 		if (!this.starsWrapEl) return;
-		this.starsWrapEl.empty();
 		const item = this.getItem();
-		if (!item) return;
-		for (let i = 1; i <= 5; i++) {
-			const star = this.starsWrapEl.createSpan({
-				cls: `wl-star${item.rating >= i ? ' is-active' : ''}`,
-				text: '★',
-			});
-			star.addEventListener('click', () => {
+		if (!item) {
+			this.starsWrapEl.empty();
+			return;
+		}
+		renderStarRating(this.starsWrapEl, item.rating, {
+			allowHalf: this.plugin.settings.halfStarRatings ?? false,
+			tiers: this.plugin.settings.ratingSystem,
+			showLabel: true,
+			onChange: (value) => {
 				const fresh = this.getItem();
 				if (!fresh) return;
-				const next = fresh.rating === i ? 0 : i;
 				void (async () => {
 					if (this.mode === 'book') {
-						const updated = { ...(fresh as Book), rating: next };
+						const updated = { ...(fresh as Book), rating: value };
 						await this.readingData.updateBook(updated);
 					} else {
-						const updated = { ...(fresh as Manga), rating: next };
+						const updated = { ...(fresh as Manga), rating: value };
 						await this.readingData.updateManga(updated);
 					}
 					this.renderStars();
 				})();
-			});
-		}
+			},
+		});
 	}
 
 	private renderProgressSection(item: Book | Manga): void {
 		const section = this.contentEl.createDiv({ cls: 'wl-reading-detail-progress' });
-		section.createDiv({ cls: 'wl-reading-section-label', text: 'Progress' });
+		const label = section.createDiv({ cls: 'wl-reading-section-label' });
+		label.createSpan({ text: 'Progress' });
+		// only books carry a unit switch, so only they need the taller flex row
+		if (this.mode === 'book') {
+			label.addClass('wl-reading-section-label-row');
+			this.renderUnitToggle(label, item as Book);
+		}
 
 		const gaugeRow = section.createDiv({ cls: 'wl-reading-arc-row' });
 
-		// Rings + controls always render, regardless of the total (even when total is 0).
+		// rings + controls always render, even when the total is 0
 		if (this.mode === 'book') {
-			this.renderArcGauge(
-				gaugeRow, 'pages', '#8b5cf6',
-				() => this.draft.pagesRead,
-				(v) => { this.draft.pagesRead = v; },
-				() => (this.getItem() as Book | undefined)?.totalPages ?? 0,
-				(v) => this.commitTotal('totalPages', v),
-			);
+			// the primary gauge follows the book's unit; chapters are unit-agnostic
+			if (bookProgressUnit(item as Book) === 'words') {
+				this.renderArcGauge(
+					gaugeRow, 'words', '#8b5cf6',
+					() => this.draft.wordsRead,
+					(v) => { this.draft.wordsRead = v; },
+					() => (this.getItem() as Book | undefined)?.totalWords ?? 0,
+					(v) => this.commitTotal('totalWords', v),
+					WORDS_STEP,
+				);
+			} else {
+				this.renderArcGauge(
+					gaugeRow, 'pages', '#8b5cf6',
+					() => this.draft.pagesRead,
+					(v) => { this.draft.pagesRead = v; },
+					() => (this.getItem() as Book | undefined)?.totalPages ?? 0,
+					(v) => this.commitTotal('totalPages', v),
+				);
+			}
 			this.renderArcGauge(
 				gaugeRow, 'chapters', '#06b6d4',
 				() => this.draft.chaptersRead,
@@ -590,10 +628,60 @@ export class ReadingDetailModal extends Modal {
 				(v) => this.commitTotal('totalVolumes', v),
 			);
 		}
+
+		// the "of N …" totals are click-to-edit, which isn't discoverable on its own — gated on the same
+		// "Show hint banners" setting as the other hints
+		if (this.plugin.settings.showHintBanners) {
+			const primary = this.mode === 'book'
+				? (bookProgressUnit(item as Book) === 'words' ? 'words' : 'pages')
+				: 'chapters';
+			const secondary = this.mode === 'book' ? 'chapters' : 'volumes';
+			section.createDiv({
+				cls: 'wl-cl-draft-banner',
+				text: `⚠ Click the total number of ${primary} or ${secondary} above to edit it.`,
+			});
+		}
 	}
 
-	/** Persists an edited total (pages/chapters/volumes) to the underlying item. */
-	private async commitTotal(field: 'totalPages' | 'totalChapters' | 'totalVolumes', value: number): Promise<void> {
+	/** Pages/Words switch on the Progress label row. Books only. */
+	private renderUnitToggle(parent: HTMLElement, book: Book): void {
+		renderSegmentedToggle<BookProgressUnit>({
+			parent,
+			options: [
+				{ value: 'pages', label: 'Pages', title: 'Track progress in pages' },
+				{ value: 'words', label: 'Words', title: 'Track progress in words' },
+			],
+			value: bookProgressUnit(book),
+			onPick: (unit) => { void this.switchProgressUnit(unit); },
+		});
+	}
+
+	/**
+	 * Persists the new tracking unit and repaints. Uncommitted counter edits are folded in first, so
+	 * typing a page count and *then* switching never drops it. The other unit's numbers are untouched,
+	 * which is what makes switching back lossless.
+	 */
+	private async switchProgressUnit(unit: BookProgressUnit): Promise<void> {
+		const curr = this.getItem() as Book | undefined;
+		if (!curr) return;
+		const updated: Book = {
+			...curr,
+			progressUnit: unit,
+			pagesRead: this.draft.pagesRead,
+			wordsRead: this.draft.wordsRead,
+			chaptersRead: this.draft.chaptersRead,
+		};
+		await this.readingData.updateBook(updated);
+		this.openSnapshot = { ...this.draft };
+		this.onChanged();
+		this.renderAll();
+	}
+
+	/** Persists an edited total (pages/words/chapters/volumes) to the underlying item. */
+	private async commitTotal(
+		field: 'totalPages' | 'totalWords' | 'totalChapters' | 'totalVolumes',
+		value: number,
+	): Promise<void> {
 		const curr = this.getItem();
 		if (!curr) return;
 		if (this.mode === 'book') {
@@ -612,8 +700,11 @@ export class ReadingDetailModal extends Modal {
 		setValue: (v: number) => void,
 		getTotal: () => number,
 		commitTotal: (v: number) => Promise<void>,
+		step = 1,
 	): void {
 		const col = parent.createDiv({ cls: 'wl-reading-arc-col' });
+		// word counters need wider fields and coarser steps than page/chapter ones
+		if (step > 1) col.addClass('wl-reading-arc-col-wide');
 
 		const svgSize = 100;
 		const strokeWidth = 8;
@@ -662,12 +753,12 @@ export class ReadingDetailModal extends Modal {
 		};
 
 		const controls = col.createDiv({ cls: 'wl-reading-arc-controls' });
-		const decBtn = controls.createEl('button', { cls: 'wl-btn wl-btn-sm wl-reading-step-btn', text: '−1' });
+		const decBtn = controls.createEl('button', { cls: 'wl-btn wl-btn-sm wl-reading-step-btn', text: `−${step}` });
 		const input = controls.createEl('input', {
 			cls: 'wl-modal-input wl-modal-input-sm wl-reading-arc-input',
-			attr: { type: 'number', min: '0', max: String(getTotal()) },
+			attr: { type: 'number', min: '0', max: String(getTotal()), step: String(step) },
 		});
-		const incBtn = controls.createEl('button', { cls: 'wl-btn wl-btn-sm wl-reading-step-btn', text: '+1' });
+		const incBtn = controls.createEl('button', { cls: 'wl-btn wl-btn-sm wl-reading-step-btn', text: `+${step}` });
 
 		const label = col.createDiv({ cls: 'wl-reading-arc-label' });
 
@@ -682,13 +773,13 @@ export class ReadingDetailModal extends Modal {
 			pctText.textContent = `${Math.round(pct * 100)}%`;
 		};
 
-		// Static "of … <unit>" line with only the total number inline-editable.
+		// static "of … <unit>" line with only the total inline-editable
 		const renderLabel = (): void => {
 			label.empty();
 			label.createSpan({ text: 'of ' });
 			const numEl = label.createSpan({
 				cls: 'wl-reading-arc-total wl-reading-detail-editable-text',
-				text: String(getTotal()),
+				text: formatCount(getTotal()),
 			});
 			numEl.title = 'Click to edit';
 			numEl.addEventListener('click', () => editTotal());
@@ -736,11 +827,11 @@ export class ReadingDetailModal extends Modal {
 			sync();
 		});
 		decBtn.addEventListener('click', () => {
-			setValue(clamp(getValue() - 1));
+			setValue(clamp(getValue() - step));
 			sync();
 		});
 		incBtn.addEventListener('click', () => {
-			setValue(clamp(getValue() + 1));
+			setValue(clamp(getValue() + step));
 			sync();
 		});
 	}
@@ -787,11 +878,9 @@ export class ReadingDetailModal extends Modal {
 	}
 
 	/**
-	 * DETAILS ID row (Google Books ID / MAL ID). The ID is a clickable link to the
-	 * title's web page — pointing at the editable `externalLink` when set, otherwise
-	 * a default URL derived from the ID. A small edit button to the right sets or
-	 * replaces the source ID itself (`googleBooksId` / `malId`) — distinct from the
-	 * External link control above; editing it re-fetches the cover.
+	 * DETAILS ID row (Google Books ID / MAL ID). The ID links to the title's web page — the editable
+	 * `externalLink` when set, else a URL derived from the ID. The edit button to the right sets the
+	 * source ID itself (`googleBooksId` / `malId`), which re-fetches the cover.
 	 */
 	private renderIdCell(grid: HTMLElement, item: Book | Manga): void {
 		const label = this.mode === 'book' ? 'Google Books ID' : 'MAL ID';
@@ -887,10 +976,9 @@ export class ReadingDetailModal extends Modal {
 	}
 
 	/**
-	 * Re-resolves ONLY the cover from a freshly-edited source ID (Google Books volume
-	 * for books, MAL id for manga) and persists it — pages/dates/other fields untouched.
-	 * `onChanged()` re-renders the card so the new cover shows without a scroll. Notifies
-	 * the user when the volume/manga simply has no cover image, or when the lookup fails.
+	 * Re-resolves ONLY the cover from a freshly-edited source ID and persists it — pages/dates/other
+	 * fields untouched. `onChanged()` re-renders the card so the new cover shows without a scroll.
+	 * Notifies when the volume has no cover, or when the lookup fails.
 	 */
 	private async refetchCoverFromId(newId: string): Promise<void> {
 		try {
@@ -924,9 +1012,8 @@ export class ReadingDetailModal extends Modal {
 	}
 
 	/**
-	 * Renders ADDED (static) and RELEASE (editable) side by side in a single grid
-	 * cell so the modal keeps its height. Release date drives the auto
-	 * "To be released" status, so a change re-renders the modal.
+	 * Renders ADDED (static) and RELEASE (editable) side by side in one grid cell so the modal keeps
+	 * its height. Release date drives the auto "To be released" status, so a change re-renders.
 	 */
 	private renderAddedReleaseCell(grid: HTMLElement, item: Book | Manga): void {
 		const cell = grid.createDiv({ cls: 'wl-reading-detail-cell wl-reading-detail-cell-pair' });
@@ -940,33 +1027,25 @@ export class ReadingDetailModal extends Modal {
 
 		const rel = cell.createDiv({ cls: 'wl-reading-detail-pair-col' });
 		rel.createDiv({ cls: 'wl-reading-detail-cell-label', text: 'Release' });
-		const input = rel.createEl('input', {
-			cls: 'wl-reading-detail-date-input',
-			attr: { type: 'text', placeholder: 'Dd/mm/yyyy', maxlength: '10' },
-		});
-		const cur = this.getItem()?.releaseDate ?? null;
-		input.value = cur ? formatDateDisplay(cur) : '';
-
-		input.addEventListener('change', () => {
-			const raw = input.value.trim();
-			let parsed: string | null = null;
-			if (raw) {
-				parsed = parseDateInput(raw);
-				if (!parsed) { input.addClass('wl-input-error'); return; }
-			}
-			input.removeClass('wl-input-error');
-			void (async () => {
-				const curr = this.getItem();
-				if (!curr) return;
-				if (this.mode === 'book') {
-					await this.readingData.updateBook({ ...(curr as Book), releaseDate: parsed });
-				} else {
-					await this.readingData.updateManga({ ...(curr as Manga), releaseDate: parsed });
-				}
-				this.onChanged();
-				// Status may have flipped to/from "To be released".
-				this.renderAll();
-			})();
+		createDatePicker({
+			parent: rel,
+			inputCls: 'wl-reading-detail-date-input',
+			value: this.getItem()?.releaseDate ?? null,
+			lenient: true,
+			onChange: (iso) => {
+				void (async () => {
+					const curr = this.getItem();
+					if (!curr) return;
+					if (this.mode === 'book') {
+						await this.readingData.updateBook({ ...(curr as Book), releaseDate: iso });
+					} else {
+						await this.readingData.updateManga({ ...(curr as Manga), releaseDate: iso });
+					}
+					this.onChanged();
+					// status may have flipped to/from "To be released"
+					this.renderAll();
+				})();
+			},
 		});
 	}
 
@@ -992,44 +1071,24 @@ export class ReadingDetailModal extends Modal {
 			text: 'Today',
 			attr: { title: 'Fill with today\'s date' },
 		});
-		const dateInput = valueArea.createEl('input', {
-			cls: 'wl-reading-detail-date-input',
-			attr: { type: 'text', placeholder: 'Dd/mm/yyyy', maxlength: '10' },
+		const picker = createDatePicker({
+			parent: valueArea,
+			inputCls: 'wl-reading-detail-date-input',
+			value: getValue(),
+			onChange: (iso) => {
+				refreshTodayBtn();
+				void save(iso);
+			},
 		});
-		const curVal = getValue();
-		dateInput.value = curVal ? formatDateDisplay(curVal) : '';
 
 		const refreshTodayBtn = (): void => {
-			todayBtn.toggleClass('is-dimmed', !!dateInput.value.trim());
+			todayBtn.toggleClass('is-dimmed', !!picker.getValue());
 		};
 		refreshTodayBtn();
 
 		todayBtn.addEventListener('click', () => {
-			if (dateInput.value.trim()) return;
-			const now = new Date();
-			const dd = String(now.getDate()).padStart(2, '0');
-			const mm = String(now.getMonth() + 1).padStart(2, '0');
-			dateInput.value = `${dd}/${mm}/${now.getFullYear()}`;
-			refreshTodayBtn();
-			dateInput.dispatchEvent(new Event('change'));
-		});
-
-		dateInput.addEventListener('change', () => {
-			const raw = dateInput.value.trim();
-			if (!raw) {
-				dateInput.removeClass('wl-input-error');
-				refreshTodayBtn();
-				void save(null);
-				return;
-			}
-			const parsed = parseDateInput(raw);
-			if (!parsed) {
-				dateInput.addClass('wl-input-error');
-				return;
-			}
-			dateInput.removeClass('wl-input-error');
-			refreshTodayBtn();
-			void save(parsed);
+			if (picker.getValue()) return;
+			picker.setValue(todayIso());
 		});
 	}
 
@@ -1057,6 +1116,26 @@ export class ReadingDetailModal extends Modal {
 					})();
 				},
 			).open();
+		});
+
+		// favorite heart, centered by the footer's space-between (the Watchlist/Games spot). Persists
+		// immediately — this modal saves field-by-field, unlike the Games draft.
+		const favBtn = footer.createEl('button', {
+			cls: 'wl-detail-fav-btn',
+			attr: { type: 'button' },
+		});
+		setIcon(favBtn, 'heart');
+		const paintFav = (): void => {
+			const fav = this.getItem()?.favorite === true;
+			favBtn.toggleClass('is-active', fav);
+			const label = fav ? 'Remove from favorites' : 'Add to favorites';
+			favBtn.title = label;
+			favBtn.setAttr('aria-label', label);
+		};
+		paintFav();
+		favBtn.addEventListener('click', () => {
+			const fav = this.getItem()?.favorite === true;
+			void this.readingData.setFavorite(this.mode, item.id, !fav).then(paintFav);
 		});
 
 		const right = footer.createDiv({ cls: 'wl-reading-detail-footer-right' });
@@ -1138,8 +1217,8 @@ export class ReadingDetailModal extends Modal {
 			: (settings.mangaCustomFieldStyle ?? 'fill');
 		const color = col.color ?? DEFAULT_FIELD_COLOR;
 
-		// Fill/border looks live in CSS keyed off the table's is-border-mode class;
-		// only the per-column colour is dynamic. Derivation handles custom hex too.
+		// fill/border looks live in CSS keyed off the table's is-border-mode class; only the per-column
+		// colour is dynamic
 		if (style === 'fill') {
 			labelCell.setCssProps({ '--wl-field-bg': deriveFillColor(color) });
 		} else {
@@ -1350,6 +1429,7 @@ export class ReadingDetailModal extends Modal {
 			const updated: Book = {
 				...book,
 				pagesRead: this.draft.pagesRead,
+				wordsRead: this.draft.wordsRead,
 				chaptersRead: this.draft.chaptersRead,
 			};
 			this.applyAutoComplete(updated);
@@ -1381,16 +1461,15 @@ export class ReadingDetailModal extends Modal {
 			item.status = 'Completed';
 		}
 		if (item.status === 'Completed' && !item.dateFinished) {
-			const now = new Date();
-			const yyyy = now.getFullYear();
-			const mm = String(now.getMonth() + 1).padStart(2, '0');
-			const dd = String(now.getDate()).padStart(2, '0');
-			item.dateFinished = `${yyyy}-${mm}-${dd}`;
+			item.dateFinished = todayIso();
 		}
 	}
 
 	private isBookComplete(book: Book): boolean {
-		if (book.totalPages > 0 && book.pagesRead >= book.totalPages) return true;
+		// only the tracked unit counts — a stale page count left by a switch to words must not
+		// auto-complete the book
+		const { read, total } = bookUnitProgress(book);
+		if (total > 0 && read >= total) return true;
 		if (book.totalChapters > 0 && book.chaptersRead >= book.totalChapters) return true;
 		return false;
 	}

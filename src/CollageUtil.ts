@@ -1,18 +1,14 @@
 /**
  * Generic group-card collage helper.
  *
- * Agnostic to Watch vs Reading: callers pass the group's items plus an accessor
- * that resolves each item's cover/poster URL. This keeps it reusable in the
- * Reading tab (once it gains groups) without importing any Watch-specific types.
+ * Agnostic to Watch vs Reading: callers pass the group's items plus an accessor resolving each
+ * item's cover URL.
  *
- * Selection: walks the items in order and keeps the first up-to-3 with a valid
- * cover (skipping empty / 'none'). The number of strips rendered equals the
- * number of valid covers found (1–3). If none are found, the letter fallback is
- * rendered instead — matching the previous group-card placeholder.
+ * Selection: the first up-to-3 items with a valid cover (skipping empty / 'none'); the strip count
+ * equals the covers found (1–3). None found ⇒ the letter fallback.
  *
- * Performance: covers are painted as CSS background-images (not <img>), so a
- * cover loading never reflows the card. Combined with the fixed flex layout this
- * avoids layout thrashing inside the virtual-scrolled card grids.
+ * Covers are painted as CSS background-images, not <img>, so a cover loading never reflows the card
+ * inside the virtual-scrolled grids.
  */
 export function renderGroupCollage<T>(
 	parent: HTMLElement,
@@ -39,7 +35,7 @@ export function renderGroupCollage<T>(
 	const collage = parent.createDiv({ cls: 'wl-card-collage' });
 	for (const url of covers) {
 		const strip = collage.createDiv({ cls: 'wl-card-collage-strip' });
-		// Escape double quotes so a URL can't break out of the CSS url("...").
+		// escape double quotes so a URL can't break out of the CSS url("…")
 		strip.style.backgroundImage = `url("${url.replace(/"/g, '%22')}")`;
 	}
 	return collage;

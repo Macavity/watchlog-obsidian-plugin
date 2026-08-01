@@ -3,9 +3,8 @@ import { App, Modal } from 'obsidian';
 export type AddTitleChoice = 'url' | 'manual';
 
 /**
- * Small chooser modal shown when adding a title to the Watchlist. Offers two
- * inline options (Add from URL / Add manually or via API), each routing to its
- * own corresponding Add modal. This modal only routes — it holds no form logic.
+ * Chooser shown when adding a title to the Watchlist: Add from URL, or Add manually / via API. This
+ * modal only routes — no form logic.
  */
 export class AddTitleChoiceModal extends Modal {
 	constructor(

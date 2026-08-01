@@ -8,8 +8,10 @@ import type {
 	MediaSearchResult,
 	Season,
 } from './types';
-import { formatDateDisplay, parseDateInput, parseReleaseDateInput, getApiGroupForType } from './types';
-import { renderSearchThumbnail } from './SearchThumbnail';
+import { getApiGroupForType, todayIso } from './types';
+import { renderSearchResultRow } from './SearchThumbnail';
+import { LibraryIndex, animeResultIdKeys, mediaResultIdKeys } from './LibraryIndex';
+import { createDatePicker } from './DatePicker';
 
 type SearchResult = AnimeSearchResult | MediaSearchResult;
 
@@ -22,7 +24,6 @@ export class AddTitleModal extends Modal {
 	private dataManager: DataManager;
 	private onAdded: () => void;
 
-	// Form state
 	private selectedType = 'Anime';
 	private searchQuery = '';
 	private searchResults: SearchResult[] = [];
@@ -31,7 +32,6 @@ export class AddTitleModal extends Modal {
 	private autoSearch = false;
 	private noApiMessage = '';
 
-	// Editable fields
 	private fieldTitle = '';
 	private fieldEpisodes = 0;
 	private fieldDuration = 0;
@@ -43,19 +43,20 @@ export class AddTitleModal extends Modal {
 	private fieldDateStarted = '';
 	private fieldMalId: number | null = null;
 	private fieldAnilistId: number | null = null;
-	// Trailer resolved at selection ('' unfetched, 'none' source w/o trailer, or URL).
+	// trailer resolved at selection ('' unfetched, 'none' source without one, or a URL)
 	private fieldTrailerUrl = '';
-	// Credits resolved at selection ([] unfetched, ['none'] unavailable, or names).
+	// credits resolved at selection ([] unfetched, ['none'] unavailable, or names)
 	private fieldDirector: string[] = [];
 	private fieldCast: string[] = [];
+	private fieldStudio: string[] = [];
 	private skipDuplicateCheck = false;
 	private duplicateWarningEl: HTMLElement | null = null;
+	// built on first search, reused for the modal's life
+	private libIndex: LibraryIndex | null = null;
 
-	// Group assignment fields
 	private selectedGroupId = '';
 	private newGroupName = '';
 
-	// UI refs
 	private resultsEl: HTMLElement | null = null;
 	private formEl: HTMLElement | null = null;
 	private searchDebounce: number | null = null;
@@ -83,8 +84,7 @@ export class AddTitleModal extends Modal {
 		this.plugin = plugin;
 		this.dataManager = dataManager;
 		this.onAdded = onAdded;
-		// Preselect the resolved default type; a prefill type (e.g. from a URL
-		// detection) takes precedence and overrides it below.
+		// preselect the resolved default type; a prefill type (e.g. from URL detection) overrides it below
 		this.selectedType = this.plugin.resolveDefaultAddType() || this.selectedType;
 		if (prefill) {
 			this.selectedType = prefill.type;
@@ -124,7 +124,6 @@ export class AddTitleModal extends Modal {
 		const content = this.contentEl;
 		content.empty();
 
-		// Type selector row
 		const typeRow = content.createDiv({ cls: 'wl-modal-row' });
 		typeRow.createSpan({ cls: 'wl-modal-label', text: 'Type' });
 		const typeSelect = typeRow.createEl('select', { cls: 'wl-select' });
@@ -140,7 +139,6 @@ export class AddTitleModal extends Modal {
 			this.renderForm();
 		});
 
-		// Search input
 		const searchRow = content.createDiv({ cls: 'wl-modal-row' });
 		searchRow.createSpan({ cls: 'wl-modal-label', text: 'Search' });
 		const searchInput = searchRow.createEl('input', {
@@ -157,10 +155,8 @@ export class AddTitleModal extends Modal {
 		const searchBtn = searchRow.createEl('button', { cls: 'wl-btn', text: 'Search' });
 		searchBtn.addEventListener('click', () => void this.performSearch());
 
-		// Results list
-		this.resultsEl = content.createDiv({ cls: 'wl-modal-results' });
+		this.resultsEl = content.createDiv({ cls: 'wl-modal-results wl-results-grid' });
 
-		// Form section
 		this.formEl = content.createDiv({ cls: 'wl-modal-form' });
 		this.renderForm();
 	}
@@ -224,17 +220,26 @@ export class AddTitleModal extends Modal {
 
 		if (this.searchResults.length === 0) return;
 
+		if (!this.libIndex) this.libIndex = LibraryIndex.build(this.plugin, ['watchlist']);
+		const libIndex = this.libIndex;
+		const activeApi = this.plugin.settings.activeApi ?? 'OMDb';
+
 		this.searchResults.forEach((result, idx) => {
-			const item = this.resultsEl!.createDiv({ cls: 'wl-result-item wl-has-thumb' });
-			renderSearchThumbnail(item, result.posterUrl, result.title, '🎬');
-			const text = item.createDiv({ cls: 'wl-result-text' });
 			const epText = isAnimeResult(result)
 				? `${result.episodes} eps`
 				: result.episodes > 0 ? `${result.episodes} eps` : result.mediaType;
-			text.createDiv({ cls: 'wl-result-title', text: result.title });
-			text.createDiv({ cls: 'wl-result-meta', text: `${epText} · ${result.releaseDate}` });
+			const idKeys = isAnimeResult(result)
+				? animeResultIdKeys(result)
+				: mediaResultIdKeys(result, activeApi);
+			const item = renderSearchResultRow(this.resultsEl!, {
+				thumbUrl: result.posterUrl,
+				fallbackIcon: '🎬',
+				title: result.title,
+				meta: `${epText} · ${result.releaseDate}`,
+				inLibrary: libIndex.lookup(idKeys, result.title),
+				onClick: (itemEl) => void this.selectResult(result, itemEl),
+			});
 			item.dataset['idx'] = String(idx);
-			item.addEventListener('click', () => void this.selectResult(result, item));
 		});
 	}
 
@@ -265,6 +270,7 @@ export class AddTitleModal extends Modal {
 					this.fieldTrailerUrl = full.trailerUrl ?? '';
 					this.fieldDirector = full.director ?? [];
 					this.fieldCast = full.cast ?? [];
+					this.fieldStudio = full.studio ?? [];
 				}
 			} else if (!isAnimeResult(result) && result.mediaType === 'movie') {
 				const full = activeApi === 'TMDB'
@@ -281,6 +287,7 @@ export class AddTitleModal extends Modal {
 					this.fieldTrailerUrl = full.trailerUrl ?? '';
 					this.fieldDirector = full.director ?? [];
 					this.fieldCast = full.cast ?? [];
+					this.fieldStudio = full.studio ?? [];
 				}
 			} else {
 				const anime = result as AnimeSearchResult;
@@ -291,9 +298,11 @@ export class AddTitleModal extends Modal {
 				this.fieldLink = anime.url;
 				this.fieldSeasons = anime.seasons;
 				this.fieldTrailerUrl = anime.trailerUrl ?? '';
-				// Anime sources don't carry credits — clear any stale movie/TV selection.
+				// anime sources don't carry credits — clear any stale movie/TV selection.
+				// studio is backfilled from Jikan/AniList on first modal open.
 				this.fieldDirector = [];
 				this.fieldCast = [];
+				this.fieldStudio = [];
 				if (anime.anilistId && anime.anilistId > 0) {
 					this.fieldAnilistId = anime.anilistId;
 					this.fieldMalId = null;
@@ -309,10 +318,11 @@ export class AddTitleModal extends Modal {
 			this.fieldReleaseDate = result.releaseDate;
 			this.fieldLink = result.url;
 			this.fieldSeasons = result.seasons;
-			// Anime search results already carry a trailer; movie/TV list rows do not.
+			// anime search results already carry a trailer; movie/TV list rows do not
 			this.fieldTrailerUrl = result.trailerUrl ?? '';
 			this.fieldDirector = !isAnimeResult(result) ? (result.director ?? []) : [];
 			this.fieldCast = !isAnimeResult(result) ? (result.cast ?? []) : [];
+			this.fieldStudio = !isAnimeResult(result) ? (result.studio ?? []) : [];
 		}
 
 		this.renderForm();
@@ -328,9 +338,8 @@ export class AddTitleModal extends Modal {
 			return row;
 		};
 
-		// A paired-row cell: [label][fixed-width input]. The left cell keeps the
-		// standard label width so its input aligns with the full-width fields; the
-		// right cell anchors to the row's right edge (see wl-modal-pair-cell-right).
+		// a paired-row cell: [label][fixed-width input]. The left cell keeps the standard label width so its
+		// input aligns with the full-width fields; the right cell anchors to the row's right edge.
 		const makeCell = (row: HTMLElement, label: string, right = false): HTMLElement => {
 			const cell = row.createDiv({
 				cls: right ? 'wl-modal-pair-cell wl-modal-pair-cell-right' : 'wl-modal-pair-cell',
@@ -339,7 +348,6 @@ export class AddTitleModal extends Modal {
 			return cell;
 		};
 
-		// Title
 		const titleRow = makeRow('Title');
 		const titleInput = titleRow.createEl('input', {
 			cls: 'wl-modal-input',
@@ -348,7 +356,7 @@ export class AddTitleModal extends Modal {
 		titleInput.value = this.fieldTitle;
 		titleInput.addEventListener('input', () => { this.fieldTitle = titleInput.value; });
 
-		// Episodes + Ep. duration paired 50/50 on one row to reclaim vertical space.
+		// episodes + ep. duration paired 50/50 to reclaim vertical space
 		const epsDurRow = this.formEl.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
 		const epsCell = makeCell(epsDurRow, 'Episodes');
 		const epsInput = epsCell.createEl('input', {
@@ -356,7 +364,7 @@ export class AddTitleModal extends Modal {
 			attr: { type: 'number', min: '0', placeholder: '0' },
 		});
 		epsInput.value = String(this.fieldEpisodes);
-		epsInput.addEventListener('input', () => { this.fieldEpisodes = parseInt(epsInput.value) || 0; });
+		epsInput.addEventListener('input', () => { this.fieldEpisodes = parseInt(epsInput.value, 10) || 0; });
 
 		const durCell = makeCell(epsDurRow, 'Ep. duration (min)', true);
 		const durInput = durCell.createEl('input', {
@@ -364,37 +372,19 @@ export class AddTitleModal extends Modal {
 			attr: { type: 'number', min: '0', placeholder: '24' },
 		});
 		durInput.value = String(this.fieldDuration);
-		durInput.addEventListener('input', () => { this.fieldDuration = parseInt(durInput.value) || 0; });
+		durInput.addEventListener('input', () => { this.fieldDuration = parseInt(durInput.value, 10) || 0; });
 
-		// Release date
+		// the picker refuses to commit unparsable text, so the field can't store a raw non-ISO string
 		const relRow = makeRow('Release date');
 		const relStack = relRow.createDiv({ cls: 'wl-modal-input-stack' });
-		const relInput = relStack.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'Date (dd-mm-yyyy or yyyy-mm-dd)' },
-		});
-		relInput.value = this.fieldReleaseDate;
-		const relErrorEl = relStack.createDiv({ cls: 'wl-modal-error wl-hidden' });
-		relInput.addEventListener('change', () => {
-			const raw = relInput.value.trim();
-			if (!raw) {
-				this.fieldReleaseDate = '';
-				relErrorEl.addClass('wl-hidden');
-				return;
-			}
-			const parsed = parseReleaseDateInput(raw);
-			if (parsed) {
-				this.fieldReleaseDate = parsed;
-				relInput.value = parsed;
-				relErrorEl.addClass('wl-hidden');
-			} else {
-				this.fieldReleaseDate = raw;
-				relErrorEl.textContent = 'Unrecognised format. Expected dd/mm/yyyy or yyyy-mm-dd.';
-				relErrorEl.removeClass('wl-hidden');
-			}
+		createDatePicker({
+			parent: relStack,
+			inputCls: 'wl-modal-input',
+			value: this.fieldReleaseDate || null,
+			lenient: true,
+			onChange: (iso) => { this.fieldReleaseDate = iso ?? ''; },
 		});
 
-		// External link
 		const linkRow = makeRow('External link');
 		const linkInput = linkRow.createEl('input', {
 			cls: 'wl-modal-input',
@@ -403,8 +393,7 @@ export class AddTitleModal extends Modal {
 		linkInput.value = this.fieldLink;
 		linkInput.addEventListener('input', () => { this.fieldLink = linkInput.value; });
 
-		// Status + Priority paired 50/50 on one row to reclaim vertical space.
-		// (Status excludes "To be released" — it is auto-assigned based on releaseDate.)
+		// status + priority paired 50/50 (status excludes "To be released" — it follows releaseDate)
 		const statusPriRow = this.formEl.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
 		const statusCell = makeCell(statusPriRow, 'Status');
 		const statusSelect = statusCell.createEl('select', { cls: 'wl-select' });
@@ -422,24 +411,15 @@ export class AddTitleModal extends Modal {
 		}
 		priSelect.addEventListener('change', () => { this.fieldPriority = priSelect.value; });
 
-		// Date started
 		const startRow = makeRow('Date started');
-		const startInput = startRow.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: '15/01/2024', maxlength: '10' },
-		});
-		startInput.value = this.fieldDateStarted ? formatDateDisplay(this.fieldDateStarted) : '';
-		startInput.addEventListener('change', () => {
-			const parsed = parseDateInput(startInput.value);
-			if (startInput.value.trim() && !parsed) {
-				startInput.addClass('wl-input-error');
-			} else {
-				startInput.removeClass('wl-input-error');
-				this.fieldDateStarted = parsed ?? '';
-			}
+		createDatePicker({
+			parent: startRow,
+			inputCls: 'wl-modal-input',
+			value: this.fieldDateStarted || null,
+			onChange: (iso) => { this.fieldDateStarted = iso ?? ''; },
 		});
 
-		// Group fields (mutually exclusive)
+		// group fields (mutually exclusive)
 		const groups = this.dataManager.getGroups();
 		const addToGroupRow = makeRow('Add to group');
 		const groupSelect = addToGroupRow.createEl('select', { cls: 'wl-select' });
@@ -481,7 +461,6 @@ export class AddTitleModal extends Modal {
 		if (this.selectedGroupId) newGroupInput.disabled = true;
 		if (this.newGroupName.trim()) groupSelect.disabled = true;
 
-		// Seasons info
 		if (this.fieldSeasons.length > 0) {
 			const seasRow = makeRow('Seasons');
 			seasRow.createSpan({
@@ -490,7 +469,6 @@ export class AddTitleModal extends Modal {
 			});
 		}
 
-		// Add button
 		const btnRow = this.formEl.createDiv({ cls: 'wl-modal-btn-row' });
 		const addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add to watchlog' });
 		addBtn.addEventListener('click', () => void this.addTitle());
@@ -554,31 +532,33 @@ export class AddTitleModal extends Modal {
 			externalLink: this.fieldLink,
 			seasons: this.fieldSeasons,
 			watchedEpisodes: [],
+			favorite: false,
 			posterUrl: '',
 			trailerUrl: this.fieldTrailerUrl,
 			manualTrailerUrl: '',
-			// Empty stays absent (= unfetched) so the detail modal's lazy backfill runs.
+			// empty stays absent (= unfetched) so the detail modal's lazy backfill runs
 			...(this.fieldDirector.length > 0 ? { director: this.fieldDirector } : {}),
 			...(this.fieldCast.length > 0 ? { cast: this.fieldCast } : {}),
+			...(this.fieldStudio.length > 0 ? { studio: this.fieldStudio } : {}),
 			...(this.fieldMalId !== null ? { malId: this.fieldMalId } : {}),
 			...(this.fieldAnilistId !== null ? { anilistId: this.fieldAnilistId } : {}),
 		};
 
-		// Auto-complete episodes when adding with Completed status
+		// auto-complete episodes when adding with Completed status
 		if (entry.status === 'Completed' && entry.totalEpisodes > 0) {
 			entry.watchedEpisodes = Array.from({ length: entry.totalEpisodes }, (_, i) => i + 1);
 			if (this.plugin.settings.setFinishDateAutomatically) {
-				entry.dateFinished = new Date().toISOString().split('T')[0] ?? null;
+				entry.dateFinished = todayIso();
 			}
 		}
 
 		await this.dataManager.addTitle(entry);
 
-		// Remember the type that was actually used so "Last type used" can follow it.
+		// remember the type actually used so "Last type used" can follow it
 		this.plugin.settings.lastAddedType = entry.type;
 		void this.plugin.saveSettings();
 
-		// Fire-and-forget community rating fetch (no await — non-blocking)
+		// fire-and-forget community rating fetch (non-blocking)
 		void (async () => {
 			const animeSource = this.plugin.settings.animeApiSource ?? 'jikan';
 			const group = getApiGroupForType(entry.type, this.plugin.settings.typeApiMapping);

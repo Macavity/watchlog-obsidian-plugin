@@ -1,9 +1,9 @@
 {
 	"id": "watchlog",
 	"name": "WatchLog",
-	"version": "2.2.0",
+	"version": "3.0.0",
 	"minAppVersion": "1.11.0",
-	"description": "Track your anime, movies, books, manga and TV shows; with episode tracking, progress stats, upcoming release alerts, and embeddable widgets.",
+	"description": "Track your anime, movies, books, manga, TV shows and Games; with episode tracking, progress stats, upcoming release alerts, and embeddable widgets.",
 	"author": "BogdanS",
 	"authorUrl": "",
 	"isDesktopOnly": false

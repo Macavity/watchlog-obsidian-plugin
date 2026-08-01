@@ -2,7 +2,6 @@ import { App, Modal, Notice } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, Season } from './types';
-import { formatDateDisplay, parseDateInput, parseReleaseDateInput } from './types';
 
 /** Parses "5,8,33-37,42" into a sorted unique flat array of numbers. */
 function parseSkipSpec(spec: string): number[] {
@@ -23,7 +22,7 @@ function parseSkipSpec(spec: string): number[] {
 	return [...new Set(result)].sort((a, b) => a - b);
 }
 
-/** Serializes a sorted number array into a compact skip-spec string like "5,8,33-37,42". */
+/** Serializes a sorted number array back into "5,8,33-37,42". */
 function serializeSkipSpec(nums: number[]): string {
 	if (nums.length === 0) return '';
 	const sorted = [...new Set(nums)].sort((a, b) => a - b);
@@ -42,13 +41,13 @@ function serializeSkipSpec(nums: number[]): string {
 	return parts.join(',');
 }
 
-/** Parses a seasons textarea (one line per season: "Name: N" or "Name: N (skip_spec)") back to Season[]. */
+/** Parses a seasons textarea ("Name: N" or "Name: N (skip_spec)" per line) back to Season[]. */
 function parseSeasonsText(text: string): Season[] {
 	const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 	const seasons: Season[] = [];
 	let offset = 0;
 	for (const line of lines) {
-		// Match "Name: N" optionally followed by " (skip_spec)"
+		// match "Name: N", optionally followed by " (skip_spec)"
 		const match = line.match(/^(.+?):\s*(\d+)(?:\s*\(([^)]+)\))?/);
 		if (match && match[1] && match[2]) {
 			const eps = parseInt(match[2], 10);
@@ -76,32 +75,25 @@ export class EditTitleModal extends Modal {
 	private original: WatchLogTitle;
 	private onSaved: () => void;
 
-	// Editable state (mirrors all WatchLogTitle fields)
+	// editable state. Status, priority, rating, notes, the watch dates and the release date are
+	// deliberately absent — they're edited in the detail modal and the expanded row, and carry over
+	// untouched on save.
 	private fieldTitle: string;
 	private fieldType: string;
 	private fieldEpisodes: number;
 	private fieldDuration: number;
-	private fieldReleaseDate: string;
 	private fieldLink: string;
 	private fieldSeasonsText: string;
-	private fieldStatus: string;
-	private fieldPriority: string;
 	private fieldReview: string;
-	private fieldRating: number;
-	private fieldNotes: string;
-	private fieldDateStarted: string;
-	private fieldDateFinished: string;
 	private fieldPosterUrl: string;
 	private fieldTrailerUrl: string;
-	// Group assignment (mirrors AddTitleModal). `originalGroupId` records the group
-	// the title belonged to on open, so save can move/detach it only when changed.
+	// group assignment (mirrors AddTitleModal). `originalGroupId` records the group on open, so save
+	// moves/detaches only when it changed.
 	private originalGroupId = '';
 	private selectedGroupId = '';
 	private newGroupName = '';
 	private skipDuplicateCheck = false;
 	private duplicateWarningEl: HTMLElement | null = null;
-	private notesInput: HTMLTextAreaElement | null = null;
-	private notesEditedByUser = false;
 
 	constructor(
 		app: App,
@@ -116,24 +108,16 @@ export class EditTitleModal extends Modal {
 		this.original = title;
 		this.onSaved = onSaved;
 
-		// Pre-populate from existing title
 		this.fieldTitle = title.title;
 		this.fieldType = title.type;
 		this.fieldEpisodes = title.totalEpisodes;
 		this.fieldDuration = title.episodeDuration;
-		this.fieldReleaseDate = title.releaseDate ?? '';
 		this.fieldLink = title.externalLink;
 		this.fieldSeasonsText = seasonsToText(title.seasons);
-		this.fieldStatus = title.status;
-		this.fieldPriority = title.priority;
 		this.fieldReview = title.review ?? '';
-		this.fieldRating = title.rating;
-		this.fieldNotes = title.notes;
-		this.fieldDateStarted = title.dateStarted ?? '';
-		this.fieldDateFinished = title.dateFinished ?? '';
 		this.fieldPosterUrl = title.manualPosterUrl ?? '';
 		this.fieldTrailerUrl = title.manualTrailerUrl ?? '';
-		// Seed the group dropdown with the title's current group (if any).
+		// seed the group dropdown with the title's current group
 		this.originalGroupId =
 			this.dataManager.getGroups().find((g) => g.titleIds.includes(title.id))?.id ?? '';
 		this.selectedGroupId = this.originalGroupId;
@@ -143,17 +127,6 @@ export class EditTitleModal extends Modal {
 		this.titleEl.setText(`Edit: ${this.original.title}`);
 		this.contentEl.addClass('wl-add-modal');
 		this.buildUI();
-		// Pull the ## Notes body back from the .md file so manual edits made directly
-		// in the file are reflected in the modal (mirrors Reading reading Quotes back).
-		void this.syncNotesFromFile();
-	}
-
-	/** Reflects the on-disk ## Notes body into the notes field, unless the user is already editing it. */
-	private async syncNotesFromFile(): Promise<void> {
-		const fileNotes = await this.dataManager.readNotesFromFile(this.original);
-		if (fileNotes === null || this.notesEditedByUser) return;
-		this.fieldNotes = fileNotes;
-		if (this.notesInput) this.notesInput.value = fileNotes;
 	}
 
 	onClose(): void {
@@ -170,9 +143,8 @@ export class EditTitleModal extends Modal {
 			return row;
 		};
 
-		// A paired-row cell: [label][fixed-width input]. Mirrors AddTitleModal so two
-		// labelled fields share one row (left cell aligns with full-width inputs, the
-		// right cell anchors to the row's right edge). See .wl-modal-pair-cell CSS.
+		// a paired-row cell: [label][fixed-width input]. Mirrors AddTitleModal so two labelled fields share
+		// one row — see .wl-modal-pair-cell.
 		const makeCell = (row: HTMLElement, label: string, right = false): HTMLElement => {
 			const cell = row.createDiv({
 				cls: right ? 'wl-modal-pair-cell wl-modal-pair-cell-right' : 'wl-modal-pair-cell',
@@ -181,7 +153,6 @@ export class EditTitleModal extends Modal {
 			return cell;
 		};
 
-		// Title
 		const titleRow = makeRow('Title');
 		const titleInput = titleRow.createEl('input', {
 			cls: 'wl-modal-input',
@@ -190,7 +161,6 @@ export class EditTitleModal extends Modal {
 		titleInput.value = this.fieldTitle;
 		titleInput.addEventListener('input', () => { this.fieldTitle = titleInput.value; });
 
-		// Type
 		const typeRow = makeRow('Type');
 		const typeSelect = typeRow.createEl('select', { cls: 'wl-select' });
 		for (const t of this.plugin.settings.types) {
@@ -199,47 +169,8 @@ export class EditTitleModal extends Modal {
 		}
 		typeSelect.addEventListener('change', () => { this.fieldType = typeSelect.value; });
 
-		// Status + Priority paired 50/50 on one row.
-		// ("To be released" is auto-assigned; show it only if the title currently has it.)
-		const statusPriRow = content.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
-		const statusCell = makeCell(statusPriRow, 'Status');
-		const statusSelect = statusCell.createEl('select', { cls: 'wl-select' });
-		const showToBeReleased = this.fieldStatus === 'To be released';
-		for (const s of this.plugin.settings.statuses) {
-			if (s.name === 'To be released' && !showToBeReleased) continue;
-			const opt = statusSelect.createEl('option', { text: s.name, value: s.name });
-			if (s.name === this.fieldStatus) opt.selected = true;
-		}
-		statusSelect.addEventListener('change', () => { this.fieldStatus = statusSelect.value; });
-
-		const priCell = makeCell(statusPriRow, 'Priority', true);
-		const priSelect = priCell.createEl('select', { cls: 'wl-select' });
-		for (const p of this.plugin.settings.priorities) {
-			const opt = priSelect.createEl('option', { text: p.name, value: p.name });
-			if (p.name === this.fieldPriority) opt.selected = true;
-		}
-		priSelect.addEventListener('change', () => { this.fieldPriority = priSelect.value; });
-
-		// Rating
-		const ratingRow = makeRow('Rating');
-		const starsWrap = ratingRow.createDiv({ cls: 'wl-stars' });
-		const updateStarDisplay = (): void => {
-			starsWrap.empty();
-			for (let i = 1; i <= 5; i++) {
-				const star = starsWrap.createSpan({
-					cls: `wl-star${this.fieldRating >= i ? ' is-active' : ''}`,
-					text: '★',
-				});
-				star.addEventListener('click', () => {
-					this.fieldRating = this.fieldRating === i ? 0 : i;
-					updateStarDisplay();
-				});
-			}
-		};
-		updateStarDisplay();
-
-		// Total episodes + Ep. duration paired on one row (episodes keeps its seasons
-		// skip/watch inline labels and behaviour untouched — only the layout changed).
+		// total episodes + ep. duration paired on one row (episodes keeps its seasons skip/watch inline
+		// labels — only the layout changed)
 		const epsDurRow = content.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
 		const epsCell = makeCell(epsDurRow, 'Total episodes');
 		const epsInput = epsCell.createEl('input', {
@@ -264,7 +195,7 @@ export class EditTitleModal extends Modal {
 		};
 
 		epsInput.addEventListener('input', () => {
-			this.fieldEpisodes = parseInt(epsInput.value) || 0;
+			this.fieldEpisodes = parseInt(epsInput.value, 10) || 0;
 			updateSkipCounts();
 		});
 
@@ -274,37 +205,8 @@ export class EditTitleModal extends Modal {
 			attr: { type: 'number', min: '0' },
 		});
 		durInput.value = String(this.fieldDuration);
-		durInput.addEventListener('input', () => { this.fieldDuration = parseInt(durInput.value) || 0; });
+		durInput.addEventListener('input', () => { this.fieldDuration = parseInt(durInput.value, 10) || 0; });
 
-		// Release date
-		const relRow = makeRow('Release date');
-		const relStack = relRow.createDiv({ cls: 'wl-modal-input-stack' });
-		const relInput = relStack.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'Date (dd-mm-yyyy or yyyy-mm-dd)' },
-		});
-		relInput.value = this.fieldReleaseDate;
-		const relErrorEl = relStack.createDiv({ cls: 'wl-modal-error wl-hidden' });
-		relInput.addEventListener('change', () => {
-			const raw = relInput.value.trim();
-			if (!raw) {
-				this.fieldReleaseDate = '';
-				relErrorEl.addClass('wl-hidden');
-				return;
-			}
-			const parsed = parseReleaseDateInput(raw);
-			if (parsed) {
-				this.fieldReleaseDate = parsed;
-				relInput.value = parsed;
-				relErrorEl.addClass('wl-hidden');
-			} else {
-				this.fieldReleaseDate = raw;
-				relErrorEl.textContent = 'Unrecognised format. Expected dd/mm/yyyy or yyyy-mm-dd.';
-				relErrorEl.removeClass('wl-hidden');
-			}
-		});
-
-		// External link
 		const linkRow = makeRow('External link');
 		const linkInput = linkRow.createEl('input', {
 			cls: 'wl-modal-input',
@@ -313,7 +215,7 @@ export class EditTitleModal extends Modal {
 		linkInput.value = this.fieldLink;
 		linkInput.addEventListener('input', () => { this.fieldLink = linkInput.value; });
 
-		// Poster URL (manual override) — directly under External link
+		// poster URL (manual override)
 		const posterRow = makeRow('Poster URL');
 		const posterStack = posterRow.createDiv({ cls: 'wl-modal-input-stack' });
 		const posterInput = posterStack.createEl('input', {
@@ -327,7 +229,7 @@ export class EditTitleModal extends Modal {
 			text: 'Override the auto-fetched cover. Leave blank to let WatchLog fetch one again.',
 		});
 
-		// Trailer URL (manual override) — directly under Poster URL
+		// trailer URL (manual override)
 		const trailerRow = makeRow('Trailer URL');
 		const trailerStack = trailerRow.createDiv({ cls: 'wl-modal-input-stack' });
 		const trailerInput = trailerStack.createEl('input', {
@@ -341,42 +243,8 @@ export class EditTitleModal extends Modal {
 			text: 'Override the auto-fetched trailer. Leave blank to use the fetched one.',
 		});
 
-		// Date started + Date finished paired on one row.
-		const datesRow = content.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
-		const startCell = makeCell(datesRow, 'Date started');
-		const startInput = startCell.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'Dd/mm/yyyy', maxlength: '10' },
-		});
-		startInput.value = formatDateDisplay(this.fieldDateStarted);
-		startInput.addEventListener('change', () => {
-			const parsed = parseDateInput(startInput.value);
-			if (startInput.value.trim() && !parsed) {
-				startInput.addClass('wl-input-error');
-			} else {
-				startInput.removeClass('wl-input-error');
-				this.fieldDateStarted = parsed ?? '';
-			}
-		});
-
-		const finCell = makeCell(datesRow, 'Date finished', true);
-		const finInput = finCell.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'Dd/mm/yyyy', maxlength: '10' },
-		});
-		finInput.value = formatDateDisplay(this.fieldDateFinished);
-		finInput.addEventListener('change', () => {
-			const parsed = parseDateInput(finInput.value);
-			if (finInput.value.trim() && !parsed) {
-				finInput.addClass('wl-input-error');
-			} else {
-				finInput.removeClass('wl-input-error');
-				this.fieldDateFinished = parsed ?? '';
-			}
-		});
-
-		// Group assignment (move / create) — ported from AddTitleModal, seeded with
-		// the title's current group. Dropdown and new-name input disable each other.
+		// group assignment (move / create), seeded with the title's current group. The dropdown and the
+		// new-name input disable each other.
 		const groups = this.dataManager.getGroups();
 		const addToGroupRow = makeRow('Add to group');
 		const groupSelect = addToGroupRow.createEl('select', { cls: 'wl-select' });
@@ -418,20 +286,6 @@ export class EditTitleModal extends Modal {
 		if (this.selectedGroupId) newGroupInput.disabled = true;
 		if (this.newGroupName.trim()) groupSelect.disabled = true;
 
-		// Notes
-		const notesRow = makeRow('Notes');
-		const notesInput = notesRow.createEl('textarea', {
-			cls: 'wl-modal-textarea',
-			attr: { rows: '3', placeholder: 'Your notes...' },
-		});
-		notesInput.value = this.fieldNotes;
-		this.notesInput = notesInput;
-		notesInput.addEventListener('input', () => {
-			this.notesEditedByUser = true;
-			this.fieldNotes = notesInput.value;
-		});
-
-		// Seasons
 		const seasonsRow = makeRow('Seasons');
 		const seasonsHelp = seasonsRow.createDiv({ cls: 'wl-modal-input-stack' });
 		const seasonsInput = seasonsHelp.createEl('textarea', {
@@ -471,7 +325,6 @@ export class EditTitleModal extends Modal {
 			text: 'Note: when adding a new season, remember to update "Total Episodes" so progress calculates correctly.',
 		});
 
-		// Save / Cancel
 		const btnRow = content.createDiv({ cls: 'wl-modal-btn-row' });
 		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn', text: 'Cancel' });
 		cancelBtn.addEventListener('click', () => this.close());
@@ -519,88 +372,35 @@ export class EditTitleModal extends Modal {
 		this.skipDuplicateCheck = false;
 
 		const seasons = parseSeasonsText(this.fieldSeasonsText);
-		const newReleaseDate = this.fieldReleaseDate || null;
 
+		// status, priority, rating, notes, the watch dates and the release date aren't edited here —
+		// spreading the original carries their current values through, so a save can't clobber an edit made
+		// elsewhere
 		const updated: WatchLogTitle = {
 			...this.original,
 			title: titleName,
 			type: this.fieldType,
-			status: this.fieldStatus,
-			priority: this.fieldPriority,
 			review: this.fieldReview,
-			rating: this.fieldRating,
-			notes: this.fieldNotes,
 			totalEpisodes: this.fieldEpisodes,
 			episodeDuration: this.fieldDuration,
-			releaseDate: newReleaseDate,
 			externalLink: this.fieldLink,
 			seasons,
-			dateStarted: this.fieldDateStarted || null,
-			dateFinished: this.fieldDateFinished || null,
 			manualPosterUrl: this.fieldPosterUrl.trim(),
 			manualTrailerUrl: this.fieldTrailerUrl.trim(),
 		};
 
-		// Auto-mark all episodes watched when status is set to Completed
+		// keep an already-Completed title fully ticked when its episode count changes here
 		if (updated.status === 'Completed' && updated.totalEpisodes > 0) {
 			updated.watchedEpisodes = Array.from({ length: updated.totalEpisodes }, (_, i) => i + 1);
 		}
 
 		await this.dataManager.updateTitle(updated);
 
-		// Sync updated releaseDate to any existing 'once' airtime entry
-		const allEntries = this.dataManager.getAirtimeEntries();
-		const existingAirtimeEntry = allEntries.find((e) => e.titleId === updated.id);
-		if (existingAirtimeEntry && existingAirtimeEntry.schedule.recurrence === 'once') {
-			const newDateForEntry = newReleaseDate ?? undefined;
-			if (existingAirtimeEntry.schedule.releaseDate !== newDateForEntry) {
-				existingAirtimeEntry.schedule.releaseDate = newDateForEntry;
-				await this.dataManager.updateAirtimeEntry(existingAirtimeEntry);
-			}
-		}
-
-		// ── handle releaseDate changes ───────────────────────────────────────────────
-		const today = new Date();
-		today.setHours(0, 0, 0, 0);
-		const isFullDate = (d: string | null): d is string =>
-			d !== null && /^\d{4}-\d{2}-\d{2}$/.test(d);
-
-		if (isFullDate(newReleaseDate)) {
-			const releaseMs = new Date(newReleaseDate + 'T12:00:00').getTime();
-			const isFuture = releaseMs > today.getTime();
-
-			if (isFuture) {
-				if (updated.status !== 'To be released') {
-					updated.status = 'To be released';
-					await this.dataManager.updateTitle(updated);
-				}
-				// Auto-add to Upcoming if not already there
-				const entries = this.dataManager.getAirtimeEntries();
-				const alreadyInUpcoming = entries.some((e) => e.titleId === updated.id);
-				if (!alreadyInUpcoming) {
-					await this.dataManager.autoAddToUpcoming(updated);
-				}
-			} else {
-				// Date is past/today — revert "To be released" status
-				if (updated.status === 'To be released') {
-					updated.status = 'Plan to watch';
-					await this.dataManager.updateTitle(updated);
-					await this.dataManager.removeAirtimeEntriesForTitle(updated.id);
-				}
-			}
-		} else if (!newReleaseDate && updated.status === 'To be released') {
-			// Date cleared — revert "To be released" status
-			updated.status = 'Plan to watch';
-			await this.dataManager.updateTitle(updated);
-			await this.dataManager.removeAirtimeEntriesForTitle(updated.id);
-		}
-
-		// ── Group membership (move / create), mirroring AddTitleModal ────────────────
-		// Only act when the selection changed relative to the title's original group.
+		// group membership (move / create) — only act when the selection changed relative to the original
 		const newGroupName = this.newGroupName.trim();
 		const groupChanged = newGroupName !== '' || this.selectedGroupId !== this.originalGroupId;
 		if (groupChanged) {
-			// Detach from the previous group first.
+			// detach from the previous group first
 			if (this.originalGroupId) {
 				const old = this.dataManager.getGroup(this.originalGroupId);
 				if (old) {
@@ -619,7 +419,7 @@ export class EditTitleModal extends Modal {
 			} else if (this.selectedGroupId) {
 				await this.dataManager.addTitleToGroup(this.selectedGroupId, updated.id);
 			}
-			// else: moved to "— none —" — detached only.
+			// else: moved to "— none —" — detached only
 		}
 
 		new Notice(`"${titleName}" updated.`);

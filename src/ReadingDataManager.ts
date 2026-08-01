@@ -9,6 +9,9 @@ import {
 	ReadingSettings,
 	DEFAULT_READING_SETTINGS,
 	isReleaseDateFuture,
+	todayIso,
+	READING_STATUSES,
+	DEFAULT_READING_STATUS_COLORS,
 } from './types';
 
 export type ReadingKind = 'book' | 'manga';
@@ -19,7 +22,7 @@ function sanitizeFilename(input: string): string {
 
 function yamlEscape(value: string): string {
 	if (value === '') return '""';
-	// Double-quote and escape backslashes and double quotes.
+	// double-quote and escape backslashes and double quotes
 	return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
@@ -55,15 +58,15 @@ export class ReadingDataManager {
 		};
 	}
 
-	/** The single saveData object (owned by DataManager) that now holds reading data. */
+	/** The single saveData object (owned by DataManager) that holds reading data. */
 	private get master() {
 		return this.plugin.dataManager.getData();
 	}
 
 	/**
-	 * Reads the reading dataset from the shared `data.reading` key (in memory, not a
-	 * file), normalizes it, and binds `master.reading` to our canonical reference so
-	 * subsequent mutations are reflected in the object DataManager persists.
+	 * Reads the reading dataset from the shared `data.reading` key (in memory, not a file), normalizes
+	 * it, and binds `master.reading` to our canonical reference so later mutations reach the object
+	 * DataManager persists.
 	 */
 	private bindFromMaster(): void {
 		const parsed = this.master.reading as Partial<ReadingData> | undefined;
@@ -87,9 +90,8 @@ export class ReadingDataManager {
 		if (changed) {
 			await this.saveOnly();
 		}
-		// Additive reconcile: ensure every future-dated reading item has an Upcoming
-		// entry (mirrors the watchlist auto-add). Purely additive — never removes, so
-		// manually-scheduled recurring entries are preserved across reloads.
+		// additive reconcile: every future-dated item gets an Upcoming entry. Never removes, so
+		// manually-scheduled recurring entries survive reloads.
 		const dm = this.plugin.dataManager;
 		if (dm) {
 			for (const b of this.data.books) if (isReleaseDateFuture(b.releaseDate)) await dm.autoAddReadingToUpcoming(b, 'book');
@@ -101,28 +103,47 @@ export class ReadingDataManager {
 	private migrate(): boolean {
 		let changed = false;
 
-		// "On Hold" was removed; never leave it as the default for new entries.
+		// "On Hold" was removed; never leave it as the default for new entries
 		if ((this.data.settings.defaultStatus as string) === 'On Hold') {
 			this.data.settings.defaultStatus = 'Plan to Read';
 			changed = true;
 		}
 
+		// status colours became user-editable (Settings → Customize → Reading) — seed missing keys from
+		// the shipped defaults so the picker always has a concrete value; names stay fixed
+		if (!this.data.settings.statusColors || typeof this.data.settings.statusColors !== 'object') {
+			this.data.settings.statusColors = { ...DEFAULT_READING_STATUS_COLORS };
+			changed = true;
+		} else {
+			for (const status of READING_STATUSES) {
+				if (typeof this.data.settings.statusColors[status] !== 'string') {
+					this.data.settings.statusColors[status] = DEFAULT_READING_STATUS_COLORS[status];
+					changed = true;
+				}
+			}
+		}
+
 		for (const b of this.data.books) {
 			if (typeof b.author !== 'string') { b.author = ''; changed = true; }
+			if (typeof b.favorite !== 'boolean') { b.favorite = false; changed = true; }
 			if (typeof b.rating !== 'number') { b.rating = 0; changed = true; }
 			if (typeof b.pagesRead !== 'number') { b.pagesRead = 0; changed = true; }
 			if (typeof b.totalPages !== 'number') { b.totalPages = 0; changed = true; }
+			// pages/words tracking: every pre-existing book was tracked in pages
+			if (b.progressUnit !== 'pages' && b.progressUnit !== 'words') { b.progressUnit = 'pages'; changed = true; }
+			if (typeof b.wordsRead !== 'number') { b.wordsRead = 0; changed = true; }
+			if (typeof b.totalWords !== 'number') { b.totalWords = 0; changed = true; }
 			if (typeof b.chaptersRead !== 'number') { b.chaptersRead = 0; changed = true; }
 			if (typeof b.totalChapters !== 'number') { b.totalChapters = 0; changed = true; }
 			if (typeof b.coverUrl !== 'string') { b.coverUrl = ''; changed = true; }
-			// Books now use Google Books volume ids; pre-existing entries keep their
-			// old openLibraryId value untouched and simply get an empty googleBooksId.
+			// books now use Google Books volume ids; pre-existing entries keep openLibraryId and get an empty
+			// googleBooksId
 			if (typeof b.googleBooksId !== 'string') { b.googleBooksId = ''; changed = true; }
 			if (typeof b.vaultPage !== 'string') { b.vaultPage = ''; changed = true; }
 			if (b.dateStarted === undefined) { b.dateStarted = null; changed = true; }
 			if (b.dateFinished === undefined) { b.dateFinished = null; changed = true; }
 			if (b.releaseDate === undefined) { b.releaseDate = null; changed = true; }
-			// "On Hold" was removed; migrate any legacy value to "Plan to Read".
+			// "On Hold" was removed; migrate any legacy value to "Plan to Read"
 			if ((b.status as string) === 'On Hold') { b.status = 'Plan to Read'; changed = true; }
 			if (!b.dateAdded) { b.dateAdded = new Date().toISOString(); changed = true; }
 			if (!b.dateModified) { b.dateModified = b.dateAdded; changed = true; }
@@ -134,6 +155,7 @@ export class ReadingDataManager {
 
 		for (const m of this.data.manga) {
 			if (typeof m.author !== 'string') { m.author = ''; changed = true; }
+			if (typeof m.favorite !== 'boolean') { m.favorite = false; changed = true; }
 			if (typeof m.rating !== 'number') { m.rating = 0; changed = true; }
 			if (typeof m.chaptersRead !== 'number') { m.chaptersRead = 0; changed = true; }
 			if (typeof m.totalChapters !== 'number') { m.totalChapters = 0; changed = true; }
@@ -145,7 +167,7 @@ export class ReadingDataManager {
 			if (m.dateStarted === undefined) { m.dateStarted = null; changed = true; }
 			if (m.dateFinished === undefined) { m.dateFinished = null; changed = true; }
 			if (m.releaseDate === undefined) { m.releaseDate = null; changed = true; }
-			// "On Hold" was removed; migrate any legacy value to "Plan to Read".
+			// "On Hold" was removed; migrate any legacy value to "Plan to Read"
 			if ((m.status as string) === 'On Hold') { m.status = 'Plan to Read'; changed = true; }
 			if (!m.dateAdded) { m.dateAdded = new Date().toISOString(); changed = true; }
 			if (!m.dateModified) { m.dateModified = m.dateAdded; changed = true; }
@@ -164,7 +186,7 @@ export class ReadingDataManager {
 			if (!c.color) { c.color = '#5F5E5A'; changed = true; }
 		}
 
-		// Reconcile auto "To be released" status against each release date.
+		// reconcile the auto "To be released" status against each release date
 		for (const b of this.data.books) if (this.applyReleaseStatus(b)) changed = true;
 		for (const m of this.data.manga) if (this.applyReleaseStatus(m)) changed = true;
 
@@ -172,9 +194,8 @@ export class ReadingDataManager {
 	}
 
 	/**
-	 * Forces "To be released" when the item's release date is in the future, and
-	 * reverts it to "Plan to Read" once the date has passed (or is cleared).
-	 * Mirrors the watchlist auto-status mechanism. Returns true if status changed.
+	 * Forces "To be released" when the release date is in the future and reverts to "Plan to Read"
+	 * once it passes or is cleared. Returns true if the status changed.
 	 */
 	private applyReleaseStatus(item: Book | Manga): boolean {
 		const future = isReleaseDateFuture(item.releaseDate);
@@ -191,9 +212,8 @@ export class ReadingDataManager {
 	}
 
 	/**
-	 * Mirrors the watchlist auto-add: a reading item with a future release date is
-	 * added to the shared Upcoming tracker (owned by DataManager), and removed once
-	 * the date passes or is cleared. Connects Reading into the same Upcoming pathway.
+	 * Mirrors the watchlist auto-add: a reading item with a future release date joins the shared
+	 * Upcoming tracker and leaves once the date passes or is cleared.
 	 */
 	private async syncUpcoming(item: Book | Manga, kind: ReadingKind): Promise<void> {
 		const dm = this.plugin.dataManager;
@@ -218,12 +238,37 @@ export class ReadingDataManager {
 		await this.save();
 	}
 
-	// ── Persistence ───────────────────────────────────────────────────────────
+	/**
+	 * Persist without notifying — for state the rendering tab wrote itself (the rows layout): it
+	 * re-renders on its own.
+	 */
+	persistQuiet(): void {
+		void this.saveOnly();
+	}
+
+	/**
+	 * Silent favorite toggle: data.json + note frontmatter, but deliberately no dateModified stamp — a
+	 * favorite is not a content edit and must not bubble the item up recently-modified orderings.
+	 */
+	async setFavorite(kind: ReadingKind, id: string, favorite: boolean): Promise<void> {
+		const item = kind === 'book' ? this.getBook(id) : this.getManga(id);
+		if (!item) return;
+		item.favorite = favorite;
+		// stamp drives the Favorites shelf order (newest first); cleared on unfavorite
+		if (favorite) item.dateFavorited = new Date().toISOString();
+		else delete item.dateFavorited;
+		await this.save();
+		try { await this.rewriteFrontmatterIfExists(kind, item); } catch (e) {
+			console.warn('[WL] setFavorite frontmatter rewrite failed:', e);
+		}
+	}
+
+	// Persistence
 
 	private async saveOnly(): Promise<void> {
 		try {
-			// Keep the master reference pointed at our current data (an external sync
-			// reload may have replaced the master object), then persist all of data.json.
+			// keep the master reference pointed at our current data (an external sync reload may have replaced
+			// the master object), then persist all of data.json
 			this.master.reading = this.data;
 			await this.plugin.dataManager.persist();
 		} catch (e) {
@@ -231,10 +276,7 @@ export class ReadingDataManager {
 		}
 	}
 
-	/**
-	 * Re-bind to a freshly synced data.json (driven by DataManager's 'raw' watcher),
-	 * run field migration, and refresh the Reading tab.
-	 */
+	/** Re-bind to a freshly synced data.json (DataManager's 'raw' watcher), migrate, refresh the tab. */
 	async adoptExternalChange(): Promise<void> {
 		this.bindFromMaster();
 		const changed = this.migrate();
@@ -247,7 +289,7 @@ export class ReadingDataManager {
 		this.notifyListeners();
 	}
 
-	// ── Listeners ─────────────────────────────────────────────────────────────
+	// Listeners
 
 	onChange(listener: () => void): void {
 		this.changeListeners.push(listener);
@@ -267,8 +309,8 @@ export class ReadingDataManager {
 	}
 
 	/**
-	 * Overwrite the entire reading dataset from a backup, then reload through the
-	 * normal load() path (migration + Upcoming reconcile) and notify listeners.
+	 * Overwrite the entire reading dataset from a backup, then reload through load() (migration +
+	 * Upcoming reconcile) and notify listeners.
 	 */
 	async restore(data: ReadingData): Promise<void> {
 		this.master.reading = data;
@@ -287,10 +329,8 @@ export class ReadingDataManager {
 	private readonly COVER_SAVE_DEBOUNCE_MS = 5000;
 
 	/**
-	 * Silent cover URL update for the lazy Cards re-fetch. Writes the value in
-	 * memory and schedules a debounced disk save (5s). Does NOT notify listeners —
-	 * the card that triggered the fetch updates its own <img> directly, so the open
-	 * grid is not rebuilt (which would reset scroll position).
+	 * Silent cover URL update for the lazy Cards re-fetch: memory now, debounced disk save (5s), no
+	 * notify — the card swaps its own <img>, so the grid is not rebuilt and scroll survives.
 	 */
 	updateCoverUrl(kind: ReadingKind, id: string, url: string): void {
 		const item = kind === 'book' ? this.getBook(id) : this.getManga(id);
@@ -304,10 +344,9 @@ export class ReadingDataManager {
 	}
 
 	/**
-	 * Like updateCoverUrl, but also persists a source ID that was just resolved via a
-	 * title-based lookup (for CSV-imported entries that arrived with neither cover nor
-	 * ID). Stores googleBooksId / malId so subsequent loads use the cheap ID path.
-	 * Silent + debounced — same scroll-preserving guarantees as updateCoverUrl.
+	 * Like updateCoverUrl, but also persists a source ID just resolved by a title-based lookup (for
+	 * CSV-imported entries that arrived with neither cover nor ID). Stores googleBooksId / malId so
+	 * later loads take the cheap ID path. Same silent, debounced contract.
 	 */
 	updateCoverAndSource(kind: ReadingKind, id: string, url: string, sourceId: string): void {
 		const item = kind === 'book' ? this.getBook(id) : this.getManga(id);
@@ -331,7 +370,7 @@ export class ReadingDataManager {
 		}
 	}
 
-	// ── Books CRUD ────────────────────────────────────────────────────────────
+	// Books CRUD
 
 	getBooks(): Book[] {
 		return this.data.books;
@@ -367,9 +406,9 @@ export class ReadingDataManager {
 			const old = this.data.books[idx]!;
 			if (old.status !== updated.status) {
 				const act = updated.status === 'Completed' ? 'completed' as const : 'status' as const;
-				// Mirror the watch behavior: stamp today's finish date on the transition to Completed.
+				// mirror the watch behavior: stamp today's finish date on the transition to Completed
 				if (updated.status === 'Completed' && this.plugin.settings.setFinishDateAutomatically && !updated.dateFinished) {
-					updated.dateFinished = new Date().toISOString().split('T')[0] ?? null;
+					updated.dateFinished = todayIso();
 				}
 				void this.historyManager?.log(
 					`${updated.title} (Book) status changed to ${updated.status}`,
@@ -384,8 +423,8 @@ export class ReadingDataManager {
 			}
 			this.data.books[idx] = updated;
 			await this.save();
-			// Only reconcile Upcoming when the release date actually changed, so
-			// rating/status/progress edits never disturb a manual recurring entry.
+			// reconcile Upcoming only when the release date actually changed, so rating/status/progress edits
+			// never disturb a manual recurring entry
 			if (old.releaseDate !== updated.releaseDate) await this.syncUpcoming(updated, 'book');
 			try { await this.writeReadingNote('book', updated); } catch (e) { console.warn('[WL] writeReadingNote failed:', e); }
 		}
@@ -415,8 +454,8 @@ export class ReadingDataManager {
 	}
 
 	/**
-	 * Insert many books in one shot: single persist, then per-item Upcoming reconcile
-	 * and note-file write (mirrors the watch addTitleBatch). Used by the chunked CSV import.
+	 * Insert many books in one shot: single persist, then per-item Upcoming reconcile and note write
+	 * (mirrors addTitleBatch). Used by the chunked CSV import.
 	 */
 	async addBookBatch(books: Book[]): Promise<void> {
 		for (const book of books) {
@@ -443,7 +482,7 @@ export class ReadingDataManager {
 		return `${base}-${counter}`;
 	}
 
-	// ── Manga CRUD ────────────────────────────────────────────────────────────
+	// Manga CRUD
 
 	getMangaList(): Manga[] {
 		return this.data.manga;
@@ -479,9 +518,9 @@ export class ReadingDataManager {
 			const old = this.data.manga[idx]!;
 			if (old.status !== updated.status) {
 				const act = updated.status === 'Completed' ? 'completed' as const : 'status' as const;
-				// Mirror the watch behavior: stamp today's finish date on the transition to Completed.
+				// mirror the watch behavior: stamp today's finish date on the transition to Completed
 				if (updated.status === 'Completed' && this.plugin.settings.setFinishDateAutomatically && !updated.dateFinished) {
-					updated.dateFinished = new Date().toISOString().split('T')[0] ?? null;
+					updated.dateFinished = todayIso();
 				}
 				void this.historyManager?.log(
 					`${updated.title} (Manga) status changed to ${updated.status}`,
@@ -496,8 +535,8 @@ export class ReadingDataManager {
 			}
 			this.data.manga[idx] = updated;
 			await this.save();
-			// Only reconcile Upcoming when the release date actually changed, so
-			// rating/status/progress edits never disturb a manual recurring entry.
+			// reconcile Upcoming only when the release date actually changed, so rating/status/progress edits
+			// never disturb a manual recurring entry
 			if (old.releaseDate !== updated.releaseDate) await this.syncUpcoming(updated, 'manga');
 			try { await this.writeReadingNote('manga', updated); } catch (e) { console.warn('[WL] writeReadingNote failed:', e); }
 		}
@@ -571,8 +610,8 @@ export class ReadingDataManager {
 	}
 
 	/**
-	 * Insert many manga in one shot: single persist, then per-item Upcoming reconcile
-	 * and note-file write (mirrors the watch addTitleBatch). Used by the chunked CSV import.
+	 * Insert many manga in one shot: single persist, then per-item Upcoming reconcile and note write.
+	 * Used by the chunked CSV import.
 	 */
 	async addMangaBatch(mangaList: Manga[]): Promise<void> {
 		for (const manga of mangaList) {
@@ -599,7 +638,7 @@ export class ReadingDataManager {
 		return `${base}-${counter}`;
 	}
 
-	// ── Custom columns CRUD ───────────────────────────────────────────────────
+	// Custom columns CRUD
 
 	getBookColumns(): ReadingCustomColumn[] {
 		return this.data.bookColumns;
@@ -664,7 +703,7 @@ export class ReadingDataManager {
 		await this.save();
 	}
 
-	// ── Custom field values ──────────────────────────────────────────────────
+	// Custom field values
 
 	async setCustomField(
 		kind: ReadingKind,
@@ -684,7 +723,7 @@ export class ReadingDataManager {
 		await this.save();
 	}
 
-	// ── Reading note files ───────────────────────────────────────────────────
+	// Reading note files
 
 	private kindFolder(kind: ReadingKind): string {
 		const root = this.data.settings.defaultFolder || 'WatchLog/Reading';
@@ -712,11 +751,19 @@ export class ReadingDataManager {
 		lines.push(`title: ${yamlEscape(sanitizeFilename(item.title))}`);
 		lines.push(`author: ${yamlEscape(item.author ?? '')}`);
 		lines.push(`status: ${yamlEscape(item.status)}`);
+		if (item.favorite) lines.push(`favorite: true`);
 		lines.push(`rating: ${item.rating | 0}`);
 		if (kind === 'book') {
 			const b = item as Book;
 			lines.push(`pagesRead: ${b.pagesRead | 0}`);
 			lines.push(`totalPages: ${b.totalPages | 0}`);
+			// words are an opt-in unit: emitted only when they carry meaning, so a pages-tracked note keeps
+			// exactly the frontmatter it always had
+			if (b.progressUnit === 'words' || (b.wordsRead | 0) > 0 || (b.totalWords | 0) > 0) {
+				lines.push(`progressUnit: ${b.progressUnit === 'words' ? 'words' : 'pages'}`);
+				lines.push(`wordsRead: ${b.wordsRead | 0}`);
+				lines.push(`totalWords: ${b.totalWords | 0}`);
+			}
 			lines.push(`chaptersRead: ${b.chaptersRead | 0}`);
 			lines.push(`totalChapters: ${b.totalChapters | 0}`);
 			if (b.googleBooksId) lines.push(`googleBooksId: ${yamlEscape(b.googleBooksId)}`);
@@ -749,19 +796,19 @@ export class ReadingDataManager {
 		if (fmMatch) {
 			return frontmatter + '\n' + existing.slice(fmMatch[0].length);
 		}
-		// No frontmatter found — prepend it.
+		// no frontmatter found — prepend it
 		return frontmatter + '\n\n' + existing;
 	}
 
 	private lastNotePathById = new Map<string, string>();
 
-	/** Writes (creates or updates) the note file. Preserves Notes/Quotes body when the file exists. */
+	/** Writes (creates or updates) the note file. Preserves the Notes/Quotes body when it exists. */
 	async writeReadingNote(kind: ReadingKind, item: Book | Manga): Promise<string> {
 		await this.ensureFolder(this.kindFolder(kind));
 		const filePath = this.noteFilePath(kind, item.title);
 		const frontmatter = this.buildFrontmatter(kind, item);
 
-		// Handle rename: trash the previous file if the path changed.
+		// handle rename: trash the previous file if the path changed
 		const prevKey = `${kind}:${item.id}`;
 		const previousPath = this.lastNotePathById.get(prevKey);
 		if (previousPath && previousPath !== filePath) {
@@ -799,7 +846,7 @@ export class ReadingDataManager {
 		return this.writeReadingNote(kind, item);
 	}
 
-	/** Creates the note file only if it's missing; returns true when a file was created. */
+	/** Creates the note file only if missing; true when one was created. */
 	async createReadingNoteIfMissing(kind: ReadingKind, item: Book | Manga): Promise<boolean> {
 		const filePath = this.noteFilePath(kind, item.title);
 		if (this.plugin.app.vault.getAbstractFileByPath(filePath) instanceof TFile) return false;
@@ -808,10 +855,9 @@ export class ReadingDataManager {
 	}
 
 	/**
-	 * Rewrites ONLY the frontmatter block of an existing reading note, preserving
-	 * the body verbatim (`## Notes` / `## Quotes`). Does NOT create the file when
-	 * missing — returns false. Mirrors writeReadingNote's update branch but never
-	 * creates; used by the bulk "Rewrite all frontmatter" action.
+	 * Rewrites ONLY the frontmatter of an existing reading note, body verbatim (`## Notes` /
+	 * `## Quotes`). Does NOT create the file when missing — returns false. Used by the bulk "Rewrite
+	 * all frontmatter" action.
 	 */
 	async rewriteFrontmatterIfExists(kind: ReadingKind, item: Book | Manga): Promise<boolean> {
 		const filePath = this.noteFilePath(kind, item.title);
@@ -833,7 +879,7 @@ export class ReadingDataManager {
 		return this.plugin.app.vault.read(file);
 	}
 
-	/** Appends a `> [!quote]` callout to the ## Quotes section. Creates the section if missing. */
+	/** Appends a `> [!quote]` callout to the ## Quotes section, creating it if missing. */
 	async appendQuote(
 		kind: ReadingKind,
 		item: Book | Manga,

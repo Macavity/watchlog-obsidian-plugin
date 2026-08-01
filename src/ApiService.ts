@@ -14,12 +14,15 @@ import type {
 	TmdbFindResult,
 	TmdbVideo,
 	TmdbCreditsResult,
+	TmdbCollectionRef,
+	TmdbCollectionDetail,
+	TmdbCompany,
 	Season,
 	AniListMedia,
 	AniListSearchResponse,
 	AniListMediaResponse,
 } from './types';
-import { normalizeCreditsForStore } from './types';
+import { isCreditsNone, normalizeCreditsForStore, imdbIdFromLink } from './types';
 
 const JIKAN_BASE = 'https://api.jikan.moe/v4';
 const OMDB_BASE = 'https://www.omdbapi.com';
@@ -27,6 +30,9 @@ const TMDB_BASE = 'https://api.themoviedb.org/3';
 const ANILIST_ENDPOINT = 'https://graphql.anilist.co';
 const ANILIST_RATE_LIMIT_MS = 700;
 const GOOGLE_BOOKS_BASE = 'https://www.googleapis.com/books/v1';
+const RAWG_BASE = 'https://api.rawg.io/api';
+const IGDB_BASE = 'https://api.igdb.com/v4';
+const TWITCH_TOKEN_URL = 'https://id.twitch.tv/oauth2/token';
 const JIKAN_RATE_LIMIT_MS = 400;
 const API_TIMEOUT_MS = 8000;
 
@@ -36,9 +42,8 @@ function youtubeWatchUrl(id: string): string {
 }
 
 /**
- * Extracts a YouTube video id from any of the shapes providers hand back —
- * `watch?v=ID`, `youtu.be/ID`, or `/embed/ID` (Jikan frequently ships only the
- * embed URL while leaving youtube_id / url null). Empty string when none match.
+ * A YouTube video id from any shape providers hand back — `watch?v=ID`, `youtu.be/ID`
+ * or `/embed/ID` (Jikan often ships only the embed URL). '' when none match.
  */
 function extractYoutubeId(url: string | null | undefined): string {
 	if (!url) return '';
@@ -47,9 +52,9 @@ function extractYoutubeId(url: string | null | undefined): string {
 }
 
 /**
- * Splits an OMDb comma-separated name string ("Director" / "Actors") into a
- * normalized stored list: trimmed names capped at MAX_CAST, or ['none'] when
- * the field is absent / 'N/A' — so both APIs yield the same shape.
+ * Splits an OMDb comma-separated name string ("Director" / "Actors") into a normalized
+ * stored list: trimmed names, or ['none'] when absent / 'N/A', so both APIs yield the
+ * same shape.
  */
 function omdbNamesToCredits(s: string | undefined): string[] {
 	if (!s || s === 'N/A') return normalizeCreditsForStore([]);
@@ -57,9 +62,28 @@ function omdbNamesToCredits(s: string | undefined): string[] {
 }
 
 /**
- * Maps a TMDB `credits` payload to the stored { director, cast } shape:
- * directors from crew entries with the Director job, cast from the (already
- * billing-ordered) cast list — both normalized and capped like OMDb's.
+ * Director credits for an OMDb *series*: Director is 'N/A' there (it varies per episode),
+ * so the creators — which OMDb puts in Writer — fill the stored director instead, with
+ * role notes stripped. Falls back to Director, then to the 'none' sentinel.
+ */
+function omdbSeriesDirectorCredits(data: OmdbDetailResponse): string[] {
+	const raw = !data.Writer || data.Writer === 'N/A' ? [] : data.Writer.split(',');
+	const creators = normalizeCreditsForStore(raw.map((n) => n.replace(/\([^)]*\)/g, '')));
+	return isCreditsNone(creators) ? omdbNamesToCredits(data.Director) : creators;
+}
+
+/**
+ * Director credits for a TMDB *series*: `created_by` (series have no single director),
+ * falling back to crew Director entries, then to the 'none' sentinel.
+ */
+function tmdbSeriesDirectorCredits(detail: TmdbTvDetail): string[] {
+	const creators = normalizeCreditsForStore((detail.created_by ?? []).map((c) => c.name ?? ''));
+	return isCreditsNone(creators) ? tmdbCreditsToStored(detail.credits).director : creators;
+}
+
+/**
+ * Maps a TMDB `credits` payload to the stored { director, cast }: crew entries with the
+ * Director job, plus the billing-ordered cast — normalized and capped like OMDb's.
  */
 function tmdbCreditsToStored(credits: TmdbCreditsResult | undefined): { director: string[]; cast: string[] } {
 	const director = (credits?.crew ?? [])
@@ -71,6 +95,198 @@ function tmdbCreditsToStored(credits: TmdbCreditsResult | undefined): { director
 		cast: normalizeCreditsForStore(cast),
 	};
 }
+
+// 'none' = TMDB answered nothing there, 'error' = request failed. Only 'none' may be cached.
+export type TmdbCollectionLookup =
+	| { status: 'found'; ref: TmdbCollectionRef }
+	| { status: 'none' }
+	| { status: 'error' };
+
+export type TmdbMovieIdLookup =
+	| { status: 'found'; id: number }
+	| { status: 'none' }
+	| { status: 'error' };
+
+/** TMDB company/network names, normalized for storage. */
+function tmdbCompanyNames(list: TmdbCompany[] | undefined): string[] {
+	return normalizeCreditsForStore((list ?? []).map((c) => c.name ?? ''));
+}
+
+/** One row in the Add-game search results (both RAWG and IGDB map to this). */
+export interface GameSearchResult {
+	source: 'rawg' | 'igdb';
+	/** RAWG or IGDB numeric id — meaningful only with `source`. */
+	id: number;
+	title: string;
+	/** YYYY-MM-DD, or '' when the API has no date. */
+	releaseDate: string;
+	coverUrl: string;
+	platforms: string[];
+	/** The game's page on the source site (rawg.io / igdb.com). */
+	url: string;
+}
+
+/** Full detail payload for a selected game (the add-time autofill). */
+export interface GameDetailsResult extends GameSearchResult {
+	developer: string;
+	publisher: string;
+	singleplayer: boolean;
+	coop: boolean;
+	multiplayer: boolean;
+	/** Store page URL, Steam → GOG → Epic priority; '' when none. */
+	storeUrl: string;
+}
+
+// RAWG raw response shapes
+
+interface RawgPlatformEntry {
+	platform?: { name?: string };
+}
+
+interface RawgGame {
+	id: number;
+	slug?: string;
+	name?: string;
+	released?: string | null;
+	background_image?: string | null;
+	platforms?: RawgPlatformEntry[] | null;
+}
+
+interface RawgSearchResponse {
+	results?: RawgGame[];
+}
+
+interface RawgGameDetail extends RawgGame {
+	developers?: Array<{ name?: string }>;
+	publishers?: Array<{ name?: string }>;
+	tags?: Array<{ slug?: string; language?: string }>;
+}
+
+interface RawgStoresResponse {
+	results?: Array<{ store_id?: number; url?: string }>;
+}
+
+// RAWG store ids (stable, documented): 1 Steam, 5 GOG, 11 Epic Games.
+const RAWG_STORE_PRIORITY = [1, 5, 11];
+
+// IGDB raw response shapes
+
+interface IgdbGame {
+	id: number;
+	name?: string;
+	first_release_date?: number;
+	cover?: { image_id?: string };
+	platforms?: Array<{ name?: string }>;
+	game_modes?: Array<{ name?: string }>;
+	involved_companies?: Array<{
+		developer?: boolean;
+		publisher?: boolean;
+		company?: { name?: string };
+	}>;
+	websites?: Array<{ url?: string }>;
+	url?: string;
+}
+
+interface TwitchTokenResponse {
+	access_token?: string;
+	expires_in?: number;
+}
+
+/** RAWG (english) tag slugs meaning co-op / versus multiplayer. */
+const RAWG_COOP_TAGS = ['co-op', 'online-co-op', 'local-co-op', 'split-screen', 'cooperative'];
+const RAWG_MULTIPLAYER_TAGS = ['multiplayer', 'online-multiplayer', 'massively-multiplayer', 'pvp'];
+
+/** Store domains in pick order for the IGDB `websites` list (Steam → GOG → Epic). */
+const IGDB_STORE_DOMAINS = ['store.steampowered.com', 'gog.com', 'epicgames.com'];
+
+// Steam
+
+const STEAM_API_BASE = 'https://api.steampowered.com';
+const STEAM_STORE_BASE = 'https://store.steampowered.com/api';
+
+/** Storefront category ids (stable): 2 Single-player, 1 Multi-player, 9/38/39 co-op. */
+const STEAM_CAT_SINGLEPLAYER = 2;
+const STEAM_CAT_MULTIPLAYER = 1;
+const STEAM_COOP_CATS = new Set([9, 38, 39]);
+
+/** Why a library fetch produced no games — drives the message the user sees. */
+export type SteamFailureReason = 'ok' | 'missing' | 'badKey' | 'private' | 'empty' | 'network';
+
+export interface SteamOwnedGame {
+	appId: string;
+	name: string;
+	playtimeMinutes: number;
+	/** ISO timestamp, or null when Steam reports no last-played time. */
+	lastPlayed: string | null;
+}
+
+export interface SteamLibraryResult {
+	ok: boolean;
+	reason: SteamFailureReason;
+	games: SteamOwnedGame[];
+}
+
+/** Storefront metadata, already mapped onto the plugin's own field names. */
+export interface SteamAppDetails {
+	name: string;
+	developer: string;
+	publisher: string;
+	genres: string[];
+	releaseDate: string | null;
+	coverUrl: string;
+	storeUrl: string;
+	singleplayer: boolean;
+	coop: boolean;
+	multiplayer: boolean;
+}
+
+interface SteamVanityResponse {
+	response?: { success?: number; steamid?: string };
+}
+
+interface SteamOwnedGamesResponse {
+	response?: {
+		game_count?: number;
+		games?: Array<{
+			appid: number;
+			name?: string;
+			playtime_forever?: number;
+			rtime_last_played?: number;
+		}>;
+	};
+}
+
+interface SteamAchievementsResponse {
+	playerstats?: {
+		success?: boolean;
+		achievements?: Array<{ achieved?: number }>;
+	};
+}
+
+interface SteamAppDetailsEntry {
+	success?: boolean;
+	data?: {
+		name?: string;
+		developers?: string[];
+		publishers?: string[];
+		genres?: Array<{ description?: string }>;
+		release_date?: { date?: string };
+		categories?: Array<{ id: number; description?: string }>;
+	};
+}
+
+/** IGDB co-op game_modes names (shared/local play, not versus). */
+const IGDB_COOP_MODES = new Set([
+	'Co-operative',
+	'Split screen',
+]);
+
+/** IGDB multiplayer game_modes names (single player and co-op are their own). */
+const IGDB_MULTIPLAYER_MODES = new Set([
+	'Multiplayer',
+	'Massively Multiplayer Online (MMO)',
+	'Battle Royale',
+]);
 
 export interface BookSearchResult {
 	title: string;
@@ -130,11 +346,11 @@ interface JikanMangaItem {
 	chapters?: number | null;
 	volumes?: number | null;
 	published?: { from?: string | null } | null;
-	images?: { jpg?: { image_url?: string | null } | null } | null;
+	images?: { jpg?: { image_url?: string | null; large_image_url?: string | null } | null } | null;
 	url?: string | null;
 }
 
-/** Why a Google Books request failed — used to surface accurate, non-misleading UI messages. */
+/** Why a Google Books request failed — drives accurate, non-misleading UI messages. */
 export type GoogleBooksErrorReason = 'no-key' | 'rate-limited' | 'http' | 'parse' | 'network';
 
 export class GoogleBooksError extends Error {
@@ -171,6 +387,14 @@ export class ApiService {
 	private omdbApiKey: string;
 	private tmdbApiKey: string;
 	private googleBooksApiKey: string;
+	private rawgApiKey: string;
+	private igdbClientId: string;
+	private igdbClientSecret: string;
+	private steamApiKey = '';
+	private steamId = '';
+	/** Cached IGDB (Twitch) app access token + its absolute expiry timestamp. */
+	private igdbToken = '';
+	private igdbTokenExpiry = 0;
 	private anilistLastRequest = 0;
 	private anilistQueue: Promise<void> = Promise.resolve();
 	private jikanLastRequest = 0;
@@ -191,10 +415,24 @@ export class ApiService {
 		return next;
 	}
 
-	constructor(omdbApiKey: string, tmdbApiKey = '', googleBooksApiKey = '') {
+	constructor(
+		omdbApiKey: string,
+		tmdbApiKey = '',
+		googleBooksApiKey = '',
+		rawgApiKey = '',
+		igdbClientId = '',
+		igdbClientSecret = '',
+		steamApiKey = '',
+		steamId = '',
+	) {
 		this.omdbApiKey = omdbApiKey;
 		this.tmdbApiKey = tmdbApiKey;
 		this.googleBooksApiKey = googleBooksApiKey;
+		this.rawgApiKey = rawgApiKey;
+		this.igdbClientId = igdbClientId;
+		this.igdbClientSecret = igdbClientSecret;
+		this.steamApiKey = steamApiKey;
+		this.steamId = steamId;
 	}
 
 	setOmdbKey(key: string): void {
@@ -211,6 +449,28 @@ export class ApiService {
 
 	hasGoogleBooksKey(): boolean {
 		return this.googleBooksApiKey.trim().length > 0;
+	}
+
+	setRawgKey(key: string): void {
+		this.rawgApiKey = key;
+	}
+
+	setIgdbCredentials(clientId: string, clientSecret: string): void {
+		// Invalidate the cached token whenever the credentials change.
+		if (clientId !== this.igdbClientId || clientSecret !== this.igdbClientSecret) {
+			this.igdbToken = '';
+			this.igdbTokenExpiry = 0;
+		}
+		this.igdbClientId = clientId;
+		this.igdbClientSecret = clientSecret;
+	}
+
+	hasRawgKey(): boolean {
+		return this.rawgApiKey.trim().length > 0;
+	}
+
+	hasIgdbCredentials(): boolean {
+		return this.igdbClientId.trim().length > 0 && this.igdbClientSecret.trim().length > 0;
 	}
 
 	private tmdbHeaders(): Record<string, string> {
@@ -252,9 +512,9 @@ export class ApiService {
 		}
 	}
 
-	// ─── AniList (GraphQL) ───────────────────────────────────────────────────────
+	// AniList (GraphQL)
 
-	/** Serializes AniList requests with a minimum gap of ANILIST_RATE_LIMIT_MS between them. */
+	/** Serializes AniList requests with a minimum gap of ANILIST_RATE_LIMIT_MS. */
 	private throttleAniList<T>(task: () => Promise<T>): Promise<T> {
 		const run = async (): Promise<T> => {
 			const now = Date.now();
@@ -365,6 +625,7 @@ export class ApiService {
 					averageScore
 					popularity
 					coverImage { large }
+					studios { edges { isMain node { name } } }
 					trailer { id site }
 					nextAiringEpisode {
 						airingAt
@@ -385,7 +646,7 @@ export class ApiService {
 		}
 	}
 
-	// ─── Jikan / MAL ─────────────────────────────────────────────────────────────
+	// Jikan / MAL
 
 	async searchAnime(query: string): Promise<AnimeSearchResult[]> {
 		const url = `${JIKAN_BASE}/anime?q=${encodeURIComponent(query)}&limit=10&sfw=false`;
@@ -410,7 +671,7 @@ export class ApiService {
 	private mapJikanAnime(anime: JikanAnime): AnimeSearchResult {
 		const durationStr = anime.duration ?? '24 min per ep';
 		const durationMatch = durationStr.match(/(\d+)\s*min/);
-		const duration = durationMatch && durationMatch[1] ? parseInt(durationMatch[1]) : 24;
+		const duration = durationMatch && durationMatch[1] ? parseInt(durationMatch[1], 10) : 24;
 		const episodes = anime.episodes ?? 0;
 		const seasons: Season[] =
 			episodes > 0 ? [{ name: 'Season 1', episodes, offset: 0 }] : [];
@@ -422,12 +683,12 @@ export class ApiService {
 			releaseDate: anime.aired?.from ? (anime.aired.from.split('T')[0] ?? '') : '',
 			url: anime.url,
 			seasons,
-			posterUrl: anime.images?.jpg?.small_image_url ?? anime.images?.jpg?.image_url ?? undefined,
+			posterUrl: anime.images?.jpg?.large_image_url ?? anime.images?.jpg?.image_url ?? anime.images?.jpg?.small_image_url ?? undefined,
 			trailerUrl: this.jikanTrailerUrl(anime.trailer),
 		};
 	}
 
-	// ─── OMDb ─────────────────────────────────────────────────────────────────────
+	// OMDb
 
 	async searchOmdb(query: string, type: 'movie' | 'series'): Promise<MediaSearchResult[]> {
 		if (!this.omdbApiKey) return [];
@@ -456,7 +717,7 @@ export class ApiService {
 		try {
 			const data = (await this.fetchWithTimeout(url)) as OmdbDetailResponse;
 			if (data.Response === 'False' || !data.imdbID) return null;
-			const runtimeMin = data.Runtime ? parseInt(data.Runtime.replace(/[^0-9]/g, '')) : 120;
+			const runtimeMin = data.Runtime ? parseInt(data.Runtime.replace(/[^0-9]/g, ''), 10) : 120;
 			return {
 				imdbId: data.imdbID,
 				title: data.Title,
@@ -482,7 +743,7 @@ export class ApiService {
 			const data = (await this.fetchWithTimeout(url)) as OmdbDetailResponse;
 			if (data.Response === 'False' || !data.imdbID) return null;
 
-			const totalSeasons = parseInt(data.totalSeasons ?? '1') || 1;
+			const totalSeasons = parseInt(data.totalSeasons ?? '1', 10) || 1;
 			const seasons: Season[] = [];
 			let offset = 0;
 
@@ -504,7 +765,7 @@ export class ApiService {
 				url: `https://www.imdb.com/title/${data.imdbID}`,
 				seasons,
 				trailerUrl: 'none', // OMDb does not provide trailers.
-				director: omdbNamesToCredits(data.Director),
+				director: omdbSeriesDirectorCredits(data),
 				cast: omdbNamesToCredits(data.Actors),
 			};
 		} catch {
@@ -523,7 +784,7 @@ export class ApiService {
 		}
 	}
 
-	// ─── Jikan schedule ──────────────────────────────────────────────────────────
+	// Jikan schedule
 
 	async getAnimeScheduleByMalId(
 		malId: number,
@@ -548,7 +809,7 @@ export class ApiService {
 		}
 	}
 
-	/** Detail lookup for a single anime's trailer (Jikan /anime/{mal_id}). Returns a URL or 'none'. */
+	/** Trailer lookup for one anime (Jikan /anime/{mal_id}). Returns a URL or 'none'. */
 	async getJikanTrailerByMalId(malId: number): Promise<string> {
 		try {
 			const url = `${JIKAN_BASE}/anime/${malId}`;
@@ -560,8 +821,8 @@ export class ApiService {
 	}
 
 	/**
-	 * Converts OMDb "DD Mon YYYY" dates (e.g. "08 Feb 2026") to YYYY-MM-DD.
-	 * Returns the input unchanged if it doesn't match that pattern (e.g. year-only "2026").
+	 * OMDb "DD Mon YYYY" (e.g. "08 Feb 2026") → YYYY-MM-DD. Returns the input unchanged
+	 * when it doesn't match that pattern (e.g. year-only "2026").
 	 */
 	private parseOmdbDate(dateStr: string): string {
 		const MONTHS: Record<string, string> = {
@@ -590,7 +851,7 @@ export class ApiService {
 		}
 	}
 
-	// ─── TMDB ─────────────────────────────────────────────────────────────────────
+	// TMDB
 
 	async searchTmdb(query: string, type: 'movie' | 'series'): Promise<MediaSearchResult[]> {
 		if (!this.tmdbApiKey) return [];
@@ -607,7 +868,7 @@ export class ApiService {
 				releaseDate: item.release_date ?? item.first_air_date ?? '',
 				url: '',
 				seasons: [],
-				posterUrl: item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : undefined,
+				posterUrl: item.poster_path ? `https://image.tmdb.org/t/p/w342${item.poster_path}` : undefined,
 			}));
 		} catch {
 			return [];
@@ -615,9 +876,8 @@ export class ApiService {
 	}
 
 	/**
-	 * Picks the best trailer from a TMDB `videos.results` list: an official YouTube
-	 * Trailer first, then any YouTube Trailer, then any YouTube Teaser. Returns a
-	 * YouTube watch URL, or 'none' when nothing suitable exists.
+	 * Best trailer from a TMDB `videos.results`: an official YouTube Trailer first, then any
+	 * YouTube Trailer, then any Teaser. Returns a watch URL, or 'none'.
 	 */
 	private pickTmdbTrailer(videos: TmdbVideo[] | undefined): string {
 		const yt = (videos ?? []).filter((v) => v.site === 'YouTube' && v.key);
@@ -631,8 +891,8 @@ export class ApiService {
 	async getTmdbMovieDetails(tmdbId: string): Promise<MediaSearchResult | null> {
 		if (!this.tmdbApiKey) return null;
 		try {
-			// append_to_response=videos,credits folds the trailer + director/cast
-			// lookups into the detail call (no extra round-trips).
+			// append_to_response=videos,credits folds the trailer + credits lookups into the detail
+			// call (no extra round-trips)
 			const [detailData, extData] = await Promise.all([
 				this.fetchWithTimeout(`${TMDB_BASE}/movie/${tmdbId}?append_to_response=videos,credits`, this.tmdbHeaders()),
 				this.fetchWithTimeout(`${TMDB_BASE}/movie/${tmdbId}/external_ids`, this.tmdbHeaders()),
@@ -650,6 +910,7 @@ export class ApiService {
 				url: imdbId ? `https://www.imdb.com/title/${imdbId}` : '',
 				seasons: [{ name: 'Movie', episodes: 1, offset: 0 }],
 				trailerUrl: this.pickTmdbTrailer(detail.videos?.results),
+				studio: tmdbCompanyNames(detail.production_companies),
 				...tmdbCreditsToStored(detail.credits),
 			};
 		} catch {
@@ -687,8 +948,166 @@ export class ApiService {
 				url: imdbId ? `https://www.imdb.com/title/${imdbId}` : '',
 				seasons,
 				trailerUrl: this.pickTmdbTrailer(detail.videos?.results),
-				...tmdbCreditsToStored(detail.credits),
+				// networks lead — HBO/Netflix is the brand; production_companies is shells
+				studio: tmdbCompanyNames([...(detail.networks ?? []), ...(detail.production_companies ?? [])]),
+				director: tmdbSeriesDirectorCredits(detail),
+				cast: tmdbCreditsToStored(detail.credits).cast,
 			};
+		} catch {
+			return null;
+		}
+	}
+
+	hasTmdbKey(): boolean {
+		return this.tmdbApiKey.trim().length > 0;
+	}
+
+	// Studio / network
+
+	/**
+	 * Studio names for a title, plus the TMDB id it resolved through so the caller can cache it.
+	 * null = couldn't reach a source (never store that); ['none'] = source has none.
+	 *
+	 * OMDb is not a source — its Production field returns 'N/A' on movies and is absent on
+	 * series, verified 2026-07-28.
+	 */
+	async fetchStudio(
+		title: WatchLogTitle,
+		animeSource: 'jikan' | 'anilist',
+		group: 'anime' | 'movie' | '',
+	): Promise<{ studio: string[]; tmdbId?: number; tmdbMediaType?: 'movie' | 'tv' } | null> {
+		if (group === 'anime') {
+			const studio = await this.fetchAnimeStudio(title, animeSource);
+			return studio ? { studio } : null;
+		}
+		if (group !== 'movie' || !this.tmdbApiKey) return null;
+		return this.fetchTmdbStudio(title);
+	}
+
+	private async fetchAnimeStudio(
+		title: WatchLogTitle,
+		animeSource: 'jikan' | 'anilist',
+	): Promise<string[] | null> {
+		// follow the stored id, whichever it is — the preferred source may have no id here
+		if (animeSource === 'anilist' && title.anilistId) {
+			const media = await this.getAniListById(title.anilistId);
+			if (!media) return null;
+			const main = (media.studios?.edges ?? [])
+				.filter((e) => e?.isMain)
+				.map((e) => e?.node?.name ?? '');
+			return normalizeCreditsForStore(main);
+		}
+		if (title.malId) {
+			try {
+				const url = `${JIKAN_BASE}/anime/${title.malId}`;
+				const res = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as {
+					data?: JikanAnime;
+				};
+				const studios = res.data?.studios;
+				if (!studios) return null;
+				return normalizeCreditsForStore(studios.map((st) => st?.name ?? ''));
+			} catch {
+				return null;
+			}
+		}
+		// preference was Jikan but only an AniList id exists — use what we have
+		if (title.anilistId) {
+			const media = await this.getAniListById(title.anilistId);
+			if (!media) return null;
+			return normalizeCreditsForStore(
+				(media.studios?.edges ?? []).filter((e) => e?.isMain).map((e) => e?.node?.name ?? ''),
+			);
+		}
+		return null;
+	}
+
+	private async fetchTmdbStudio(
+		title: WatchLogTitle,
+	): Promise<{ studio: string[]; tmdbId?: number; tmdbMediaType?: 'movie' | 'tv' } | null> {
+		// a cached id skips the /find round-trip entirely
+		if (title.tmdbId && title.tmdbMediaType) {
+			const detail =
+				title.tmdbMediaType === 'movie'
+					? await this.getTmdbMovieDetails(String(title.tmdbId))
+					: await this.getTmdbTvDetails(String(title.tmdbId));
+			return detail?.studio ? { studio: detail.studio } : null;
+		}
+
+		const imdbId = imdbIdFromLink(title.externalLink);
+		if (!imdbId) return null;
+		try {
+			const url = `${TMDB_BASE}/find/${encodeURIComponent(imdbId)}?external_source=imdb_id`;
+			const found = (await this.fetchWithTimeout(url, this.tmdbHeaders())) as TmdbFindResult;
+			const movieId = found.movie_results?.[0]?.id;
+			if (movieId) {
+				const detail = await this.getTmdbMovieDetails(String(movieId));
+				if (!detail?.studio) return null;
+				return { studio: detail.studio, tmdbId: movieId, tmdbMediaType: 'movie' };
+			}
+			const tvId = found.tv_results?.[0]?.id;
+			if (tvId) {
+				const detail = await this.getTmdbTvDetails(String(tvId));
+				if (!detail?.studio) return null;
+				return { studio: detail.studio, tmdbId: tvId, tmdbMediaType: 'tv' };
+			}
+			return null;
+		} catch {
+			return null;
+		}
+	}
+
+	// TMDB collections. Movies only.
+
+	/** exact key, so empty movie_results = definitively not a movie (all TV lands here) */
+	async findTmdbMovieIdByImdbId(imdbId: string): Promise<TmdbMovieIdLookup> {
+		if (!this.tmdbApiKey || !imdbId) return { status: 'error' };
+		const url = `${TMDB_BASE}/find/${encodeURIComponent(imdbId)}?external_source=imdb_id`;
+		try {
+			const data = (await this.fetchWithTimeout(url, this.tmdbHeaders())) as TmdbFindResult;
+			const id = data.movie_results?.[0]?.id;
+			return id ? { status: 'found', id } : { status: 'none' };
+		} catch {
+			return { status: 'error' };
+		}
+	}
+
+	/** fallback for manually-added titles with no IMDb link. Top result — can miss. */
+	async searchTmdbMovieId(title: string, year?: string): Promise<number | null> {
+		if (!this.tmdbApiKey || !title.trim()) return null;
+		const yearParam = year?.match(/^(\d{4})/)?.[1];
+		const url =
+			`${TMDB_BASE}/search/movie?query=${encodeURIComponent(title)}&page=1` +
+			(yearParam ? `&primary_release_year=${yearParam}` : '');
+		try {
+			const data = (await this.fetchWithTimeout(url, this.tmdbHeaders())) as TmdbSearchResponse;
+			return data.results?.[0]?.id ?? null;
+		} catch {
+			return null;
+		}
+	}
+
+	async getTmdbMovieCollection(tmdbId: number): Promise<TmdbCollectionLookup> {
+		if (!this.tmdbApiKey) return { status: 'error' };
+		try {
+			const detail = (await this.fetchWithTimeout(
+				`${TMDB_BASE}/movie/${tmdbId}`,
+				this.tmdbHeaders(),
+			)) as TmdbMovieDetail;
+			const ref = detail.belongs_to_collection;
+			return ref?.id ? { status: 'found', ref } : { status: 'none' };
+		} catch {
+			return { status: 'error' };
+		}
+	}
+
+	async getTmdbCollection(collectionId: number): Promise<TmdbCollectionDetail | null> {
+		if (!this.tmdbApiKey) return null;
+		try {
+			const data = (await this.fetchWithTimeout(
+				`${TMDB_BASE}/collection/${collectionId}`,
+				this.tmdbHeaders(),
+			)) as TmdbCollectionDetail;
+			return data.id ? data : null;
 		} catch {
 			return null;
 		}
@@ -711,7 +1130,7 @@ export class ApiService {
 		}
 	}
 
-	// ─── Community ratings ───────────────────────────────────────────────────────
+	// Community ratings
 
 	private parseOmdbVotes(s: string | undefined): number {
 		if (!s || s === 'N/A') return 0;
@@ -800,9 +1219,8 @@ export class ApiService {
 	}
 
 	/**
-	 * Picks the right API based on the title's stored IDs and returns the
-	 * community rating + vote count + source label. Returns null on failure
-	 * or if no suitable API is available.
+	 * Picks the API from the title's stored IDs and returns community rating + vote count +
+	 * source label. null on failure or when no API fits.
 	 */
 	async fetchCommunityRating(
 		title: WatchLogTitle,
@@ -816,7 +1234,7 @@ export class ApiService {
 
 		if (resolvedGroup === '') return null;
 
-		// Anime API group is bound to anime APIs.
+		// the anime API group is bound to anime APIs
 		if (resolvedGroup === 'anime') {
 			if (animeApiSource === 'anilist') {
 				if (hasAniList) {
@@ -837,7 +1255,7 @@ export class ApiService {
 					if (r) return { ...r, source: 'anilist' };
 				}
 			}
-			// Last-resort: anime without any anime-api ID falls through to IMDb/TMDB.
+			// last resort: anime with no anime-api ID falls through to IMDb/TMDB
 		}
 
 		const imdbId = this.extractImdbId(title.externalLink ?? '');
@@ -856,10 +1274,9 @@ export class ApiService {
 	}
 
 	/**
-	 * Re-fetches the trailer for an existing title from its source, reusing the same
-	 * paths as add-time: AniList/Jikan for anime (honouring `animeApiSource`, falling
-	 * back to the other ID), TMDB-by-IMDb for movies/TV. OMDb (and anything else)
-	 * yields 'none'. Returns a YouTube watch URL or the sentinel 'none'.
+	 * Re-fetches an existing title's trailer from its source, reusing the add-time paths:
+	 * AniList/Jikan for anime (honouring `animeApiSource`, falling back to the other ID),
+	 * TMDB-by-IMDb for movies/TV. OMDb and anything else yield 'none'.
 	 */
 	async fetchTrailer(
 		title: WatchLogTitle,
@@ -893,7 +1310,7 @@ export class ApiService {
 
 		if (resolvedGroup === 'movie') {
 			const imdbId = this.extractImdbId(title.externalLink ?? '');
-			// Only TMDB carries trailers; OMDb never does.
+			// only TMDB carries trailers; OMDb never does
 			if (imdbId && this.tmdbApiKey) {
 				const full = await this.getTmdbByImdbId(imdbId);
 				if (full?.trailerUrl && full.trailerUrl !== 'none') return full.trailerUrl;
@@ -905,11 +1322,10 @@ export class ApiService {
 	}
 
 	/**
-	 * One-time director/cast backfill for an existing title, keyed off the IMDb id
-	 * in its stored externalLink. Prefers the active API, falls back to the other
-	 * one when it has a key. Returns normalized stored lists (names or ['none']),
-	 * or null when there is no usable id / no keyed API / the requests failed —
-	 * the caller marks the fields 'none' in that case so it never re-attempts.
+	 * One-time director/cast backfill for an existing title, keyed off the IMDb id in its
+	 * stored externalLink. Prefers the active API, falls back to the other when it has a key.
+	 * Returns normalized stored lists, or null when there is no usable id / no keyed API /
+	 * the requests failed — the caller then marks the fields 'none' so it never re-attempts.
 	 */
 	async fetchCredits(
 		title: WatchLogTitle,
@@ -918,8 +1334,8 @@ export class ApiService {
 		const imdbId = this.extractImdbId(title.externalLink ?? '');
 		if (!imdbId) return null;
 
-		// OMDb: Director/Actors ride in the plain detail response — one cheap call
-		// (deliberately NOT getOmdbTvDetails, which fans out per-season requests).
+		// OMDb: Director/Actors ride in the plain detail response — one cheap call (deliberately
+		// NOT getOmdbTvDetails, which fans out per-season requests)
 		const tryOmdb = async (): Promise<{ director: string[]; cast: string[] } | null> => {
 			if (!this.omdbApiKey) return null;
 			try {
@@ -927,7 +1343,11 @@ export class ApiService {
 				const data = (await this.fetchWithTimeout(url)) as OmdbDetailResponse;
 				if (data.Response === 'False' || !data.imdbID) return null;
 				return {
-					director: omdbNamesToCredits(data.Director),
+					// series carry no per-title Director; their creators fill the field
+					director:
+						data.Type === 'series'
+							? omdbSeriesDirectorCredits(data)
+							: omdbNamesToCredits(data.Director),
 					cast: omdbNamesToCredits(data.Actors),
 				};
 			} catch {
@@ -935,7 +1355,7 @@ export class ApiService {
 			}
 		};
 
-		// TMDB: resolve the IMDb id via /find, then hit the lean /credits endpoint.
+		// TMDB: resolve the IMDb id via /find, then hit the lean /credits endpoint
 		const tryTmdb = async (): Promise<{ director: string[]; cast: string[] } | null> => {
 			if (!this.tmdbApiKey) return null;
 			try {
@@ -943,10 +1363,21 @@ export class ApiService {
 				const found = (await this.fetchWithTimeout(findUrl, this.tmdbHeaders())) as TmdbFindResult;
 				const movieId = found.movie_results?.[0]?.id;
 				const tvId = found.tv_results?.[0]?.id;
-				const path = movieId !== undefined ? `movie/${movieId}` : tvId !== undefined ? `tv/${tvId}` : null;
-				if (!path) return null;
-				const credits = (await this.fetchWithTimeout(`${TMDB_BASE}/${path}/credits`, this.tmdbHeaders())) as TmdbCreditsResult;
-				return tmdbCreditsToStored(credits);
+				if (movieId !== undefined) {
+					const credits = (await this.fetchWithTimeout(`${TMDB_BASE}/movie/${movieId}/credits`, this.tmdbHeaders())) as TmdbCreditsResult;
+					return tmdbCreditsToStored(credits);
+				}
+				if (tvId === undefined) return null;
+				// TV: the creators live on the detail response (created_by), not in /credits — fold the
+				// cast lookup in via append_to_response
+				const detail = (await this.fetchWithTimeout(
+					`${TMDB_BASE}/tv/${tvId}?append_to_response=credits`,
+					this.tmdbHeaders(),
+				)) as TmdbTvDetail;
+				return {
+					director: tmdbSeriesDirectorCredits(detail),
+					cast: tmdbCreditsToStored(detail.credits).cast,
+				};
 			} catch {
 				return null;
 			}
@@ -960,13 +1391,13 @@ export class ApiService {
 		return null;
 	}
 
-	// ─── Google Books (Books) ─────────────────────────────────────────────────────
+	// Google Books (Books)
 
 	/**
-	 * Picks the largest available cover from a volume's imageLinks, falling down the
-	 * chain extraLarge → large → medium → small → thumbnail → smallThumbnail. Returns
-	 * a direct (200) HTTPS image URL — upgraded from http and stripped of the page-curl
-	 * effect — so no local caching is needed. Empty string when no image is present.
+	 * Largest available cover from a volume's imageLinks, falling down extraLarge → large →
+	 * medium → small → thumbnail → smallThumbnail. Returns a direct (200) HTTPS URL, upgraded
+	 * from http and stripped of the page-curl effect, so no local caching is needed. '' when
+	 * there is no image.
 	 */
 	private googleCoverUrl(info: GoogleVolumeInfo): string {
 		const links = info.imageLinks;
@@ -980,10 +1411,15 @@ export class ApiService {
 			links.smallThumbnail ??
 			'';
 		if (!raw) return '';
-		return raw.replace(/^http:/, 'https:').replace(/&edge=curl/g, '');
+		// bump Google's default cover (thumbnail is zoom=1 ≈ 128px, blurry on a card) to zoom=2 ≈
+		// 300px — sharp yet light. Only thumbnail-class URLs carry a zoom param.
+		return raw
+			.replace(/^http:/, 'https:')
+			.replace(/&edge=curl/g, '')
+			.replace(/([?&]zoom=)\d+/, (_m, p1: string) => `${p1}2`);
 	}
 
-	/** Normalizes Google's `publishedDate` (YYYY | YYYY-MM | YYYY-MM-DD) to a YYYY-MM-DD storage value. */
+	/** Normalizes Google's `publishedDate` (YYYY | YYYY-MM | YYYY-MM-DD) to YYYY-MM-DD. */
 	private googleReleaseDate(published?: string): string {
 		if (!published) return '';
 		if (/^\d{4}-\d{2}-\d{2}$/.test(published)) return published;
@@ -1010,11 +1446,10 @@ export class ApiService {
 	}
 
 	/**
-	 * Google Books requests must always carry the user's API key — the anonymous
-	 * endpoint shares a global quota and returns 429. Throws a typed GoogleBooksError
-	 * (no-key / rate-limited / http / parse / network) so callers can show an accurate
-	 * message instead of a generic "check your connection". `path` is everything after
-	 * the base, e.g. `/volumes?q=...`; the `key` param is appended here.
+	 * Google Books requests must always carry the user's API key — the anonymous endpoint
+	 * shares a global quota and returns 429. Throws a typed GoogleBooksError (no-key /
+	 * rate-limited / http / parse / network) so callers can show an accurate message. `path`
+	 * is everything after the base, e.g. `/volumes?q=...`; `key` is appended here.
 	 */
 	private async googleBooksFetch(path: string): Promise<unknown> {
 		const key = this.googleBooksApiKey.trim();
@@ -1051,7 +1486,7 @@ export class ApiService {
 		}
 	}
 
-	/** Throws GoogleBooksError on failure (no key, rate limit, etc.) — see googleBooksErrorMessage. */
+	/** Throws GoogleBooksError on failure — see googleBooksErrorMessage. */
 	async searchGoogleBooks(query: string): Promise<BookSearchResult[]> {
 		const data = (await this.googleBooksFetch(
 			`/volumes?q=${encodeURIComponent(query)}&maxResults=10`,
@@ -1059,13 +1494,13 @@ export class ApiService {
 		return (data.items ?? []).slice(0, 10).map((item) => this.mapGoogleVolume(item));
 	}
 
-	/** Resolves on success, throws GoogleBooksError on failure (so the test can report the real cause). */
+	/** Resolves on success, throws GoogleBooksError so the test can report the real cause. */
 	async checkGoogleBooksConnection(): Promise<boolean> {
 		const data = (await this.googleBooksFetch('/volumes?q=tolkien&maxResults=1')) as GoogleBooksResponse;
 		return Array.isArray(data.items);
 	}
 
-	// ─── Jikan (Manga) ──────────────────────────────────────────────────────────
+	// Jikan (Manga)
 
 	private mapJikanManga(m: JikanMangaItem): MangaSearchResult {
 		const yearStr = m.published?.from ?? '';
@@ -1077,7 +1512,7 @@ export class ApiService {
 			year,
 			totalChapters: m.chapters ?? 0,
 			totalVolumes: m.volumes ?? 0,
-			coverUrl: m.images?.jpg?.image_url ?? '',
+			coverUrl: m.images?.jpg?.large_image_url ?? m.images?.jpg?.image_url ?? '',
 			releaseDate: m.published?.from ? (m.published.from.split('T')[0] ?? '') : '',
 			url: m.url ?? `https://myanimelist.net/manga/${m.mal_id}`,
 		};
@@ -1094,10 +1529,9 @@ export class ApiService {
 	}
 
 	/**
-	 * Detail lookup for a single manga (Jikan /manga/{mal_id}). Search-list results
-	 * return null chapters/volumes for ongoing titles, so totals are fetched here on
-	 * selection. Shares the existing Jikan throttle. (Jikan also exposes a richer
-	 * `/manga/{id}/full` endpoint not used here.)
+	 * Detail lookup for one manga (Jikan /manga/{mal_id}). Search-list results return null
+	 * chapters/volumes for ongoing titles, so totals are fetched here on selection. Shares
+	 * the Jikan throttle.
 	 */
 	async getMangaByMalId(malId: number): Promise<MangaSearchResult | null> {
 		const url = `${JIKAN_BASE}/manga/${malId}`;
@@ -1111,10 +1545,9 @@ export class ApiService {
 	}
 
 	/**
-	 * Detail lookup for a single Google Books volume. The search endpoint sometimes
-	 * omits pageCount and only returns thumbnail-sized images, so on selection this
-	 * resolves the full volume (better page count + larger cover). Returns null when
-	 * the volume can't be fetched.
+	 * Detail lookup for one Google Books volume. The search endpoint sometimes omits
+	 * pageCount and only returns thumbnails, so selection resolves the full volume. null when
+	 * it can't be fetched.
 	 */
 	async getGoogleBookById(volumeId: string): Promise<BookSearchResult | null> {
 		if (!volumeId) return null;
@@ -1137,7 +1570,7 @@ export class ApiService {
 	async checkOmdbConnection(): Promise<boolean> {
 		if (!this.omdbApiKey) return false;
 		try {
-			// Use a known IMDb ID (The Shawshank Redemption) as a connectivity test
+			// a known IMDb ID (The Shawshank Redemption) as a connectivity test
 			const url = `${OMDB_BASE}/?i=tt0111161&apikey=${encodeURIComponent(this.omdbApiKey)}`;
 			const data = (await this.fetchWithTimeout(url)) as OmdbDetailResponse;
 			return data.Response === 'True';
@@ -1145,4 +1578,434 @@ export class ApiService {
 			return false;
 		}
 	}
+
+	// Games — RAWG
+
+	private mapRawgGame(g: RawgGame): GameSearchResult {
+		return {
+			source: 'rawg',
+			id: g.id,
+			title: g.name ?? '',
+			releaseDate: g.released ?? '',
+			coverUrl: g.background_image ?? '',
+			platforms: (g.platforms ?? [])
+				.map((p) => p.platform?.name ?? '')
+				.filter((n) => n !== ''),
+			url: g.slug ? `https://rawg.io/games/${g.slug}` : '',
+		};
+	}
+
+	async searchRawgGames(query: string): Promise<GameSearchResult[]> {
+		const url = `${RAWG_BASE}/games?key=${encodeURIComponent(this.rawgApiKey)}&search=${encodeURIComponent(query)}&page_size=10`;
+		const data = (await this.fetchWithTimeout(url)) as RawgSearchResponse;
+		return (data.results ?? [])
+			.filter((g) => typeof g.id === 'number' && !!g.name)
+			.map((g) => this.mapRawgGame(g));
+	}
+
+	/**
+	 * Detail + store links for one RAWG game (two parallel requests — the detail payload's own
+	 * `stores` array carries no per-game URLs). Store pick follows RAWG_STORE_PRIORITY, else
+	 * the first store with a URL.
+	 */
+	async getRawgGameDetails(id: number): Promise<GameDetailsResult | null> {
+		const key = encodeURIComponent(this.rawgApiKey);
+		const [detail, stores] = await Promise.all([
+			this.fetchWithTimeout(`${RAWG_BASE}/games/${id}?key=${key}`) as Promise<RawgGameDetail>,
+			(this.fetchWithTimeout(`${RAWG_BASE}/games/${id}/stores?key=${key}`) as Promise<RawgStoresResponse>)
+				.catch(() => ({ results: [] }) as RawgStoresResponse),
+		]);
+		if (typeof detail.id !== 'number' || !detail.name) return null;
+
+		const storeLinks = (stores.results ?? []).filter((s) => !!s.url);
+		let storeUrl = '';
+		for (const storeId of RAWG_STORE_PRIORITY) {
+			const hit = storeLinks.find((s) => s.store_id === storeId);
+			if (hit) { storeUrl = hit.url!; break; }
+		}
+		if (!storeUrl && storeLinks.length > 0) storeUrl = storeLinks[0]!.url!;
+
+		// game modes come from the (english) tag slugs
+		const tagSlugs = new Set(
+			(detail.tags ?? [])
+				.filter((t) => (t.language ?? 'eng') === 'eng' && t.slug)
+				.map((t) => t.slug!),
+		);
+
+		return {
+			...this.mapRawgGame(detail),
+			developer: (detail.developers ?? []).map((d) => d.name ?? '').filter(Boolean).join(', '),
+			publisher: (detail.publishers ?? []).map((p) => p.name ?? '').filter(Boolean).join(', '),
+			singleplayer: tagSlugs.has('singleplayer'),
+			coop: RAWG_COOP_TAGS.some((t) => tagSlugs.has(t)),
+			multiplayer: RAWG_MULTIPLAYER_TAGS.some((t) => tagSlugs.has(t)),
+			storeUrl,
+		};
+	}
+
+	async checkRawgConnection(): Promise<boolean> {
+		if (!this.hasRawgKey()) return false;
+		try {
+			const url = `${RAWG_BASE}/games?key=${encodeURIComponent(this.rawgApiKey)}&page_size=1`;
+			const data = (await this.fetchWithTimeout(url)) as RawgSearchResponse;
+			return Array.isArray(data.results);
+		} catch {
+			return false;
+		}
+	}
+
+	// Games — IGDB (via Twitch OAuth)
+
+	/**
+	 * A valid IGDB app access token, fetching a fresh one through the Twitch
+	 * client-credentials flow when none is cached or the cache expired (60 s margin).
+	 * Throws when credentials are missing or rejected.
+	 */
+	private async getIgdbToken(): Promise<string> {
+		if (!this.hasIgdbCredentials()) throw new Error('IGDB credentials not set');
+		if (this.igdbToken && Date.now() < this.igdbTokenExpiry) return this.igdbToken;
+
+		const url =
+			`${TWITCH_TOKEN_URL}?client_id=${encodeURIComponent(this.igdbClientId)}` +
+			`&client_secret=${encodeURIComponent(this.igdbClientSecret)}` +
+			`&grant_type=client_credentials`;
+		let timer: number | null = null;
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			timer = window.setTimeout(() => reject(new Error('Request timed out')), API_TIMEOUT_MS);
+		});
+		try {
+			const fetchPromise = requestUrl({ url, method: 'POST' }).then((r) => r.json as TwitchTokenResponse);
+			const data = await Promise.race([fetchPromise, timeoutPromise]);
+			if (!data.access_token) throw new Error('Twitch token request failed');
+			this.igdbToken = data.access_token;
+			this.igdbTokenExpiry = Date.now() + Math.max(0, (data.expires_in ?? 0) - 60) * 1000;
+			return this.igdbToken;
+		} finally {
+			if (timer !== null) window.clearTimeout(timer);
+		}
+	}
+
+	/** POSTs an Apicalypse query (plain-text body) to an IGDB endpoint. */
+	private async igdbPost(endpoint: string, query: string): Promise<unknown> {
+		const token = await this.getIgdbToken();
+		let timer: number | null = null;
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			timer = window.setTimeout(() => reject(new Error('Request timed out')), API_TIMEOUT_MS);
+		});
+		try {
+			const fetchPromise = requestUrl({
+				url: `${IGDB_BASE}/${endpoint}`,
+				method: 'POST',
+				headers: {
+					'Client-ID': this.igdbClientId,
+					'Authorization': `Bearer ${token}`,
+				},
+				body: query,
+			}).then((r) => r.json as unknown);
+			return await Promise.race([fetchPromise, timeoutPromise]);
+		} catch (e) {
+			// a rejected token (revoked / expired early) must not poison the cache
+			this.igdbToken = '';
+			this.igdbTokenExpiry = 0;
+			throw e;
+		} finally {
+			if (timer !== null) window.clearTimeout(timer);
+		}
+	}
+
+	private mapIgdbGame(g: IgdbGame): GameSearchResult {
+		const ts = g.first_release_date;
+		// deliberately UTC, not the local toIsoDate: IGDB gives a UTC epoch for the release *day*,
+		// so converting locally shifts the date by one for anyone west of UTC
+		const releaseDate =
+			typeof ts === 'number' && ts > 0
+				? new Date(ts * 1000).toISOString().split('T')[0] ?? ''
+				: '';
+		return {
+			source: 'igdb',
+			id: g.id,
+			title: g.name ?? '',
+			releaseDate,
+			coverUrl: g.cover?.image_id
+				? `https://images.igdb.com/igdb/image/upload/t_cover_big/${g.cover.image_id}.jpg`
+				: '',
+			platforms: (g.platforms ?? []).map((p) => p.name ?? '').filter((n) => n !== ''),
+			url: g.url ?? '',
+		};
+	}
+
+	async searchIgdbGames(query: string): Promise<GameSearchResult[]> {
+		// Apicalypse strings are double-quoted — strip quotes/backslashes from input.
+		const safe = query.replace(/["\\]/g, ' ').trim();
+		const data = (await this.igdbPost(
+			'games',
+			`search "${safe}"; fields name, first_release_date, cover.image_id, platforms.name, url; limit 10;`,
+		)) as IgdbGame[];
+		return (Array.isArray(data) ? data : [])
+			.filter((g) => typeof g.id === 'number' && !!g.name)
+			.map((g) => this.mapIgdbGame(g));
+	}
+
+	async getIgdbGameDetails(id: number): Promise<GameDetailsResult | null> {
+		const data = (await this.igdbPost(
+			'games',
+			'fields name, first_release_date, cover.image_id, platforms.name, url, ' +
+				'game_modes.name, websites.url, ' +
+				'involved_companies.developer, involved_companies.publisher, involved_companies.company.name; ' +
+				`where id = ${id | 0}; limit 1;`,
+		)) as IgdbGame[];
+		const g = Array.isArray(data) ? data[0] : undefined;
+		if (!g || !g.name) return null;
+
+		const companies = g.involved_companies ?? [];
+		const names = (list: typeof companies): string =>
+			[...new Set(list.map((c) => c.company?.name ?? '').filter(Boolean))].join(', ');
+
+		const modes = new Set((g.game_modes ?? []).map((m) => m.name ?? ''));
+		const siteUrls = (g.websites ?? []).map((w) => w.url ?? '').filter(Boolean);
+		let storeUrl = '';
+		for (const domain of IGDB_STORE_DOMAINS) {
+			const hit = siteUrls.find((u) => u.includes(domain));
+			if (hit) { storeUrl = hit; break; }
+		}
+
+		return {
+			...this.mapIgdbGame(g),
+			developer: names(companies.filter((c) => c.developer === true)),
+			publisher: names(companies.filter((c) => c.publisher === true)),
+			singleplayer: modes.has('Single player'),
+			coop: [...modes].some((m) => IGDB_COOP_MODES.has(m)),
+			multiplayer: [...modes].some((m) => IGDB_MULTIPLAYER_MODES.has(m)),
+			storeUrl,
+		};
+	}
+
+	async checkIgdbConnection(): Promise<boolean> {
+		if (!this.hasIgdbCredentials()) return false;
+		try {
+			const data = await this.igdbPost('games', 'fields id; limit 1;');
+			return Array.isArray(data);
+		} catch {
+			return false;
+		}
+	}
+
+	// Games — Steam (Web API + Storefront). Not a search source: the Storefront API has no
+	// search endpoint and the only name index (ISteamApps/GetAppList) is a ~200k-entry,
+	// multi-MB download. So it never backs AddGameModal — it fills in playtime and
+	// achievements from the user's own account, which no other API can.
+
+	setSteamCredentials(apiKey: string, steamId: string): void {
+		this.steamApiKey = apiKey;
+		this.steamId = steamId;
+	}
+
+	hasSteamCredentials(): boolean {
+		return this.steamApiKey.trim().length > 0 && this.steamId.trim().length > 0;
+	}
+
+	/**
+	 * GET returning the raw status alongside the parsed body. The Steam endpoints signal real,
+	 * expected conditions through status codes (no achievements = 400, locked-down profile =
+	 * 403), so unlike fetchWithTimeout these must not collapse into a thrown error.
+	 */
+	private async steamGet(url: string): Promise<{ status: number; json: unknown }> {
+		let timer: number | null = null;
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			timer = window.setTimeout(() => reject(new Error('Request timed out')), API_TIMEOUT_MS);
+		});
+		try {
+			const fetchPromise = requestUrl({ url, throw: false }).then((r) => {
+				let json: unknown = null;
+				// .json throws on a non-JSON body (Steam serves HTML error pages).
+				try { json = JSON.parse(r.text) as unknown; } catch { json = null; }
+				return { status: r.status, json };
+			});
+			return await Promise.race([fetchPromise, timeoutPromise]);
+		} finally {
+			if (timer !== null) window.clearTimeout(timer);
+		}
+	}
+
+	/**
+	 * Normalizes whatever the user pasted into a SteamID64: the id itself, a profile URL of
+	 * either shape, or a bare vanity name (resolved through the API). '' when unresolvable.
+	 */
+	async resolveSteamId(input: string): Promise<string> {
+		const raw = input.trim();
+		if (raw === '') return '';
+
+		// a 17-digit number is already a SteamID64
+		if (/^\d{17}$/.test(raw)) return raw;
+
+		// .../profiles/<steamid64> — the id is right there
+		const profileMatch = raw.match(/steamcommunity\.com\/profiles\/(\d{17})/);
+		if (profileMatch) return profileMatch[1] ?? '';
+
+		// .../id/<vanity> or a bare vanity name — needs the resolve endpoint
+		const vanityMatch = raw.match(/steamcommunity\.com\/id\/([^/?#]+)/);
+		const vanity = vanityMatch ? vanityMatch[1] ?? '' : raw;
+		if (vanity === '' || this.steamApiKey.trim() === '') return '';
+
+		try {
+			const url = `${STEAM_API_BASE}/ISteamUser/ResolveVanityURL/v1/`
+				+ `?key=${encodeURIComponent(this.steamApiKey)}`
+				+ `&vanityurl=${encodeURIComponent(vanity)}`;
+			const { json } = await this.steamGet(url);
+			const res = (json as SteamVanityResponse | null)?.response;
+			return res?.success === 1 ? (res.steamid ?? '') : '';
+		} catch {
+			return '';
+		}
+	}
+
+	/**
+	 * The user's owned games with playtime. One request for the whole library.
+	 *
+	 * A private profile is the most common failure here and it does NOT error — Steam answers
+	 * 200 with an empty `response` object — so the result distinguishes it from "you genuinely
+	 * own nothing" for the caller's message.
+	 */
+	async getSteamOwnedGames(): Promise<SteamLibraryResult> {
+		if (!this.hasSteamCredentials()) return { ok: false, reason: 'missing', games: [] };
+		try {
+			const url = `${STEAM_API_BASE}/IPlayerService/GetOwnedGames/v1/`
+				+ `?key=${encodeURIComponent(this.steamApiKey)}`
+				+ `&steamid=${encodeURIComponent(this.steamId)}`
+				+ '&include_appinfo=1&include_played_free_games=1';
+			const { status, json } = await this.steamGet(url);
+			if (status === 401 || status === 403) return { ok: false, reason: 'badKey', games: [] };
+			if (status !== 200) return { ok: false, reason: 'network', games: [] };
+
+			const res = (json as SteamOwnedGamesResponse | null)?.response;
+			// {} rather than { game_count: 0, games: [] } — the private-profile shape.
+			if (!res || res.games === undefined) {
+				return { ok: false, reason: res && res.game_count === 0 ? 'empty' : 'private', games: [] };
+			}
+			const games = res.games.map((g) => ({
+				appId: String(g.appid),
+				name: g.name ?? '',
+				playtimeMinutes: g.playtime_forever ?? 0,
+				lastPlayed: g.rtime_last_played ? new Date(g.rtime_last_played * 1000).toISOString() : null,
+			}));
+			return { ok: true, reason: 'ok', games };
+		} catch {
+			return { ok: false, reason: 'network', games: [] };
+		}
+	}
+
+	/**
+	 * Earned / total achievements for one app. One request per game — the only part of a sync
+	 * that scales with library size.
+	 *
+	 * Returns null for "this game has no achievements", which Steam reports as a 400 with an
+	 * error payload rather than an empty list; treating that as a failure would mark a large
+	 * slice of any real library as broken.
+	 */
+	async getSteamAchievements(appId: string): Promise<{ earned: number; total: number } | null> {
+		if (!this.hasSteamCredentials()) return null;
+		try {
+			const url = `${STEAM_API_BASE}/ISteamUserStats/GetPlayerAchievements/v1/`
+				+ `?key=${encodeURIComponent(this.steamApiKey)}`
+				+ `&steamid=${encodeURIComponent(this.steamId)}`
+				+ `&appid=${encodeURIComponent(appId)}`;
+			const { status, json } = await this.steamGet(url);
+			if (status !== 200) return null;
+			const stats = (json as SteamAchievementsResponse | null)?.playerstats;
+			if (!stats?.success || !Array.isArray(stats.achievements)) return null;
+			return {
+				earned: stats.achievements.filter((a) => a.achieved === 1).length,
+				total: stats.achievements.length,
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * Storefront metadata for one app — no key, but rate-limited (~200 requests per 5 minutes
+	 * per IP), so callers must throttle. Only used when importing a game the library doesn't
+	 * have yet.
+	 */
+	async getSteamAppDetails(appId: string): Promise<SteamAppDetails | null> {
+		try {
+			const url = `${STEAM_STORE_BASE}/appdetails?appids=${encodeURIComponent(appId)}`;
+			const { status, json } = await this.steamGet(url);
+			if (status !== 200 || !json) return null;
+			const entry = (json as Record<string, SteamAppDetailsEntry | undefined>)[appId];
+			if (!entry?.success || !entry.data) return null;
+			const d = entry.data;
+
+			const categoryIds = new Set((d.categories ?? []).map((c) => c.id));
+			return {
+				name: d.name ?? '',
+				developer: (d.developers ?? []).join(', '),
+				publisher: (d.publishers ?? []).join(', '),
+				genres: (d.genres ?? []).map((g) => g.description ?? '').filter((g) => g !== ''),
+				releaseDate: parseSteamReleaseDate(d.release_date?.date ?? ''),
+				coverUrl: steamLibraryCover(appId),
+				storeUrl: `https://store.steampowered.com/app/${appId}/`,
+				singleplayer: categoryIds.has(STEAM_CAT_SINGLEPLAYER),
+				coop: [...categoryIds].some((id) => STEAM_COOP_CATS.has(id)),
+				multiplayer: categoryIds.has(STEAM_CAT_MULTIPLAYER),
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	/** Test-connection probe: one GetOwnedGames call, reported by reason. */
+	async checkSteamConnection(): Promise<SteamLibraryResult> {
+		return this.getSteamOwnedGames();
+	}
+}
+
+// Steam helpers
+
+/**
+ * The portrait library capsule. Steam's `header_image` is a 460×215 landscape banner that
+ * letterboxes badly in portrait poster cards; the 600×900 capsule is the shape the grid
+ * expects. Not every app publishes one — the card's onerror falls back to the placeholder.
+ */
+export function steamLibraryCover(appId: string): string {
+	return `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/library_600x900.jpg`;
+}
+
+/** Steam appid out of a store URL, '' when the URL isn't a Steam store page. */
+export function steamAppIdFromUrl(url: string): string {
+	return url.match(/store\.steampowered\.com\/app\/(\d+)/)?.[1] ?? '';
+}
+
+/**
+ * Storefront release dates are display strings in the store's locale ('12 Mar, 2020',
+ * 'Mar 12, 2020', 'Q1 2021', 'Coming soon'). Only a fully resolved day converts; anything
+ * vaguer returns null rather than a guess, because releaseDate drives the auto
+ * "To be released" status.
+ */
+export function parseSteamReleaseDate(raw: string): string | null {
+	const text = raw.trim();
+	if (text === '') return null;
+	const parsed = Date.parse(text);
+	if (Number.isNaN(parsed)) return null;
+	const d = new Date(parsed);
+	// local getters, not toISOString — see the date rules in types.ts
+	const month = String(d.getMonth() + 1).padStart(2, '0');
+	const day = String(d.getDate()).padStart(2, '0');
+	return `${d.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * RAWG's `background_image` is a full-resolution screenshot (routinely 3840×2160,
+ * multi-MB) — far too heavy for a 140×210 poster card; the fetch + decode is what made
+ * Games covers flash their letter placeholder and stutter the grid scroll. media.rawg.io
+ * exposes an on-the-fly resize endpoint (`/media/resize/<width>/-/<path>`), so display
+ * sites rewrite through this helper instead of storing a downscaled URL. Non-RAWG and
+ * already-resized URLs pass through untouched.
+ */
+export function rawgResizedCover(url: string, width = 640): string {
+	const prefix = 'https://media.rawg.io/media/';
+	if (!url.startsWith(prefix)) return url;
+	const rest = url.slice(prefix.length);
+	if (rest.startsWith('resize/') || rest.startsWith('crop/')) return url;
+	return `${prefix}resize/${width}/-/${rest}`;
 }

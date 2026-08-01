@@ -2,14 +2,26 @@ import { App, Modal, Notice } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle } from './types';
+import { getTitleCredits, normalizeManualCredits } from './types';
 
-// ── CSV helpers ───────────────────────────────────────────────────────────────
+/** studio list ⇄ one CSV cell; semicolons, since studio names contain commas */
+const STUDIO_SEP = '; ';
+
+function studioToCsv(t: WatchLogTitle): string {
+	return getTitleCredits(t, 'studio').join(STUDIO_SEP);
+}
+
+function studioFromCsv(cell: string | undefined): string[] {
+	return normalizeManualCredits((cell ?? '').split(/[;,]/));
+}
+
+// CSV helpers
 
 const CSV_COLUMNS = [
 	'title', 'type', 'status', 'priority', 'rating',
 	'totalEpisodes', 'episodeDuration',
 	'dateStarted', 'dateFinished', 'releaseDate', 'dateAdded',
-	'externalLink', 'notes',
+	'externalLink', 'notes', 'studio',
 ] as const;
 
 function escapeCsvField(value: string | number | null | undefined): string {
@@ -23,18 +35,24 @@ function escapeCsvField(value: string | number | null | undefined): string {
 function titlesToCsv(titles: WatchLogTitle[]): string {
 	const header = CSV_COLUMNS.join(',');
 	const rows = titles.map((t) =>
-		CSV_COLUMNS.map((col) => escapeCsvField((t as unknown as Record<string, string | number | null | undefined>)[col])).join(',')
+		CSV_COLUMNS.map((col) =>
+			escapeCsvField(
+				col === 'studio'
+					? studioToCsv(t)
+					: (t as unknown as Record<string, string | number | null | undefined>)[col],
+			),
+		).join(','),
 	);
 	return [header, ...rows].join('\n');
 }
 
-/** Full CSV parser: handles quoted fields with embedded newlines, escaped quotes, comma delimiters. */
+/** Full CSV parser: quoted fields with embedded newlines, escaped quotes, comma delimiter. */
 function parseCSV(text: string): string[][] {
 	const rows: string[][] = [];
 	let row: string[] = [];
 	let cur = '';
 	let inQuotes = false;
-	// Normalize CRLF to LF
+	// normalize CRLF to LF
 	const t = text.replace(/\r\n?/g, '\n');
 	for (let i = 0; i < t.length; i++) {
 		const ch = t[i];
@@ -58,35 +76,35 @@ function parseCSV(text: string): string[][] {
 			}
 		}
 	}
-	// Final field/row
+	// final field/row
 	if (cur.length > 0 || row.length > 0) {
 		row.push(cur);
 		rows.push(row);
 	}
-	// Drop trailing fully-empty rows
+	// drop trailing fully-empty rows
 	while (rows.length > 0 && rows[rows.length - 1]!.every((c) => c === '')) rows.pop();
 	return rows;
 }
 
-// ── Date parsing ─────────────────────────────────────────────────────────────
+// Date parsing
 
 const MONTH_NAMES: Record<string, number> = {
 	jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
 	jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
 
-/** Parses a date string in any common format and returns YYYY-MM-DD, or null if unparseable. */
+/** Parses a date in any common format to YYYY-MM-DD, or null when unparseable. */
 function parseCsvDate(raw: string): string | null {
 	const s = raw.trim();
 	if (!s) return null;
 	try {
-		// YYYY-MM-DD (already in storage format)
+		// YYYY-MM-DD (already storage format)
 		if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
 		// D/M/YYYY, DD/MM/YYYY, M/D/YYYY, MM/DD/YYYY
 		const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
 		if (slash) {
-			const a = parseInt(slash[1]!), b = parseInt(slash[2]!), y = parseInt(slash[3]!);
+			const a = parseInt(slash[1]!, 10), b = parseInt(slash[2]!, 10), y = parseInt(slash[3]!, 10);
 			let dd: number, mm: number;
 			if (a > 12)      { dd = a; mm = b; }  // Must be DD/MM
 			else if (b > 12) { mm = a; dd = b; }  // Must be MM/DD
@@ -95,31 +113,31 @@ function parseCsvDate(raw: string): string | null {
 			return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 		}
 
-		// "27 Jun 2025" (DD Mon YYYY)
+		// "27 Jun 2025"
 		const dmy = s.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})$/);
 		if (dmy) {
 			const mm = MONTH_NAMES[dmy[2]!.toLowerCase().slice(0, 3)];
-			const dd = parseInt(dmy[1]!), y = parseInt(dmy[3]!);
+			const dd = parseInt(dmy[1]!, 10), y = parseInt(dmy[3]!, 10);
 			if (mm) return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 		}
 
-		// "Jun 27, 2025" or "Jun 27 2025" (Mon DD YYYY)
+		// "Jun 27, 2025" / "Jun 27 2025"
 		const mdy = s.match(/^([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{4})$/);
 		if (mdy) {
 			const mm = MONTH_NAMES[mdy[1]!.toLowerCase().slice(0, 3)];
-			const dd = parseInt(mdy[2]!), y = parseInt(mdy[3]!);
+			const dd = parseInt(mdy[2]!, 10), y = parseInt(mdy[3]!, 10);
 			if (mm) return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 		}
 
-		// DD.MM.YYYY or DD-MM-YYYY (dot/dash with year at end)
+		// DD.MM.YYYY or DD-MM-YYYY
 		const dotDash = s.match(/^(\d{1,2})[.-](\d{1,2})[.-](\d{4})$/);
 		if (dotDash) {
-			const dd = parseInt(dotDash[1]!), mm = parseInt(dotDash[2]!), y = parseInt(dotDash[3]!);
+			const dd = parseInt(dotDash[1]!, 10), mm = parseInt(dotDash[2]!, 10), y = parseInt(dotDash[3]!, 10);
 			if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31)
 				return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 		}
 
-		// Fallback: native Date.parse
+		// fallback: native Date.parse
 		const parsed = new Date(s);
 		if (!isNaN(parsed.getTime())) {
 			const dd = parsed.getDate(), mm = parsed.getMonth() + 1, y = parsed.getFullYear();
@@ -132,7 +150,7 @@ function parseCsvDate(raw: string): string | null {
 	}
 }
 
-// ── Field mapping definitions ────────────────────────────────────────────────
+// Field mapping definitions
 
 interface WlFieldDef {
 	key: string;
@@ -153,6 +171,7 @@ const WL_IMPORT_FIELDS: WlFieldDef[] = [
 	{ key: 'releaseDate',    label: 'Release Date',  autoDetect: ['releasedate', 'release date', 'release_date', 'air date', 'airdate'] },
 	{ key: 'externalLink',   label: 'Link',          autoDetect: ['link', 'externallink', 'external link', 'external_link', 'url'] },
 	{ key: 'notes',          label: 'Notes',         autoDetect: ['notes', 'note', 'comment', 'comments'] },
+	{ key: 'studio',         label: 'Studio',        autoDetect: ['studio', 'studios', 'network', 'production', 'production company'] },
 ];
 
 function autoMap(headers: string[]): Record<string, string> {
@@ -199,9 +218,9 @@ function applyMapping(
 				entry.rating = Math.max(0, Math.min(5, r));
 			}
 			const epsVal = get('totalEpisodes');
-			if (epsVal) entry.totalEpisodes = parseInt(epsVal) || 0;
+			if (epsVal) entry.totalEpisodes = parseInt(epsVal, 10) || 0;
 			const durVal = get('episodeDuration');
-			if (durVal) entry.episodeDuration = parseInt(durVal) || 0;
+			if (durVal) entry.episodeDuration = parseInt(durVal, 10) || 0;
 			const startedRaw = get('dateStarted');
 			if (startedRaw) { const d = parseCsvDate(startedRaw); if (d) entry.dateStarted = d; }
 			const finishedRaw = get('dateFinished');
@@ -212,12 +231,15 @@ function applyMapping(
 			if (linkVal) entry.externalLink = linkVal;
 			const notesVal = get('notes');
 			if (notesVal) entry.notes = notesVal;
+			// imported studios are user data — the manual slot, so a later fetch still runs
+			const studioVal = studioFromCsv(get('studio'));
+			if (studioVal.length > 0) entry.manualStudio = studioVal;
 
-			// Skip rows where all mapped fields resolved to empty
+			// skip rows where all mapped fields resolved to empty
 			const isEmpty = !entry.title?.trim() && !entry.type && !entry.status
 				&& !entry.rating && !entry.totalEpisodes && !entry.episodeDuration
 				&& !entry.dateStarted && !entry.dateFinished && !entry.releaseDate && !entry.externalLink
-				&& !entry.notes;
+				&& !entry.notes && !entry.manualStudio;
 			if (isEmpty) return null;
 
 			const isDuplicate = !!existingTitles.find(
@@ -228,10 +250,10 @@ function applyMapping(
 		.filter((r): r is { entry: Partial<WatchLogTitle>; isDuplicate: boolean } => r !== null);
 }
 
-// Sentinel for "create new type" in value mapping
+// sentinel for "create new type" in value mapping
 const CREATE_NEW_TYPE = '__create__';
 
-// Theme-aware random colors for auto-created types
+// theme-aware random colors for auto-created types
 const TYPE_AUTO_COLORS: Record<string, string[]> = {
 	default:   ['#6366F1', '#8B5CF6', '#EC4899', '#14B8A6', '#F59E0B', '#10B981', '#3B82F6', '#EF4444'],
 	nightfall: ['#7B2CBF', '#9D4EDD', '#C77DFF', '#5A189A', '#E040FB', '#B388FF', '#CE93D8', '#9C27B0'],
@@ -243,28 +265,24 @@ function randomAutoColor(theme: string): string {
 	return palette[Math.floor(Math.random() * palette.length)] ?? '#888780';
 }
 
-// ── Modal ─────────────────────────────────────────────────────────────────────
+// Modal
 
 export class CsvModal extends Modal {
 	private plugin: WatchLogPlugin;
 	private dataManager: DataManager;
 	private mode: 'export' | 'import';
 
-	// Export state
 	private selectedIds = new Set<string>();
 
-	// Import state — shared across steps
 	private csvRows: string[][] = [];
 	private csvHeaders: string[] = [];
 	private columnMapping: Record<string, string> = {};
 	private importRows: { entry: Partial<WatchLogTitle>; isDuplicate: boolean; selected: boolean }[] = [];
 
-	// Value mapping state
 	private statusValueMap: Record<string, string> = {};  // csvValue → resolved status ('' = leave blank)
 	private typeValueMap: Record<string, string> = {};    // csvValue → resolved type ('' = blank, CREATE_NEW_TYPE = create)
 	private ratingValueMap: Record<string, string> = {};  // csvValue → '1'–'5' or '' (leave blank)
 
-	// Step containers
 	private stepUpload: HTMLElement | null = null;
 	private stepMapping: HTMLElement | null = null;
 	private stepValueMap: HTMLElement | null = null;
@@ -272,7 +290,6 @@ export class CsvModal extends Modal {
 	private importBtn: HTMLButtonElement | null = null;
 	private cancelBtn: HTMLButtonElement | null = null;
 
-	// Import progress state
 	private isImporting = false;
 	private importCancelled = false;
 	private progressWrap: HTMLElement | null = null;
@@ -307,7 +324,7 @@ export class CsvModal extends Modal {
 		this.contentEl.empty();
 	}
 
-	// ── Export ────────────────────────────────────────────────────────────────────
+	// Export
 
 	private renderExport(el: HTMLElement): void {
 		el.createEl('h2', { cls: 'wl-modal-title', text: 'Export to CSV' });
@@ -380,7 +397,7 @@ export class CsvModal extends Modal {
 		});
 	}
 
-	// ── Import ────────────────────────────────────────────────────────────────────
+	// Import
 
 	private renderImport(el: HTMLElement): void {
 		el.createEl('h2', { cls: 'wl-modal-title', text: 'Import from CSV' });
@@ -404,7 +421,7 @@ export class CsvModal extends Modal {
 
 		const btnRow = el.createDiv({ cls: 'wl-modal-btn-row wl-csv-btn-row' });
 
-		// Background-import note (hidden until import starts)
+		// background-import note (hidden until the import starts)
 		this.progressWrap = btnRow.createDiv({ cls: 'wl-csv-progress-wrap' });
 		this.progressWrap.hide();
 		this.progressWrap.createSpan({ cls: 'wl-csv-bg-note', text: 'You can close this window — import will continue in the background.' });
@@ -448,7 +465,7 @@ export class CsvModal extends Modal {
 		});
 	}
 
-	// ── Step: Column Mapping ──────────────────────────────────────────────────────
+	// Step: column mapping
 
 	private showMappingStep(): void {
 		if (!this.stepUpload || !this.stepMapping) return;
@@ -493,11 +510,11 @@ export class CsvModal extends Modal {
 			for (const field of WL_IMPORT_FIELDS) {
 				this.columnMapping[field.key] = selectEls[field.key]?.value ?? '';
 			}
-			// Parse rows with current column mapping
+			// parse rows with the current column mapping
 			this.importRows = applyMapping(this.csvRows, this.columnMapping, this.dataManager)
 				.map((r) => ({ ...r, selected: !r.isDuplicate }));
 
-			// Check for unknown status/type values and non-numeric ratings
+			// unknown status/type values and non-numeric ratings
 			const existingStatusNames = new Set(this.plugin.settings.statuses.map((s) => s.name));
 			const existingTypeNames = new Set(this.plugin.settings.types.map((t) => t.name));
 
@@ -519,7 +536,7 @@ export class CsvModal extends Modal {
 					unknownTypes.push(tv);
 					seenTypes.add(tv);
 				}
-				// Detect non-numeric rating values (r.entry.rating would be 0 from parseFloat on non-numeric)
+				// non-numeric ratings: parseFloat leaves r.entry.rating at 0
 				const ratingColName = this.columnMapping['rating'];
 				if (ratingColName) {
 					const headers = (this.csvRows[0] ?? []).map((h) => h.trim());
@@ -544,7 +561,7 @@ export class CsvModal extends Modal {
 		});
 	}
 
-	// ── Step: Value Mapping ───────────────────────────────────────────────────────
+	// Step: value mapping
 
 	private showValueMapStep(unknownStatuses: string[], unknownTypes: string[], unknownRatings: string[] = []): void {
 		if (!this.stepMapping || !this.stepValueMap) return;
@@ -579,7 +596,7 @@ export class CsvModal extends Modal {
 				for (const name of existingStatuses) {
 					sel.createEl('option', { value: name, text: name });
 				}
-				// Pre-fill with closest match (case-insensitive)
+				// pre-fill with the closest match (case-insensitive)
 				const lc = sv.toLowerCase();
 				const match = existingStatuses.find((s) => s.toLowerCase() === lc);
 				if (match) sel.value = match;
@@ -599,7 +616,6 @@ export class CsvModal extends Modal {
 					sel.createEl('option', { value: name, text: name });
 				}
 				sel.createEl('option', { value: CREATE_NEW_TYPE, text: '+ create new type' });
-				// Pre-fill with closest match
 				const lc = tv.toLowerCase();
 				const match = existingTypes.find((t) => t.toLowerCase() === lc);
 				if (match) sel.value = match;
@@ -636,7 +652,6 @@ export class CsvModal extends Modal {
 		});
 
 		confirmBtn.addEventListener('click', () => {
-			// Collect mappings
 			this.statusValueMap = {};
 			for (const sv of unknownStatuses) {
 				this.statusValueMap[sv] = statusSelects[sv]?.value ?? '';
@@ -649,7 +664,7 @@ export class CsvModal extends Modal {
 			for (const rv of unknownRatings) {
 				this.ratingValueMap[rv] = ratingSelects[rv]?.value ?? '';
 			}
-			// Apply value maps to importRows
+			// apply the value maps to importRows
 			this.applyValueMapsToRows();
 			this.showPreviewStep();
 		});
@@ -657,24 +672,23 @@ export class CsvModal extends Modal {
 
 	private applyValueMapsToRows(): void {
 		for (const r of this.importRows) {
-			// Status
 			const sv = r.entry.status?.trim() ?? '';
 			if (sv && Object.prototype.hasOwnProperty.call(this.statusValueMap, sv)) {
 				const resolved = this.statusValueMap[sv] ?? '';
 				r.entry.status = resolved || undefined;
 			}
-			// Type — keep CREATE_NEW_TYPE sentinel; doImport will handle it
+			// type — keep the CREATE_NEW_TYPE sentinel; doImport handles it
 			const tv = r.entry.type?.trim() ?? '';
 			if (tv && Object.prototype.hasOwnProperty.call(this.typeValueMap, tv)) {
 				const resolved = this.typeValueMap[tv] ?? '';
 				if (resolved === CREATE_NEW_TYPE) {
-					// keep original value, mark for creation
+					// keep the original value, mark for creation
 					r.entry.type = tv;
 				} else {
 					r.entry.type = resolved || undefined;
 				}
 			}
-			// Rating — map non-numeric value to numeric
+			// rating — map a non-numeric value to numeric
 			const rawRatingKey = Object.keys(this.ratingValueMap).find((k) => {
 				const ratingColName = this.columnMapping['rating'];
 				if (!ratingColName) return false;
@@ -687,17 +701,17 @@ export class CsvModal extends Modal {
 			});
 			if (rawRatingKey !== undefined) {
 				const resolved = this.ratingValueMap[rawRatingKey] ?? '';
-				r.entry.rating = resolved ? parseInt(resolved) : 0;
+				r.entry.rating = resolved ? parseInt(resolved, 10) : 0;
 			}
 
-			// Re-check duplicate status after value resolution
+			// re-check duplicate status after value resolution
 			r.isDuplicate = !!this.dataManager.getTitles().find(
 				(t) => t.title.toLowerCase() === (r.entry.title ?? '').toLowerCase()
 			);
 		}
 	}
 
-	// ── Step: Preview ─────────────────────────────────────────────────────────────
+	// Step: preview
 
 	private showPreviewStep(): void {
 		if (!this.stepValueMap || !this.stepMapping || !this.stepPreview || !this.importBtn) return;
@@ -731,7 +745,7 @@ export class CsvModal extends Modal {
 			this.stepPreview.hide();
 			this.importBtn.hide();
 			this.importBtn.disabled = true;
-			// Go back to value-map step if it was shown, else column mapping
+			// back to the value-map step when it was shown, else column mapping
 			const hadValueMap = Object.keys(this.statusValueMap).length > 0 || Object.keys(this.typeValueMap).length > 0 || Object.keys(this.ratingValueMap).length > 0;
 			if (hadValueMap) {
 				this.stepValueMap.show();
@@ -785,7 +799,7 @@ export class CsvModal extends Modal {
 		updateCount();
 	}
 
-	// ── Import ────────────────────────────────────────────────────────────────────
+	// Import
 
 	private async doImport(): Promise<void> {
 		const toImport = this.importRows.filter((r) => r.selected && r.entry.title?.trim());
@@ -794,7 +808,6 @@ export class CsvModal extends Modal {
 			return;
 		}
 
-		// Set up progress UI
 		this.isImporting = true;
 		this.importCancelled = false;
 		if (this.importBtn) this.importBtn.disabled = true;
@@ -803,11 +816,11 @@ export class CsvModal extends Modal {
 		if (this.progressText) this.progressText.textContent = `0 / ${toImport.length}`;
 		if (this.progressBarFill) this.progressBarFill.style.width = `0%`;
 
-		// Expose progress to the Watchlist header
+		// expose progress to the Watchlist header
 		const cancelFn = (): void => { this.importCancelled = true; };
 		this.plugin.importProgress = { current: 0, total: toImport.length, cancel: cancelFn };
 
-		// Auto-create types marked CREATE_NEW_TYPE or not in existing types
+		// auto-create types marked CREATE_NEW_TYPE or missing from the existing ones
 		const theme = this.plugin.settings.colorTheme ?? 'default';
 		const existingTypeNames = new Set(this.plugin.settings.types.map((t) => t.name.toLowerCase()));
 		const typesToCreate = new Set<string>();
@@ -863,7 +876,9 @@ export class CsvModal extends Modal {
 						externalLink: r.entry.externalLink ?? '',
 						seasons: [],
 						watchedEpisodes: [],
+						favorite: false,
 					};
+					if (r.entry.manualStudio?.length) entry.manualStudio = r.entry.manualStudio;
 					if (entry.status === 'Completed' && entry.totalEpisodes > 0) {
 						entry.watchedEpisodes = Array.from({ length: entry.totalEpisodes }, (_, k) => k + 1);
 					}

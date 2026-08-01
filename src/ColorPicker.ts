@@ -1,17 +1,16 @@
 import { FIELD_COLORS, DEFAULT_FIELD_COLOR } from './types';
 
-// ─────────────────────────────────────────────────────────────────────────────
 // ColorPicker — shared swatch-picker UI + fill/border colour derivation.
 //
-// The Reading subsystem historically stored a colour as the "600 stop" hex and
-// looked up a paired "50 stop" light tint from a hardcoded table. That only
-// worked for the 8 presets. These helpers derive the fill/border variants from
-// ANY hex (so custom colours render correctly) while keeping the exact preset
-// tints for the 8 built-ins — behaviour for presets is unchanged.
-// ─────────────────────────────────────────────────────────────────────────────
+// Reading historically stored a colour as the "600 stop" hex and looked up a paired "50 stop" tint
+// from a hardcoded table, which only worked for the 8 presets. These helpers derive the fill/border
+// variants from ANY hex (so custom colours render correctly) while keeping the exact preset tints
+// for the built-ins.
 
-/** Normalize hex input to lowercase `#rrggbb`, expanding `#rgb`. Returns the
- *  default field colour for anything unparseable. */
+/**
+ * Normalize hex input to lowercase `#rrggbb`, expanding `#rgb`. Anything unparseable returns the
+ * default field colour.
+ */
 function normalizeHex(input: string): string {
 	const hex = (input ?? '').trim().toLowerCase();
 	const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(hex);
@@ -41,9 +40,8 @@ function mixWithWhite(hex: string, amount: number): string {
 }
 
 /**
- * Light fill tint for a given colour. For the 8 presets this returns the exact
- * authored `color50` so existing fields render identically; for any other hex
- * it derives a light tint programmatically.
+ * Light fill tint for a colour. For the 8 presets this returns the exact authored `color50`, so
+ * existing fields render identically; any other hex is derived programmatically.
  */
 export function deriveFillColor(color: string): string {
 	const norm = normalizeHex(color);
@@ -54,14 +52,14 @@ export function deriveFillColor(color: string): string {
 }
 
 /**
- * Border / strong-accent colour for a given colour. This is the colour itself
- * (the historical "600 stop"), normalized so it works for arbitrary hex input.
+ * Border / strong-accent colour — the colour itself (the historical "600 stop"), normalized so it
+ * works for arbitrary hex input.
  */
 export function deriveBorderColor(color: string): string {
 	return normalizeHex(color);
 }
 
-export interface ColorPickerOptions {
+interface ColorPickerOptions {
 	/** Element the palette is positioned beneath. */
 	anchor: HTMLElement;
 	/** Element the palette is appended to (positioned `fixed`, so any container works). */
@@ -76,21 +74,20 @@ export interface ColorPickerOptions {
 }
 
 /**
- * Opens the shared colour-swatch picker — the 8 presets plus, when enabled, a
- * custom full-spectrum swatch (native colour input / hex). Matches the visual
- * style of the original Reading swatch palette.
+ * Opens the shared colour-swatch picker — the 8 presets plus, when enabled, a custom full-spectrum
+ * swatch (native colour input / hex).
  */
 export function openColorPicker(opts: ColorPickerOptions): void {
 	const { anchor, container, current, allowCustom, onPick } = opts;
 
-	// Remove any palette already open in this container.
+	// remove any palette already open in this container
 	container.querySelectorAll('.wl-reading-col-palette').forEach((el) => el.remove());
 
 	const rect = anchor.getBoundingClientRect();
 	const palette = container.createDiv({ cls: 'wl-reading-col-palette' });
 	palette.style.top = `${rect.bottom + 4}px`;
 	palette.style.left = `${rect.left}px`;
-	// Capture the owning document once so add/remove can't desync across popout windows.
+	// capture the owning document once so add/remove can't desync across popout windows
 	const doc = container.ownerDocument;
 	const normCurrent = normalizeHex(current);
 
@@ -128,10 +125,10 @@ export function openColorPicker(opts: ColorPickerOptions): void {
 		});
 		customSwatch.title = 'Custom color…';
 		if (matchedPreset) {
-			// Current colour is a preset: present the custom swatch as a rainbow invite.
+			// current colour is a preset: present the custom swatch as a rainbow invite
 			customSwatch.addClass('wl-color-custom-rainbow');
 		} else {
-			// Current colour is custom: show it, marked active.
+			// current colour is custom: show it, marked active
 			customSwatch.addClass('is-active');
 			customSwatch.style.backgroundColor = deriveFillColor(normCurrent);
 			customSwatch.style.borderColor = deriveBorderColor(normCurrent);
@@ -154,7 +151,7 @@ export function openColorPicker(opts: ColorPickerOptions): void {
 		});
 	}
 
-	// Clear / "no colour" swatch — reverts the consumer to its default appearance.
+	// clear / "no colour" swatch — reverts the consumer to its default appearance
 	const clearSwatch = palette.createEl('button', {
 		cls: 'wl-reading-col-palette-swatch wl-color-clear-swatch',
 	});
