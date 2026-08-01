@@ -66,11 +66,9 @@ export function renderCommunityRating(
 }
 
 /**
- * Auto-refresh: triggers a background fetch when data is stale (≥30 days)
- * or has never been fetched. For anime titles, only uses the API that
- * matches the current animeApiSource setting AND that has its ID already
- * present on the title — no search-by-name in the background. For non-anime
- * titles, uses the standard fetchCommunityRating routing.
+ * Auto-refresh: fetches in the background when data is stale (≥30 days) or never fetched. For anime,
+ * only uses the API matching animeApiSource AND already holding an ID on the title — no
+ * search-by-name in the background. Non-anime uses the standard fetchCommunityRating routing.
  */
 const pendingRatingRefreshes: Set<string> = new Set();
 
@@ -125,13 +123,10 @@ async function backgroundRefresh(plugin: WatchLogPlugin, titleId: string): Promi
 }
 
 /**
- * Manual refresh:
- *  - For anime: respects current animeApiSource. If the title is missing
- *    the ID for that source, searches by name on that API; on a reasonable
- *    match, stores the new ID + updates externalLink to the new source.
- *  - For non-anime: standard fetchCommunityRating.
- * Saves changes via updateTitle (full save) when IDs/externalLink change;
- * otherwise the lighter updateCommunityRating path.
+ * Manual refresh. Anime: respects animeApiSource; if the title lacks that source's ID it searches by
+ * name there and, on a reasonable match, stores the new ID and updates externalLink. Non-anime:
+ * standard fetchCommunityRating. Saves via updateTitle when IDs/externalLink change, otherwise the
+ * lighter updateCommunityRating path.
  */
 export async function refreshCommunityRating(
 	plugin: WatchLogPlugin,
@@ -160,7 +155,7 @@ export async function refreshCommunityRating(
 				: (title.malId ?? 0) > 0;
 
 			if (!hasPreferredId) {
-				// Search by name on the preferred API.
+				// search by name on the preferred API
 				const matched = await searchForMatch(plugin, title, wantsAniList);
 				if (!matched) {
 					if (showNotice) {
@@ -168,7 +163,7 @@ export async function refreshCommunityRating(
 					}
 					return false;
 				}
-				// Persist the new ID + externalLink before fetching the rating.
+				// persist the new ID + externalLink before fetching the rating
 				const fresh = plugin.dataManager.getTitle(titleId);
 				if (!fresh) return false;
 				if (wantsAniList) {
@@ -181,8 +176,7 @@ export async function refreshCommunityRating(
 				await plugin.dataManager.updateTitle(fresh);
 				title = fresh;
 			} else {
-				// We already have the right ID — still make sure externalLink
-				// matches the preferred source so the UI link is consistent.
+				// we already have the right ID — still make externalLink match the preferred source
 				const expectedLink = wantsAniList
 					? `https://anilist.co/anime/${title.anilistId}`
 					: `https://myanimelist.net/anime/${title.malId}`;
@@ -244,7 +238,7 @@ async function searchForMatch(
 	if (!results.length) return null;
 	const top = results[0]!;
 	if (isReasonableMatch(title.title, top.title)) return top;
-	// Try a few more results in case the first isn't the best.
+	// try a few more results in case the first isn't the best
 	for (let i = 1; i < Math.min(results.length, 5); i++) {
 		if (isReasonableMatch(title.title, results[i]!.title)) return results[i]!;
 	}

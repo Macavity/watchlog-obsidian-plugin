@@ -1,7 +1,11 @@
+import { setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
-import type { HistoryEntry, HistorySource, HistoryAction } from './HistoryManager';
+import type { HistoryEntry } from './HistoryManager';
+import { inferHistoryAction, inferHistorySource } from './HistoryManager';
+import { ConfirmModal } from './ConfirmModal';
+import { getActiveDateFormat } from './types';
 
-type SourceFilter = 'all' | 'Watchlist' | 'Reading';
+type SourceFilter = 'all' | 'Watchlist' | 'Reading' | 'Games';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTHS = [
@@ -18,31 +22,15 @@ const ACTION_COLORS: Record<string, string> = {
 	rating: '#BA7517',
 };
 
-// Leading source dot is colored by source (not action): green Reading, blue Watchlist.
+// the leading dot is coloured by source, not action: green Reading, blue Watchlist, purple Games
 const SOURCE_COLORS: Record<string, string> = {
 	Reading: '#1D9E75',
 	Watchlist: '#378ADD',
+	Games: '#8B5CF6',
 };
 
-function inferAction(entry: HistoryEntry): HistoryAction {
-	if (entry.action) return entry.action;
-	const m = entry.message.toLowerCase();
-	if (m.includes('was added')) return 'added';
-	if (m.includes('was deleted')) return 'deleted';
-	if (m.includes('was reviewed') || m.includes('rating changed')) return 'rating';
-	if (m.includes('episode') && m.includes('watched')) return 'watched';
-	if (m.includes('was marked as watched') || m.includes('completed')) return 'completed';
-	if (m.includes('status')) return 'status';
-	return 'added';
-}
-
-function inferSource(entry: HistoryEntry): HistorySource {
-	if (entry.source) return entry.source;
-	return 'Watchlist';
-}
-
 function actionLabel(entry: HistoryEntry): string {
-	const action = inferAction(entry);
+	const action = inferHistoryAction(entry);
 	const m = entry.message;
 	switch (action) {
 		case 'added': return 'Added';
@@ -89,6 +77,13 @@ function titleFromEntry(entry: HistoryEntry): string {
 
 function formatDayHeader(dateStr: string): string {
 	const d = new Date(dateStr + 'T12:00:00');
+	// month name, ordered by the user's date-format setting
+	if (getActiveDateFormat() === 'american') {
+		return `${DAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+	}
+	if (getActiveDateFormat() === 'iso') {
+		return `${DAYS[d.getDay()]}, ${dateStr}`;
+	}
 	return `${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
@@ -129,6 +124,8 @@ export class LogTab {
 	private lastFirst = -1;
 	private lastLast = -1;
 	private renderedNodes: Map<number, HTMLElement> = new Map();
+	// scroll offset to restore after a delete re-render
+	private pendingScroll: number | null = null;
 
 	constructor(container: HTMLElement, plugin: WatchLogPlugin) {
 		this.container = container;
@@ -149,13 +146,14 @@ export class LogTab {
 		const allEntries = this.plugin.historyManager?.getEntries() ?? [];
 		const filtered = this.sourceFilter === 'all'
 			? allEntries
-			: allEntries.filter((e) => inferSource(e) === this.sourceFilter);
+			: allEntries.filter((e) => inferHistorySource(e) === this.sourceFilter);
 
 		if (filtered.length === 0) {
+			this.pendingScroll = null;
 			this.container.createDiv({
 				cls: 'wl-log-empty',
 				text: this.sourceFilter === 'all'
-					? 'No events yet. Actions from Watchlist and Reading will appear here.'
+					? 'No events yet. Actions from Watchlist, Reading and Games will appear here.'
 					: `No ${this.sourceFilter} events yet.`,
 			});
 			return;
@@ -172,6 +170,7 @@ export class LogTab {
 			{ label: 'All', value: 'all' },
 			{ label: 'Watchlist', value: 'Watchlist' },
 			{ label: 'Reading', value: 'Reading' },
+			{ label: 'Games', value: 'Games' },
 		];
 
 		for (const f of filters) {
@@ -259,6 +258,12 @@ export class LogTab {
 		});
 		this.resizeObserver.observe(scroll);
 
+		// restore the offset a delete re-render came from (browser clamps to the new height)
+		if (this.pendingScroll !== null) {
+			scroll.scrollTop = this.pendingScroll;
+			this.pendingScroll = null;
+		}
+
 		this.renderVisibleRows();
 	}
 
@@ -279,7 +284,7 @@ export class LogTab {
 		this.lastFirst = first;
 		this.lastLast = last;
 
-		// Remove rows that left the visible window
+		// remove rows that left the visible window
 		for (const [idx, el] of this.renderedNodes) {
 			if (idx < first || idx > last) {
 				el.remove();
@@ -287,7 +292,7 @@ export class LogTab {
 			}
 		}
 
-		// Add rows that newly entered the visible window
+		// add rows that newly entered the visible window
 		for (let i = first; i <= last; i++) {
 			if (this.renderedNodes.has(i)) continue;
 			const row = this.rows[i];
@@ -313,9 +318,9 @@ export class LogTab {
 
 	private buildEntryRow(row: VirtualRow): HTMLElement {
 		const entry = row.entry!;
-		const action = inferAction(entry);
+		const action = inferHistoryAction(entry);
 		const color = ACTION_COLORS[action] ?? '#888780';
-		const source = inferSource(entry);
+		const source = inferHistorySource(entry);
 		const dotColor = SOURCE_COLORS[source] ?? '#888780';
 
 		const el = activeDocument.createElement('div');
@@ -365,7 +370,30 @@ export class LogTab {
 		timeEl.textContent = formatTime(entry.timestamp);
 		el.appendChild(timeEl);
 
+		const delBtn = activeDocument.createElement('button');
+		delBtn.className = 'wl-log-del';
+		delBtn.setAttribute('aria-label', 'Delete event');
+		setIcon(delBtn, 'x');
+		delBtn.addEventListener('click', (ev) => {
+			ev.stopPropagation();
+			this.confirmDelete(entry);
+		});
+		el.appendChild(delBtn);
+
 		return el;
+	}
+
+	private confirmDelete(entry: HistoryEntry): void {
+		new ConfirmModal(
+			this.plugin.app,
+			`Delete this log event? (${titleFromEntry(entry)} — ${actionLabel(entry)})`,
+			() => {
+				const hm = this.plugin.historyManager;
+				if (!hm) return;
+				this.pendingScroll = this.scrollContainer?.scrollTop ?? null;
+				void hm.deleteEntry(entry.id).then(() => this.render());
+			},
+		).open();
 	}
 
 	private findFirstVisible(scrollTop: number): number {

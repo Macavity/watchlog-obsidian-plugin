@@ -1,23 +1,30 @@
-import { Notice } from 'obsidian';
+import { Notice, setIcon } from 'obsidian';
 import { googleBooksErrorMessage } from './ApiService';
-import Fuse from 'fuse.js';
 import type WatchLogPlugin from './main';
 import type { ReadingDataManager, ReadingKind } from './ReadingDataManager';
-import { Book, Manga, ReadingStatus, ReadingCustomColumn, ReadingSavedFilterPreset, READING_STATUSES, SELECTABLE_READING_STATUSES } from './types';
+import { Book, Manga, ReadingStatus, ReadingCustomColumn, ReadingSavedFilterPreset, READING_STATUSES, SELECTABLE_READING_STATUSES, DEFAULT_READING_STATUS_COLORS, normalizeRowsLayout, READING_ROWS_SHELVES, bookUnitProgress, formatCount, sortByFavorited } from './types';
+import { searchItems, yearOf, type SearchFieldSpec } from './SearchQuery';
+import { renderSearchHelpButton } from './SearchHelpModal';
+import { renderShelf, renderShelfTitle } from './RowsView';
+import { RowsCustomizeModal } from './RowsCustomizeModal';
 import { AddReadingModal } from './AddReadingModal';
 import { ReadingDetailModal } from './ReadingDetailModal';
 import { ReadingManageColumnsModal } from './ReadingManageColumnsModal';
 import { ConfirmModal } from './ConfirmModal';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
+import { VirtualGrid, computeGridMetrics, setRowsCardWidth, type GridMetrics } from './VirtualGrid';
+import { VirtualScroller } from './VirtualScroller';
+import { LazyCardObserver } from './LazyCardObserver';
+import { openCardMenu } from './PosterCard';
 
 type SubTab = 'books' | 'manga';
 
-// Built-in sort keys, plus dynamic `custom:<columnId>` keys for custom fields.
+// built-in sort keys, plus dynamic `custom:<columnId>` keys for custom fields
 type SortKey = string;
 type SortDir = 'asc' | 'desc';
 
-// Synthetic option keys for the "Has value" / "No value" choices on text/number
-// custom-field filter sections.
+// synthetic option keys for the "Has value" / "No value" choices on text/number custom-field
+// filter sections
 const HAS_VALUE = '__has__';
 const NO_VALUE = '__none__';
 
@@ -27,14 +34,12 @@ function customFieldHasValue(item: Book | Manga, columnId: string): boolean {
 }
 
 interface ReadingFilters {
-	// Excluded statuses (mirrors the Watchlist popover, where a ticked checkbox =
-	// included). Empty = every status shown. Converted to the preset's
-	// `statusInclude` shape only when a preset is saved/loaded.
+	// excluded statuses (a ticked checkbox = included, like the Watchlist popover). Empty = every
+	// status shown. Converted to the preset's `statusInclude` shape only on save/load.
 	statusExclude: ReadingStatus[];
 	ratingMode: 'all' | 'has' | 'none';
-	// Per custom-field exclusions keyed by column id. For 'select' columns the
-	// excluded values are option strings; for 'text'/'number' columns they are the
-	// synthetic HAS_VALUE / NO_VALUE predicate keys.
+	// per custom-field exclusions keyed by column id: option strings for 'select' columns, the
+	// synthetic HAS_VALUE / NO_VALUE keys for 'text'/'number'
 	customExclude: Record<string, string[]>;
 }
 
@@ -45,15 +50,14 @@ interface ReadingSort {
 	secondDir: SortDir;
 }
 
-// Staged filter edits (mirror of ReadingFilters but with Sets for in-place
-// mutation while the popover is open).
+// staged filter edits — ReadingFilters with Sets, for in-place mutation while the popover is open
 interface FilterDraft {
 	statusExclude: Set<ReadingStatus>;
 	ratingMode: 'all' | 'has' | 'none';
 	customExclude: Map<string, Set<string>>;
 }
 
-// Lets the global Select all / Deselect all buttons drive a section's checkboxes.
+// lets the global Select all / Deselect all buttons drive a section's checkboxes
 interface SectionController {
 	selectAll: () => void;
 	deselectAll: () => void;
@@ -77,15 +81,16 @@ function filtersActive(f: ReadingFilters): number {
 	return n;
 }
 
-export function readingStatusColor(status: ReadingStatus): string {
-	switch (status) {
-		case 'Reading':       return '#1D9E75';
-		case 'Completed':     return '#7F77DD';
-		case 'Plan to Read':  return '#E8873A';
-		case 'To be released': return '#3A86C8';
-		case 'Dropped':       return '#E24B4A';
-		default:              return '#888780';
-	}
+/**
+ * Badge colour for a reading status. The names are fixed, but the colours are user-editable
+ * (Settings → Customize → Reading) and stored per name in `ReadingSettings.statusColors`; pass
+ * that record in to honour the choice. Omitting it, or a missing key, falls back to the default.
+ */
+export function readingStatusColor(
+	status: ReadingStatus,
+	colors?: Record<string, string>,
+): string {
+	return colors?.[status] ?? DEFAULT_READING_STATUS_COLORS[status] ?? '#888780';
 }
 
 const COVER_PALETTE = [
@@ -102,7 +107,8 @@ export function coverFallbackColor(id: string): string {
 }
 
 function bookProgress(b: Book): number {
-	if (b.totalPages > 0) return Math.min(100, (b.pagesRead / b.totalPages) * 100);
+	const { read, total } = bookUnitProgress(b);
+	if (total > 0) return Math.min(100, (read / total) * 100);
 	return 0;
 }
 
@@ -112,8 +118,8 @@ function mangaProgress(m: Manga): number {
 }
 
 export class ReadingTab {
-	// Session-persistent state. Survives tab switches and view rebuilds
-	// within the same plugin load — resets only when the plugin unloads.
+	// session-persistent state: survives tab switches and view rebuilds within the same plugin load,
+	// resets only on unload
 	private static sessionSubTab: SubTab | null = null;
 	private static sessionFilters: Record<SubTab, ReadingFilters> = {
 		books: defaultFilters(),
@@ -133,40 +139,28 @@ export class ReadingTab {
 	private filterBtn: HTMLButtonElement | null = null;
 	private sortBtn: HTMLButtonElement | null = null;
 	private resetBtn: HTMLButtonElement | null = null;
-	// Single saved filter (mirrors the Watchlist saved-filter flow). The external
-	// "Saved filter" button applies it; the in-popover button toggles Save/Delete.
+	// single saved filter (the Watchlist flow). The external "Saved filter" button applies it; the
+	// in-popover button toggles Save/Delete.
 	private savedFilterActive = false;
 	private savedFilterBtnEl: HTMLButtonElement | null = null;
 	private openPopover: HTMLElement | null = null;
 	private popoverCleanup: (() => void) | null = null;
 	private activeCleanups: (() => void)[] = [];
 
-	// Selection mode
 	private selectionMode = false;
 	private selectedIds: Set<string> = new Set();
 
-	// Mobile toolbar toggle — retracted (false) shows search, expanded (true)
-	// shows the action buttons. Desktop ignores this (both are always visible).
+	// false = search shown, true = action buttons; desktop shows both
 	private toolbarExpanded = false;
 
-	// Virtual scroll state
-	private vsScrollContainer: HTMLElement | null = null;
-	private vsScrollSpacer: HTMLElement | null = null;
-	private vsGridEl: HTMLElement | null = null;
-	private vsDisplayItems: Array<Book | Manga> = [];
-	private vsScrollHandler: (() => void) | null = null;
-	private vsScrollRAF: number | null = null;
-	private vsResizeObserver: ResizeObserver | null = null;
-	private vsLastFirst = -1;
-	private vsLastLast = -1;
-	private vsLastScrollTop = 0;
+	// virtual scroll — VirtualGrid windows the grid, VirtualScroller drives it (the shared machinery
+	// the Watchlist Cards view uses)
+	private vsScroller: VirtualScroller | null = null;
 	private vsPersistentScrollTop = 0;
-	private vsRowHeight = 0;
 
-	// Lazy cover re-fetch (mirrors the watch Cards IntersectionObserver pattern).
-	private coverObserver: IntersectionObserver | null = null;
-	private observedCovers: Set<HTMLElement> = new Set();
-	// Items whose cover fetch already failed this session — don't retry on every scroll.
+	// lazy cover re-fetch (the shared Cards lazy-observer pattern)
+	private coverObserver: LazyCardObserver | null = null;
+	// covers that already failed this session — don't retry on every scroll
 	private coverFetchFailed: Set<string> = new Set();
 
 	private get activeSubTab(): SubTab {
@@ -184,7 +178,7 @@ export class ReadingTab {
 		return ReadingTab.sessionSort[this.activeSubTab];
 	}
 
-	// Custom columns for the active sub-tab (Books → bookColumns, Manga → mangaColumns).
+	// custom columns for the active sub-tab (Books → bookColumns, Manga → mangaColumns)
 	private activeColumns(): ReadingCustomColumn[] {
 		return this.activeSubTab === 'books'
 			? this.readingData.getBookColumns()
@@ -247,9 +241,8 @@ export class ReadingTab {
 	private renderToolbar(): void {
 		const toolbar = this.container.createDiv({ cls: 'wl-reading-toolbar' });
 
-		// On mobile the search input and the action buttons crossfade inside a
-		// single slot via a chevron toggle (shared with the Watchlist toolbar);
-		// on desktop they render inline together, unchanged.
+		// on mobile the search input and the action buttons crossfade inside one slot behind a chevron
+		// (shared with the Watchlist toolbar); desktop renders both inline
 		renderToolbarWithMobileToggle({
 			controls: toolbar,
 			renderSearch: (parent) => this.renderReadingSearch(parent),
@@ -267,17 +260,34 @@ export class ReadingTab {
 			attr: { type: 'text', placeholder },
 		});
 		searchInput.value = this.searchQuery;
+		renderSearchHelpButton(searchWrap, this.plugin.app, this.activeSubTab === 'books' ? 'Books' : 'Manga', () => this.searchFields());
+		// clear button — only while there is text
+		const clearBtn = searchWrap.createEl('button', {
+			cls: 'wl-search-clear',
+			attr: { type: 'button', 'aria-label': 'Clear search' },
+		});
+		setIcon(clearBtn, 'x');
+		const syncClear = () => clearBtn.toggleClass('is-visible', searchInput.value.length > 0);
+		syncClear();
 		let debounce = 0;
 		searchInput.addEventListener('input', () => {
 			this.searchQuery = searchInput.value;
+			syncClear();
 			window.clearTimeout(debounce);
 			debounce = window.setTimeout(() => this.renderContent(), 200);
+		});
+		clearBtn.addEventListener('click', () => {
+			window.clearTimeout(debounce);
+			searchInput.value = '';
+			this.searchQuery = '';
+			syncClear();
+			searchInput.focus();
+			this.renderContent();
 		});
 	}
 
 	private renderReadingActions(parent: HTMLElement): void {
-		// Saved filter button — shown only when a filter has been saved. Pressing
-		// it applies the saved filter to the active sub-tab (mirrors Watchlist).
+		// saved filter button — shown only when one exists; applies it to the active sub-tab
 		const savedFilter = this.getSavedFilter();
 		if (savedFilter) {
 			this.savedFilterActive = this.filtersMatchSaved(savedFilter);
@@ -334,12 +344,10 @@ export class ReadingTab {
 			this.toggleSortPopover();
 		});
 
-		// Selection mode action bar
 		if (this.selectionMode && this.selectedIds.size > 0) {
 			this.renderSelectionActionBar(parent);
 		}
 
-		// Select All / Deselect All
 		if (this.selectionMode) {
 			const hasAny = this.selectedIds.size > 0;
 			const selAllBtn = parent.createEl('button', {
@@ -351,7 +359,10 @@ export class ReadingTab {
 				if (this.selectedIds.size > 0) {
 					this.selectedIds.clear();
 				} else {
-					for (const item of this.vsDisplayItems) {
+					const items: Array<Book | Manga> = this.activeSubTab === 'books'
+						? this.readingData.getBooks()
+						: this.readingData.getMangaList();
+					for (const item of this.applySearch(this.applyFilters(items))) {
 						this.selectedIds.add(item.id);
 					}
 				}
@@ -359,10 +370,10 @@ export class ReadingTab {
 			});
 		}
 
-		// Selection mode toggle
+		// in selection mode the button is the way out — red Cancel
 		const selBtn = parent.createEl('button', {
-			cls: `wl-btn wl-btn-sm${this.selectionMode ? ' is-active' : ''}`,
-			text: 'Select',
+			cls: `wl-btn wl-btn-sm${this.selectionMode ? ' wl-btn-cancel' : ''}`,
+			text: this.selectionMode ? 'Cancel' : 'Select',
 		});
 		selBtn.addEventListener('click', () => {
 			this.selectionMode = !this.selectionMode;
@@ -370,7 +381,6 @@ export class ReadingTab {
 			this.render();
 		});
 
-		// Gear + Add pinned to the far right of the toolbar row.
 		const right = parent.createDiv({ cls: 'wl-reading-toolbar-right' });
 		const manageBtn = right.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-reading-manage-btn',
@@ -379,7 +389,6 @@ export class ReadingTab {
 		});
 		manageBtn.addEventListener('click', () => this.openManageColumns());
 
-		// Add button sits at the far right, after the gear
 		const addBtn = right.createEl('button', {
 			cls: 'wl-reading-add-btn wl-btn-success',
 			text: this.activeSubTab === 'books' ? '+ Add book' : '+ Add manga',
@@ -390,7 +399,6 @@ export class ReadingTab {
 	private renderSelectionActionBar(parent: HTMLElement): void {
 		const bar = parent.createDiv({ cls: 'wl-reading-action-bar' });
 
-		// Batch delete
 		const deleteBtn = bar.createEl('button', {
 			cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
 			text: '✕',
@@ -418,7 +426,6 @@ export class ReadingTab {
 			).open();
 		});
 
-		// Batch status change
 		const statusSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
 		statusSelect.createEl('option', { text: 'Status…', value: '' });
 		for (const s of SELECTABLE_READING_STATUSES) {
@@ -477,8 +484,7 @@ export class ReadingTab {
 
 	private openPopoverAt(anchor: HTMLElement, cls: string, build: (el: HTMLElement) => void): void {
 		this.closePopover();
-		// wl-popover-anchored pins via top/left (right: auto) instead of the
-		// default right-anchored .wl-dropdown placement.
+		// wl-popover-anchored pins via top/left (right: auto) instead of the right-anchored default
 		const pop = this.container.createDiv({ cls: `${cls} wl-popover-anchored` });
 		const rect = anchor.getBoundingClientRect();
 		const parentRect = this.container.getBoundingClientRect();
@@ -526,15 +532,15 @@ export class ReadingTab {
 		this.openPopoverAt(this.sortBtn!, 'wl-dropdown wl-sorting-panel', (el) => this.buildSortPopover(el));
 	}
 
-	// ── Saved filter (single, Watchlist-style) ─────────────────────────────────
+	// Saved filter (single, Watchlist-style)
 	private getSavedFilter(): ReadingSavedFilterPreset | null {
 		return this.readingData.getSettings().savedFilters?.[this.activeSubTab] ?? null;
 	}
 
 	private filtersMatchSaved(saved: ReadingSavedFilterPreset): boolean {
 		const f = this.filters;
-		// A saved filter only captures status + rating, so any active custom-field
-		// filter means the live state no longer matches it.
+		// a saved filter only captures status + rating, so any active custom-field filter means the live
+		// state no longer matches it
 		if (Object.values(f.customExclude).some((arr) => arr.length > 0)) return false;
 		const savedExclude = new Set(READING_STATUSES.filter((s) => !saved.statusInclude.includes(s)));
 		const cur = new Set(f.statusExclude);
@@ -551,10 +557,9 @@ export class ReadingTab {
 	}
 
 	private buildFilterPopover(el: HTMLElement): void {
-		// Draft state — Reading's live filters are NOT mutated until Apply is
-		// clicked (the key behavioral parity with the Watchlist popover). Status
-		// and custom fields use exclude semantics for the UI; Status is converted
-		// to the preset's `statusInclude` shape only on save.
+		// draft — Reading's live filters only change on Apply (the parity with the Watchlist popover).
+		// Status and custom fields use exclude semantics for the UI; Status converts to the preset's
+		// `statusInclude` shape on save.
 		const draft: FilterDraft = {
 			statusExclude: new Set<ReadingStatus>(this.filters.statusExclude),
 			ratingMode: this.filters.ratingMode,
@@ -888,15 +893,48 @@ export class ReadingTab {
 		});
 	}
 
+	/**
+	 * Fields the Reading search covers — also drives the "?" help panel. Book/Manga carry no series
+	 * or publisher of their own, so every custom column becomes a searchable field under its own
+	 * name: a "Series" column gives you `series:dune`.
+	 */
+	searchFields(): SearchFieldSpec<Book | Manga>[] {
+		const isBooks = this.activeSubTab === 'books';
+		const fields: SearchFieldSpec<Book | Manga>[] = [
+			{ name: 'title', label: 'Title', weight: 0.6, text: (i) => [i.title] },
+			{ name: 'author', label: 'Author', weight: 0.25, text: (i) => [i.author] },
+			{ name: 'year', label: 'Year', weight: 0.05, text: (i) => { const y = yearOf(i.releaseDate); return y ? [String(y)] : []; }, number: (i) => yearOf(i.releaseDate) },
+			{ name: 'rating', label: 'Rating', number: (i) => i.rating },
+			{
+				name: isBooks ? 'pages' : 'chapters',
+				label: isBooks ? 'Pages' : 'Chapters',
+				number: (i) => (isBooks ? (i as Book).totalPages : (i as Manga).totalChapters) || null,
+			},
+		];
+		// custom columns, keyed by a search-safe form of the column name
+		for (const col of this.activeColumns()) {
+			const key = col.name.trim().toLowerCase().replace(/\s+/g, '-');
+			if (!key || fields.some((f) => f.name === key)) continue;
+			fields.push({
+				name: key,
+				label: col.name,
+				weight: 0.1,
+				text: (i) => {
+					const v = i.customFields?.[col.id];
+					return v === undefined || v === null || v === '' ? [] : [String(v)];
+				},
+				...(col.type === 'number'
+					? { number: (i: Book | Manga) => { const v = Number(i.customFields?.[col.id]); return Number.isFinite(v) ? v : null; } }
+					: {}),
+			});
+		}
+		return fields;
+	}
+
 	private applySearch(items: Array<Book | Manga>): Array<Book | Manga> {
-		const q = this.searchQuery.trim();
-		if (!q) return items;
-		const fuse = new Fuse(items, {
-			keys: ['title', 'author'],
-			threshold: 0.4,
-			ignoreLocation: true,
-		});
-		return fuse.search(q).map((r) => r.item);
+		const matched = searchItems(items, { id: (i) => i.id, fields: this.searchFields() }, this.searchQuery);
+		if (matched === null) return items;
+		return items.filter((i) => matched.has(i.id));
 	}
 
 	private compareBySortKey(
@@ -964,6 +1002,9 @@ export class ReadingTab {
 		});
 	}
 
+	// Shelf cards mirror the grids' *computed* card width — the stretched
+	// 1fr-track width, not just the setting's minimum (see setRowsCardWidth).
+
 	private renderContent(): void {
 		if (!this.contentEl) return;
 		this.destroyVirtualScroll();
@@ -981,11 +1022,15 @@ export class ReadingTab {
 			return;
 		}
 
-		const filtered = this.applyFilters(items);
-		const searched = this.applySearch(filtered);
-		const sorted = this.applySort(searched);
+		// An active search or filter keeps the sections layout (the Watchlist
+		// Rows rule): every section keeps its own logic and shows only the
+		// matching items; a section with no matches disappears entirely.
+		const visible = this.applySearch(this.applyFilters(items));
+		const filtering = this.searchQuery.trim() !== '' || filtersActive(this.filters) > 0;
 
-		if (sorted.length === 0) {
+		this.renderResultsCount(visible.length);
+
+		if (filtering && visible.length === 0) {
 			const q = this.searchQuery.trim();
 			this.contentEl.createDiv({
 				cls: 'wl-reading-empty-search',
@@ -994,191 +1039,274 @@ export class ReadingTab {
 			return;
 		}
 
-		this.renderResultsCount(sorted.length);
+		const visibleIds = new Set(visible.map((i) => i.id));
+		const itemVisible = (it: Book | Manga): boolean => !filtering || visibleIds.has(it.id);
 
-		this.vsDisplayItems = sorted;
-		this.renderVirtualGrid();
+		const scroll = this.contentEl.createDiv({ cls: 'wl-reading-scroll-container' });
+		// One metrics source for the grids AND the shelf card width; the eager
+		// call publishes it before the shelf cards render (a late scrollbar is
+		// caught by the scroller's ResizeObserver re-running metrics).
+		const metrics = (w: number): GridMetrics => {
+			const m = this.readingMetrics(w);
+			setRowsCardWidth(scroll, m.cardWidth);
+			return m;
+		};
+		metrics(scroll.clientWidth);
+
+		const observer = new LazyCardObserver(
+			'.wl-reading-card[data-needs-cover="true"]',
+			(cards) => this.handleCoversVisible(cards),
+		);
+		this.coverObserver = observer;
+		const scroller = new VirtualScroller({
+			scroll,
+			metrics,
+			onWindowChanged: () => observer.observeNew(scroll),
+			onScrollPos: (top) => { this.vsPersistentScrollTop = top; },
+		});
+		this.vsScroller = scroller;
+
+		const renderCard = (parent: HTMLElement, it: Book | Manga): void => {
+			if (isBooks) this.renderBookCard(parent, it as Book);
+			else this.renderMangaCard(parent, it as Manga);
+		};
+
+		// Section builders keyed by rowsLayout id — each computes its own list
+		// with its own logic first, THEN hides non-matching items (e.g.
+		// Recently Added stays the 10 newest overall with non-matches removed).
+		const shelfRenderers: Record<string, () => void> = {
+			favorites: () => {
+				// newest favorite first — this shelf ignores the tab sort
+				renderShelf(
+					scroll, 'Favorites',
+					sortByFavorited(items.filter((i) => i.favorite === true && itemVisible(i))),
+					`No favorites yet — open a ${isBooks ? 'book' : 'manga'} and tap the heart.`,
+					filtering, renderCard,
+				);
+			},
+			recentlyAdded: () => {
+				const recentlyAdded = [...items]
+					.sort((a, b) => (b.dateAdded ?? '').localeCompare(a.dateAdded ?? ''))
+					.slice(0, 10)
+					.filter(itemVisible);
+				renderShelf(
+					scroll, 'Recently Added', recentlyAdded,
+					'Nothing here yet — added items will show up in this row.',
+					filtering, renderCard,
+				);
+			},
+			recentlyRead: () => {
+				renderShelf(
+					scroll, 'Recently Read', this.getRecentlyReadItems(items).filter(itemVisible),
+					'Nothing read yet — items you progress or finish show up here.',
+					filtering, renderCard,
+				);
+			},
+			recentlyReleased: () => {
+				// Past releases only (today counts as released; the auto
+				// "To be released" status only applies to strictly future dates).
+				const today = ReadingTab.todayStamp();
+				const recentlyReleased = items
+					.filter(
+						(i) =>
+							i.status !== 'To be released' &&
+							!!i.releaseDate &&
+							/^\d{4}-\d{2}-\d{2}$/.test(i.releaseDate) &&
+							i.releaseDate <= today,
+					)
+					.sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''))
+					.slice(0, 10)
+					.filter(itemVisible);
+				renderShelf(
+					scroll, 'Recently Released', recentlyReleased,
+					'No released items yet — items with a past release date show up here.',
+					filtering, renderCard,
+				);
+			},
+			byStatus: () => {
+				this.renderByStatusSection(scroll, items, itemVisible, filtering, isBooks);
+			},
+		};
+
+		// User-customizable section order + visibility (the Watchlist Rows
+		// pattern). "By status" is Reading's only grouped-grid section — with
+		// it off, the flat grid (the old Reading grid) renders at its layout
+		// position; with every section off, the flat grid is all there is.
+		const layout = normalizeRowsLayout(this.readingData.getSettings().rowsLayout, READING_ROWS_SHELVES, []);
+		const byStatusEnabled = layout.some((e) => e.id === 'byStatus' && e.enabled);
+		const anyShelfEnabled = layout.some((e) => e.id !== 'byStatus' && e.enabled);
+		for (const entry of layout) {
+			if (entry.id === 'byStatus' && !byStatusEnabled) {
+				this.renderAllItemsSection(scroll, anyShelfEnabled, this.applySort(visible), isBooks);
+				continue;
+			}
+			if (!entry.enabled) continue;
+			shelfRenderers[entry.id]?.();
+		}
+
+		// Observe the eagerly built shelf cards now; the grids register theirs
+		// incrementally as the scroller materialises windows.
+		observer.observeNew(scroll);
+		scroller.attach(this.vsPersistentScrollTop);
 	}
 
 	/**
-	 * Renders the "N titles" count line above the grid, mirroring the Watchlist
-	 * Cards count. Reading has no groups, so only the title count is shown. The
-	 * count reflects the post-filter/search result set.
+	 * Renders the "N titles" count line above the sections, mirroring the
+	 * Watchlist count. Reading has no groups, so only the title count is
+	 * shown; the count reflects the post-filter/search result set. Carries the
+	 * customize-rows gear at the far right (the Watchlist spot).
 	 */
 	private renderResultsCount(titleCount: number): void {
 		if (!this.contentEl) return;
-		const countEl = this.contentEl.createDiv({ cls: 'wl-results-count' });
+		const countEl = this.contentEl.createDiv({ cls: 'wl-results-count wl-results-count-rows' });
 		countEl.textContent = `${titleCount} title${titleCount !== 1 ? 's' : ''}`;
+		const gearBtn = countEl.createEl('button', { cls: 'wl-rows-customize-btn' });
+		gearBtn.setAttr('aria-label', 'Customize rows');
+		setIcon(gearBtn, 'settings');
+		gearBtn.addEventListener('click', () => {
+			new RowsCustomizeModal(this.plugin.app, this.plugin, {
+				shelves: READING_ROWS_SHELVES,
+				getLayout: () => this.readingData.getSettings().rowsLayout,
+				setLayout: (layout) => { this.readingData.getSettings().rowsLayout = layout; },
+				// The layout lives inside data.json's reading key, not
+				// plugin.settings — persist through the reading data manager
+				// (quiet: onChanged re-renders this tab itself).
+				persist: () => this.readingData.persistQuiet(),
+				onChanged: () => this.renderContent(),
+				hint: 'Reorder the sections or switch them off. "By status" is the grouped grid section — with it off the items show as one flat grid.',
+				// Reading has a single grouped-grid section — nothing to be
+				// mutually exclusive with.
+				exclusiveGroups: [],
+			}).open();
+		});
 	}
 
 	// ── Virtual scroll ────────────────────────────────────────────────────────
 
 	private destroyVirtualScroll(): void {
-		this.destroyCoverObserver();
-		if (this.vsScrollRAF !== null) {
-			window.cancelAnimationFrame(this.vsScrollRAF);
-			this.vsScrollRAF = null;
-		}
-		if (this.vsResizeObserver) {
-			this.vsResizeObserver.disconnect();
-			this.vsResizeObserver = null;
-		}
-		if (this.vsScrollContainer && this.vsScrollHandler) {
-			this.vsScrollContainer.removeEventListener('scroll', this.vsScrollHandler);
-		}
-		this.vsScrollHandler = null;
-		this.vsScrollContainer = null;
-		this.vsScrollSpacer = null;
-		this.vsGridEl = null;
-		this.vsDisplayItems = [];
-		this.vsLastFirst = -1;
-		this.vsLastLast = -1;
-		this.vsLastScrollTop = 0;
-		this.vsRowHeight = 0;
+		this.coverObserver?.destroy();
+		this.coverObserver = null;
+		this.vsScroller?.destroy();
+		this.vsScroller = null;
 	}
 
-	private renderVirtualGrid(): void {
-		if (!this.contentEl) return;
+	/** The Cards-view poster geometry, plus the fixed text block below each
+	 *  cover (title + author + progress line) when the card text style is
+	 *  'under'; in 'inside' mode the text overlays the cover, so the cell is
+	 *  the bare 2:3 card. */
+	private readingMetrics(containerWidth: number): GridMetrics {
+		const base = computeGridMetrics(containerWidth, this.plugin.getCardMinWidth());
+		if (!this.plugin.isCardTextUnder('reading')) return base;
+		const cardHeight = base.cardHeight + 72;
+		return { cols: base.cols, cardWidth: base.cardWidth, cardHeight, rowHeight: cardHeight + 12 };
+	}
 
-		const scroll = this.contentEl.createDiv({ cls: 'wl-reading-scroll-container' });
-		const spacer = scroll.createDiv({ cls: 'wl-reading-scroll-spacer' });
+	/** Local calendar day as YYYY-MM-DD. */
+	private static todayStamp(): string {
+		const now = new Date();
+		return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+	}
+
+	/**
+	 * Items with any reading signal (progress, a start date, or a finish
+	 * date), most recently touched first (capped at 10). Reading logs no
+	 * per-session history events for page/chapter ticks outside the detail
+	 * modal flow, so dateModified is the best available recency signal — it
+	 * can also surface a merely-edited item, an accepted tradeoff.
+	 */
+	private getRecentlyReadItems(items: Array<Book | Manga>): Array<Book | Manga> {
+		return items
+			.filter((i) => {
+				const pages = (i as Book).pagesRead ?? 0;
+				const words = (i as Book).wordsRead ?? 0;
+				const volumes = (i as Manga).volumesRead ?? 0;
+				return pages > 0 || words > 0 || i.chaptersRead > 0 || volumes > 0
+					|| !!i.dateStarted || !!i.dateFinished;
+			})
+			.sort((a, b) => (b.dateModified ?? '').localeCompare(a.dateModified ?? ''))
+			.slice(0, 10);
+	}
+
+	/** One virtualised Reading grid over `bucket`, registered as a section on
+	 *  the shared scroller (the grouped grids and the flat grid both use it). */
+	private addReadingGridSection(parent: HTMLElement, bucket: Array<Book | Manga>, isBooks: boolean): void {
+		const spacer = parent.createDiv({ cls: 'wl-rows-bytype-spacer' });
 		const grid = spacer.createDiv({ cls: 'wl-reading-grid wl-reading-grid-virtual' });
-		this.vsScrollContainer = scroll;
-		this.vsScrollSpacer = spacer;
-		this.vsGridEl = grid;
-		this.vsLastFirst = -1;
-		this.vsLastLast = -1;
-
-		this.vsScrollHandler = () => {
-			const scrollTop = scroll.scrollTop;
-			this.vsPersistentScrollTop = scrollTop;
-			const threshold = this.vsRowHeight > 0 ? this.vsRowHeight / 2 : 50;
-			if (Math.abs(scrollTop - this.vsLastScrollTop) < threshold) return;
-			this.vsLastScrollTop = scrollTop;
-			if (this.vsScrollRAF !== null) return;
-			this.vsScrollRAF = window.requestAnimationFrame(() => {
-				this.vsScrollRAF = null;
-				this.renderVisibleCards();
-			});
-		};
-		scroll.addEventListener('scroll', this.vsScrollHandler, { passive: true });
-
-		this.vsResizeObserver = new ResizeObserver(() => {
-			this.renderVisibleCards();
-		});
-		this.vsResizeObserver.observe(scroll);
-
-		if (this.vsPersistentScrollTop > 0) {
-			this.renderVisibleCards();
-			scroll.scrollTop = this.vsPersistentScrollTop;
-			this.vsLastScrollTop = this.vsPersistentScrollTop;
-			this.renderVisibleCards();
-		}
-	}
-
-	private getGridMetrics(containerWidth: number): {
-		cols: number;
-		cardWidth: number;
-		cardHeight: number;
-		rowHeight: number;
-	} {
-		const gap = 12;
-		const minCardWidth = 140;
-		const cols = Math.max(1, Math.floor((containerWidth + gap) / (minCardWidth + gap)));
-		const cardWidth = (containerWidth - gap * (cols - 1)) / cols;
-		const coverHeight = cardWidth * 1.5;
-		const cardHeight = coverHeight + 72;
-		const rowHeight = cardHeight + gap;
-		return { cols, cardWidth, cardHeight, rowHeight };
-	}
-
-	private renderVisibleCards(): void {
-		const scroll = this.vsScrollContainer;
-		const spacer = this.vsScrollSpacer;
-		const grid = this.vsGridEl;
-		if (!scroll || !spacer || !grid) return;
-
-		const scrollTop = scroll.scrollTop;
-		const viewportHeight = scroll.clientHeight;
-		const width = scroll.clientWidth;
-		if (width <= 0 || viewportHeight <= 0) return;
-
-		const { cols, cardHeight, rowHeight } = this.getGridMetrics(width);
-		this.vsRowHeight = rowHeight;
-		const totalItems = this.vsDisplayItems.length;
-		const totalRows = Math.ceil(totalItems / cols);
-
-		const firstVisibleRow = Math.max(0, Math.floor(scrollTop / rowHeight) - 2);
-		const lastVisibleRow = Math.min(
-			totalRows - 1,
-			Math.ceil((scrollTop + viewportHeight) / rowHeight) + 2,
+		const vgrid = new VirtualGrid(
+			spacer,
+			grid,
+			bucket.length,
+			{
+				buildItem: (i) => {
+					const item = bucket[i];
+					if (!item) return null;
+					const tmp = activeDocument.createElement('div');
+					if (isBooks) this.renderBookCard(tmp, item as Book);
+					else this.renderMangaCard(tmp, item as Manga);
+					return tmp.firstElementChild as HTMLElement | null;
+				},
+				removeItem: (el) => this.coverObserver?.unobserveAndRemove(el),
+			},
+			// The Reading grid's stylesheet reads its own CSS variables.
+			{ colsVar: '--wl-reading-cols', cardHeightVar: '--wl-reading-card-height' },
 		);
-		const firstIndex = firstVisibleRow * cols;
-		const lastIndex = Math.min(totalItems - 1, (lastVisibleRow + 1) * cols - 1);
+		this.vsScroller?.addSection(vgrid, spacer);
+	}
 
-		spacer.style.height = `${totalRows * rowHeight}px`;
-		grid.style.transform = `translateY(${firstVisibleRow * rowHeight}px)`;
-		grid.style.setProperty('--wl-reading-cols', String(cols));
-		grid.style.setProperty('--wl-reading-card-height', `${cardHeight}px`);
+	/** "By status" — one Reading grid per status, in the READING_STATUSES
+	 *  order; empty buckets are skipped, each item appears once. */
+	private renderByStatusSection(
+		parent: HTMLElement,
+		items: Array<Book | Manga>,
+		itemVisible: (it: Book | Manga) => boolean,
+		filtering: boolean,
+		isBooks: boolean,
+	): void {
+		const section = parent.createDiv({ cls: 'wl-rows-bytype' });
+		section.createDiv({ cls: 'wl-rows-bytype-title', text: 'By status' });
 
-		const oldFirst = this.vsLastFirst;
-		const oldLast = this.vsLastLast;
-		if (firstIndex === oldFirst && lastIndex === oldLast) return;
-
-		this.vsLastFirst = firstIndex;
-		this.vsLastLast = lastIndex;
-
-		grid.empty();
-		const isBooks = this.activeSubTab === 'books';
-		const fragment = activeDocument.createDocumentFragment();
-		for (let i = firstIndex; i <= lastIndex; i++) {
-			const item = this.vsDisplayItems[i];
-			if (!item) continue;
-			const tmp = activeDocument.createElement('div');
-			if (isBooks) {
-				this.renderBookCard(tmp, item as Book);
-			} else {
-				this.renderMangaCard(tmp, item as Manga);
-			}
-			const card = tmp.firstElementChild as HTMLElement | null;
-			if (card) fragment.appendChild(card);
+		let rendered = 0;
+		for (const status of READING_STATUSES) {
+			const bucket = this.applySort(items.filter((i) => i.status === status && itemVisible(i)));
+			if (bucket.length === 0) continue;
+			rendered++;
+			renderShelfTitle(section, status, bucket.length);
+			this.addReadingGridSection(section, bucket, isBooks);
 		}
-		grid.appendChild(fragment);
-		this.setupCoverObserver();
+		if (rendered === 0) {
+			if (filtering) {
+				section.remove();
+				return;
+			}
+			section.createDiv({
+				cls: 'wl-rows-shelf-empty',
+				text: 'No items yet — added items are grouped by status here.',
+			});
+		}
+	}
+
+	/** The flat grid — the old Reading grid living inside the Rows layout as
+	 *  its fallback section (rendered only when "By status" is off). `titled`
+	 *  adds the section header when other sections are on. */
+	private renderAllItemsSection(
+		parent: HTMLElement,
+		titled: boolean,
+		sortedItems: Array<Book | Manga>,
+		isBooks: boolean,
+	): void {
+		if (sortedItems.length === 0) return;
+		const section = parent.createDiv({ cls: 'wl-rows-bytype' });
+		if (titled) renderShelfTitle(section, isBooks ? 'All books' : 'All manga', sortedItems.length);
+		this.addReadingGridSection(section, sortedItems, isBooks);
 	}
 
 	// ── Lazy cover re-fetch ─────────────────────────────────────────────────────
 
-	private setupCoverObserver(): void {
-		const scroll = this.vsScrollContainer;
-		const grid = this.vsGridEl;
-		if (!scroll || !grid) return;
-		if (!this.coverObserver) {
-			this.coverObserver = new IntersectionObserver(
-				(entries) => this.handleCoverIntersection(entries),
-				{ root: scroll, rootMargin: '0px', threshold: 0 },
-			);
-		}
-		// The grid was just rebuilt (grid.empty()), so previously observed cards are
-		// detached. Drop their (strong) refs before observing the current card set.
-		this.observedCovers.clear();
-		grid.querySelectorAll('.wl-reading-card[data-needs-cover="true"]').forEach((card) => {
-			const el = card as HTMLElement;
-			if (!this.observedCovers.has(el)) {
-				this.coverObserver!.observe(el);
-				this.observedCovers.add(el);
-			}
-		});
-	}
-
-	private handleCoverIntersection(entries: IntersectionObserverEntry[]): void {
+	/** Lazy cover fetch for cards that scrolled into view (LazyCardObserver
+	 *  hands them over exactly once, already unobserved). */
+	private handleCoversVisible(cards: HTMLElement[]): void {
 		const kind: ReadingKind = this.activeSubTab === 'books' ? 'book' : 'manga';
-		for (const entry of entries) {
-			if (!entry.isIntersecting) continue;
-			const card = entry.target as HTMLElement;
-			this.coverObserver?.unobserve(card);
-			this.observedCovers.delete(card);
-
+		for (const card of cards) {
 			const id = card.dataset.itemId;
 			if (!id) continue;
 			const item = kind === 'book' ? this.readingData.getBook(id) : this.readingData.getManga(id);
@@ -1259,25 +1387,16 @@ export class ReadingTab {
 		delete card.dataset.needsCover;
 	}
 
-	private destroyCoverObserver(): void {
-		if (this.coverObserver) {
-			this.coverObserver.disconnect();
-			this.coverObserver = null;
-		}
-		this.observedCovers.clear();
-	}
-
 	private renderBookCard(grid: HTMLElement, book: Book): void {
-		const card = this.renderCardShell(grid, book, '📖');
-		const progress = book.totalPages > 0
-			? Math.min(100, Math.round((book.pagesRead / book.totalPages) * 100))
-			: 0;
-		this.renderProgressBar(card, progress, book.status);
-		const text = card.createDiv({ cls: 'wl-reading-card-progress-text' });
-		if (book.totalPages > 0) {
-			text.textContent = `${book.pagesRead} / ${book.totalPages} pages`;
-		} else if (book.pagesRead > 0) {
-			text.textContent = `${book.pagesRead} pages`;
+		const { card, textHost } = this.renderCardShell(grid, book, '📖');
+		const { read, total, label } = bookUnitProgress(book);
+		const progress = total > 0 ? Math.min(100, Math.round((read / total) * 100)) : 0;
+		this.renderProgressBar(textHost, progress, book.status);
+		const text = textHost.createDiv({ cls: 'wl-reading-card-progress-text' });
+		if (total > 0) {
+			text.textContent = `${formatCount(read)} / ${formatCount(total)} ${label}`;
+		} else if (read > 0) {
+			text.textContent = `${formatCount(read)} ${label}`;
 		} else {
 			text.textContent = 'No progress';
 		}
@@ -1285,12 +1404,12 @@ export class ReadingTab {
 	}
 
 	private renderMangaCard(grid: HTMLElement, manga: Manga): void {
-		const card = this.renderCardShell(grid, manga, '📓');
+		const { card, textHost } = this.renderCardShell(grid, manga, '📓');
 		const progress = manga.totalChapters > 0
 			? Math.min(100, Math.round((manga.chaptersRead / manga.totalChapters) * 100))
 			: 0;
-		this.renderProgressBar(card, progress, manga.status);
-		const text = card.createDiv({ cls: 'wl-reading-card-progress-text' });
+		this.renderProgressBar(textHost, progress, manga.status);
+		const text = textHost.createDiv({ cls: 'wl-reading-card-progress-text' });
 		const chPart = manga.totalChapters > 0
 			? `Ch. ${manga.chaptersRead}/${manga.totalChapters}`
 			: manga.chaptersRead > 0 ? `Ch. ${manga.chaptersRead}` : '';
@@ -1324,8 +1443,17 @@ export class ReadingTab {
 		}
 	}
 
-	private renderCardShell(grid: HTMLElement, item: Book | Manga, fallbackIcon: string): HTMLElement {
+	/** Builds the shared card DOM. `textHost` is where the caller appends the
+	 *  progress bar/text: the card itself in under mode (the classic Reading
+	 *  layout), or a bottom overlay inside the cover in inside mode (the
+	 *  Watchlist look — the cardTextStyle setting). */
+	private renderCardShell(
+		grid: HTMLElement,
+		item: Book | Manga,
+		fallbackIcon: string,
+	): { card: HTMLElement; textHost: HTMLElement } {
 		const card = grid.createDiv({ cls: 'wl-reading-card' });
+		if (!this.plugin.isCardTextUnder('reading')) card.addClass('is-text-inside');
 
 		const cover = card.createDiv({ cls: 'wl-reading-card-cover' });
 		if (item.coverUrl) {
@@ -1350,7 +1478,7 @@ export class ReadingTab {
 		}
 
 		const statusBadge = cover.createSpan({ cls: 'wl-reading-card-status-badge', text: item.status });
-		statusBadge.style.backgroundColor = readingStatusColor(item.status);
+		statusBadge.style.backgroundColor = readingStatusColor(item.status, this.readingData.getSettings().statusColors);
 
 		const menuBtn = card.createEl('button', {
 			cls: 'wl-reading-card-menu-btn',
@@ -1362,15 +1490,19 @@ export class ReadingTab {
 			this.openCardContextMenu(card, menuBtn, item);
 		});
 
-		const title = card.createDiv({ cls: 'wl-reading-card-title', text: item.title });
+		const textHost = this.plugin.isCardTextUnder('reading')
+			? card
+			: cover.createDiv({ cls: 'wl-reading-card-overlay' });
+
+		const title = textHost.createDiv({ cls: 'wl-reading-card-title', text: item.title });
 		title.title = item.title;
-		const author = card.createDiv({
+		const author = textHost.createDiv({
 			cls: 'wl-reading-card-author',
 			text: item.author || '—',
 		});
 		author.title = item.author || '';
 
-		return card;
+		return { card, textHost };
 	}
 
 	private openCardContextMenu(
@@ -1378,39 +1510,13 @@ export class ReadingTab {
 		anchorBtn: HTMLElement,
 		item: Book | Manga,
 	): void {
-		this.container.querySelectorAll('.wl-reading-card-context-menu').forEach((el) => el.remove());
-
-		const menu = card.createDiv({ cls: 'wl-reading-card-context-menu' });
-		const refreshItem = menu.createDiv({
-			cls: 'wl-reading-card-context-item',
-			text: 'Refresh cover',
-		});
-
-		const cardRect = card.getBoundingClientRect();
-		const containerRect = this.container.getBoundingClientRect();
-		if (cardRect.right > containerRect.right - 180) {
-			menu.classList.add('is-right-aligned');
-		}
-
-		// Capture the owning document once so add/remove can't desync across popout windows.
-		const doc = card.ownerDocument;
-		const closeMenu = (): void => {
-			menu.remove();
-			doc.removeEventListener('click', onDocClick, true);
-		};
-		const onDocClick = (e: MouseEvent): void => {
-			if (!menu.contains(e.target as Node) && e.target !== anchorBtn) {
-				closeMenu();
-			}
-		};
-		window.setTimeout(() => doc.addEventListener('click', onDocClick, true), 0);
-		this.activeCleanups.push(() => doc.removeEventListener('click', onDocClick, true));
-
-		refreshItem.addEventListener('click', (e) => {
-			e.stopPropagation();
-			closeMenu();
-			this.refreshCover(item);
-		});
+		openCardMenu(
+			card,
+			anchorBtn,
+			[{ label: 'Refresh cover', onClick: () => this.refreshCover(item) }],
+			{ container: this.container, cleanups: this.activeCleanups },
+			'wl-reading-card',
+		);
 	}
 
 	private refreshCover(item: Book | Manga): void {
@@ -1470,7 +1576,7 @@ export class ReadingTab {
 		const bar = card.createDiv({ cls: 'wl-reading-card-progress-bar' });
 		const fill = bar.createDiv({ cls: 'wl-reading-card-progress-fill' });
 		fill.style.width = `${percent}%`;
-		fill.style.backgroundColor = readingStatusColor(status);
+		fill.style.backgroundColor = readingStatusColor(status, this.readingData.getSettings().statusColors);
 	}
 
 	private renderEmptyState(): void {

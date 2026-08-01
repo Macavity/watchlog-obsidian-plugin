@@ -3,9 +3,8 @@ import { App, Modal } from 'obsidian';
 export type ReadingCsvKind = 'book' | 'manga';
 
 /**
- * Gate modal for Reading CSV import/export. Mirrors the "Add draft" choice modal
- * (title top-left, × top-right, a context line, equal-width horizontal buttons):
- * the user first picks Books or Manga, then the kind-specific Reading CSV modal opens.
+ * Gate modal for Reading CSV import/export (the "Add draft" choice-modal shape): pick Books or
+ * Manga, then the kind-specific Reading CSV modal opens.
  */
 export class ReadingCsvChoiceModal extends Modal {
 	constructor(

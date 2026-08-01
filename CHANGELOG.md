@@ -1,6 +1,79 @@
 # Changelog
 
 All notable changes to WatchLog are documented here.
+
+## [3.0.0] - 2026-08-01
+
+##### Added
+
+**Games tab (new library)**
+- **Games** — a new top-level tab with its own library, stored alongside with other data, come with every feature that Watchlist and Reading has
+- **Game APIs** — search and auto-fill from **RAWG** (default) or **IGDB**, selectable in Settings → API → Games. Everything also works fully manually with no API key.
+- **Steam sync** — connect with Steam ID + API key and sync your library: matched games take **playtime, last played and achievements** straight from Steam, while status, rating, priority, favorite, wishlist and notes are never touched. Games you own but haven't added yet are shown as a checklist for one-click import. Runs with progress and a working Cancel.
+- **Game modes pill** — Solo / Co-op / Multi toggles on each game, any combination.
+- **Wishlist flag** — a game can be flagged as wishlist (gift icon in the modal, amber badge on the card, also in the filter row).
+- **Games note files** — one Markdown note per game at `WatchLog/Games/<Title>.md`, body-preserving and rename-aware.
+- **Games everywhere** — Games now appear in Drafts (add-to-Games choice + "In Games" duplicate detection), Custom Lists autocomplete, the Dashboard statistics, the Log timeline and backup/restore.
+- **Games in Upcoming** — games with a release date get a schedule entry (single release date; no recurrence, since a game releases once).
+
+**Cards & layout**
+- **Rows / shelves layout in Watchlist and Reading** — the old flat Cards grid is now a customizable shelf layout: Favorites, Recommended, Recently Added, Recently Watched / Recently Read, Groups, Recently Released, plus grouped grids **By type** or **By status** (mutually exclusive). Turning everything off gives you exactly the old Cards view back.
+- **Card size slider** — seven sizes (100 → 250 px), separate desktop and mobile sliders, in Settings → Customize → **Cards**. Default is 160 px; the old default (140 px) is one step down.
+- **Per-tab card text placement** — choose **Under** (name/type/progress in a block below the poster) or **Inside** (classic overlay) independently for Watchlist, Games, Reading and Upcoming, with illustrated preview tiles and an apply-to-all shortcut.
+- **Uniform card sizes** — shelf cards now mirror the grid's computed card width, so every tab's cards are the same size at a given pane width.
+- **Upcoming Cards view** — the Upcoming tracker gained a List/Cards toggle; Cards is a month-grouped poster grid with a big countdown badge, tick button and ⋮ menu per card.
+
+**Ratings & credits**
+- **Half-star ratings** — optional half-star precision (0.5 steps) on every rating input - toggle in Plugin Settings
+- **Rating system** — five editable tiers with their own label and colour ("Poor" … "Masterpiece"); filled stars take the current tier's colour and the label shows next to them. Applies across Watchlist, Reading and Games.
+- **Manual director & cast** — you can now add your own director/cast entries on top of the fetched ones (fetched list capped at 10, 4 shown inline before expanding).
+- **Top Actors / Top Directors** on the Dashboard, with a configurable "how many to show" setting.
+- **Favorites** — a favorite flag on Watchlist titles and Reading items (heart toggle), driving the Favorites shelf on every tab.
+
+**Collections & studios**
+- **Collections** — movies that belong to a film series (Harry Potter, John Wick, Alien…) get a **Collection** button in the detail modal.TMDB only feature, OMDb doesn't have it. Movies only, TMDB has no equivalent for TV.
+- **Studio / network** — a third credits field next to Director and Cast. Movies and TV get their production companies (networks first for TV) from TMDB, anime gets its studio from Jikan or AniList.
+- **"Fetch studios for all titles"** (Settings → General) — fills the field for an existing library in bulk, chunked and cancelable. New titles get it at add time, and older ones fill in on their own the first time you open them.
+
+**Adding things**
+- **Already-in-library markers** — search results in the Add title / Add game / Add book & manga modals now flag what you already own with a green **✓ Watchlist / Books / Manga / Games** badge.
+- **Add to library from Custom Lists** — every named row gets a **+** in its action icons, opening the same Watchlist / Book / Manga / Game chooser the Drafts cards use, with the row name prefilled.
+
+**Reading**
+- **Pages or words for books** — each book can track progress in **pages** or **words**, switched with a Pages/Words pill in the detail modal. 
+- **Editable Reading status colours** — Settings → Customize → Reading → Status.
+- **Reading CSV** gained `progressUnit` / `wordsRead` / `totalWords` columns.
+
+**Dashboard**
+- **More Statistics now covers all four libraries** — Watchlist, Reading and Games feed Added Over Time / By Status / By Type / By Year, with a centred **source filter** (All / Watchlist / Reading / Games) to narrow it down. "Titles in library" and "Completed" count all four. Cards with no data are hidden entirely.
+
+**Dates**
+- **Date format setting** (Settings → General): `European (09/03/2026)`, `American (03/09/2026)` or `ISO (2026-03-09)`, with live previews. Purely presentational — stored data is untouched, so switching is safe at any time.
+- **New shared date picker** — every date field in the plugin now uses one component with a proper calendar popup (month nav, today/selected highlighting, Today / Clear footer, week start follows the format). Replaces both the old text-only fields and the native pickers that ignored your format setting.
+
+**Other**
+- **Mark as Watched button** — Movies (and any single-episode title) get a single "Mark as Watched" button instead of a lone episode box; pressing it ticks the episode, sets Completed and stamps today's date, and pressing it again reverts all three.
+- **Buy me a coffee button** in Settings → General, if you want to support the plugin.
+
+##### Improved
+- **Search rebuilt** — Watchlist, Reading and Games used to have three unrelated search implementations; All three now share one engine and one syntax:
+  - `dune` — fuzzy, several words must all match (across fields, so `scarlett johansson marvel` works)
+  - `"no time to die"` — quoted means exact, never fuzzy
+  - `studio:pierrot`, `dev:rockstar`, `author:herbert` — scoped to one field
+  - `year:>2010`, `rating:>=4`, `pages:<300`, `hours:>20` — numeric comparisons
+  - `marvel | dc` — either one; `-anime` — exclude
+- **Detail modals on mobile** — Watchlist, Reading and Games detail modals were rebuilt for phone width.
+- **Sticky modal footer** — the action bar in the Watchlist, Reading, Games and Collection modals stays pinned to the bottom, so it is still reachable in a long modal.
+- **Settings rebuilt as accent-coloured group cards** — API, General, Watchlist, Customize, Drafts, Custom Lists and Reading pages all now use the same card shell: coloured header with icon, sub-line and a live status chip, over a plain body. Every setting, default and handler is unchanged; only the layout moved.
+- **API page as provider cards** — four groups (Movies & TV, Anime, Books & manga, Games), each provider on its own card with a password reveal toggle, a live status chip that updates as you type, a "Get a key ↗" link, a foldable `(?)` help text and a Test button. The Active-API dropdown became a segmented pill, and inactive providers dim.
+- **Customize page** — five groups (Theme, Watchlist, Reading, Games, Shared) with live counts in the header chip ("5 types · 6 statuses"), and every colour list now sits in a card with foldable help text.
+- **Games in Settings → Customize** — Genre and Platform lists are fully editable (recolour, rename, add, remove) with renames cascading into your games and filters; Status is colour-only since the names carry behaviour.
+- **Coloured platform chips** — platform chips now use their configured colour instead of a hardcoded purple.
+- **Upcoming Schedule** — was revamped to a better view and for a better undrestanding
+- **Minor UI changes** - some minor UI changes here and there and some visual bugs fixed, especially on Mobile view
+- **Drafts** - duplicate detection covers the whole library, and the badge names where it found the title: In Watchlist / In Books / In Manga / In Games.
+
+
 ## [2.2.0] - 2026-07-05
 
 ##### Added

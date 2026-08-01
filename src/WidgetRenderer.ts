@@ -2,18 +2,15 @@ import { MarkdownPostProcessorContext } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, TagDefinition } from './types';
-import { formatTime, getThemedColor } from './types';
+import { formatTime, getThemedColor, formatDateDisplay, formatShortDateDisplay } from './types';
 
 export class WidgetRenderer {
 	private plugin: WatchLogPlugin;
 	private dataManager: DataManager;
 
-	/**
-	 * Registry of all currently-rendered widget container elements.
-	 * el → titleId. Stale (disconnected) entries are removed lazily.
-	 */
+	/** Registry of rendered widget containers (el → titleId). Stale entries are removed lazily. */
 	private widgetRegistry = new Map<HTMLElement, string>();
-	/** Tracks which registered widgets are in mini mode (for correct re-render on data change). */
+	/** Which registered widgets are in mini mode (for a correct re-render on data change). */
 	private widgetMiniRegistry = new Map<HTMLElement, boolean>();
 	/** Generic re-render hooks for non-todo widgets (stats, upcoming, now-watching, now-next). */
 	private widgetRerender = new Map<HTMLElement, () => void>();
@@ -53,11 +50,11 @@ export class WidgetRenderer {
 			(source, el, _ctx) => this.processWlNowNext(source, el),
 		);
 
-		// Re-render all active widgets when data changes (list → widget sync)
+		// re-render all active widgets on data change (list → widget sync)
 		this.dataChangedListener = () => this.onDataChanged();
 		activeDocument.addEventListener('watchlog-data-changed', this.dataChangedListener);
 
-		// Clean up listener when plugin unloads
+		// clean up the listener on plugin unload
 		plugin.register(() => {
 			activeDocument.removeEventListener('watchlog-data-changed', this.dataChangedListener);
 		});
@@ -129,7 +126,7 @@ export class WidgetRenderer {
 			return;
 		}
 
-		// Register so this widget is re-rendered on future data changes
+		// register so this widget re-renders on future data changes
 		this.widgetRegistry.set(el, id);
 
 		this.renderWidget(el, title);
@@ -145,8 +142,7 @@ export class WidgetRenderer {
 
 		const mainRow = el.createDiv({ cls: 'wl-widget-main-row' });
 
-		// ── Checkbox 1: visual-only task indicator ─────────────────────────────
-		// Does NOT modify WatchLog data — purely a personal note marker.
+		// checkbox 1: visual-only task marker — does NOT modify WatchLog data
 		const taskCb = mainRow.createEl('input', {
 			cls: 'wl-widget-cb',
 			attr: { type: 'checkbox' },
@@ -160,12 +156,10 @@ export class WidgetRenderer {
 			}
 		});
 
-		// Title
 		mainRow.createSpan({ cls: 'wl-widget-title', text: title.title });
 
 		this.sep(mainRow);
 
-		// Type badge (respects coloredTypeBadges setting)
 		const typeDef = this.getTagDef(title.type, this.plugin.settings.types);
 		const colored = this.plugin.settings.coloredTypeBadges;
 		const typeBadge = mainRow.createSpan({
@@ -176,7 +170,7 @@ export class WidgetRenderer {
 
 		this.sep(mainRow);
 
-		// Status badge (respects coloredTypeBadges setting)
+		// status badge (respects coloredTypeBadges)
 		const statusDef = this.getTagDef(title.status, this.plugin.settings.statuses);
 		const statusBadge = mainRow.createSpan({
 			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
@@ -186,26 +180,23 @@ export class WidgetRenderer {
 
 		this.sep(mainRow);
 
-		// Progress bar
 		const progress = this.dataManager.getProgress(title);
 		const barWrap = mainRow.createDiv({ cls: 'wl-widget-bar-wrap' });
 		barWrap.createDiv({ cls: 'wl-progress-bar' }).style.width = `${progress}%`;
 
 		this.sep(mainRow);
 
-		// Percentage
 		mainRow.createSpan({ cls: 'wl-widget-percent', text: `${progress}%` });
 
 		this.sep(mainRow);
 
-		// Date label
 		const dateStr = title.dateStarted ?? title.dateAdded;
 		const dateLabel = title.dateStarted
 			? `since ${this.formatShortDate(dateStr)}`
 			: `added ${this.formatShortDate(dateStr)}`;
 		mainRow.createSpan({ cls: 'wl-widget-date', text: dateLabel });
 
-		// ── Checkbox 2: "Next up" — writes to WatchLog data ───────────────────
+		// checkbox 2: "Next up" — writes to WatchLog data
 		const isMovie = title.type === 'Movie';
 		if (!isMovie) {
 			const nextEp = this.dataManager.getNextUnwatchedEpisode(title);
@@ -229,7 +220,7 @@ export class WidgetRenderer {
 				nextRow.createSpan({ cls: 'wl-widget-next-label', text: '✓ All episodes watched' });
 			}
 		} else {
-			// Movie: watch checkbox that writes to WatchLog data
+			// movie: watch checkbox that writes to WatchLog data
 			const watchRow = el.createDiv({ cls: 'wl-widget-next-row' });
 			const watched = title.watchedEpisodes.includes(1);
 			const movieCb = watchRow.createEl('input', {
@@ -257,7 +248,7 @@ export class WidgetRenderer {
 
 		const row = el.createDiv({ cls: 'wl-widget-minimal-row' });
 
-		// Left checkbox: visual-only task marker
+		// left checkbox: visual-only task marker
 		const taskCb = row.createEl('input', {
 			cls: 'wl-widget-cb',
 			attr: { type: 'checkbox' },
@@ -271,12 +262,10 @@ export class WidgetRenderer {
 			}
 		});
 
-		// Title
 		row.createSpan({ cls: 'wl-widget-title', text: title.title });
 
 		this.sep(row);
 
-		// Type badge
 		const typeDef = this.getTagDef(title.type, this.plugin.settings.types);
 		const colored = this.plugin.settings.coloredTypeBadges;
 		const typeBadge = row.createSpan({
@@ -287,7 +276,7 @@ export class WidgetRenderer {
 
 		this.sep(row);
 
-		// Status badge (respects coloredTypeBadges setting)
+		// status badge (respects coloredTypeBadges)
 		const statusDef = this.getTagDef(title.status, this.plugin.settings.statuses);
 		const statusBadge = row.createSpan({
 			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
@@ -297,13 +286,12 @@ export class WidgetRenderer {
 
 		this.sep(row);
 
-		// Progress %
 		const progress = this.dataManager.getProgress(title);
 		row.createSpan({ cls: 'wl-widget-percent', text: `${progress}%` });
 
 		this.sep(row);
 
-		// Right checkbox: "Mark as watched" / next episode
+		// right checkbox: "Mark as watched" / next episode
 		const isMovie = title.type === 'Movie';
 		if (isMovie) {
 			const watched = title.watchedEpisodes.includes(1);
@@ -353,13 +341,14 @@ export class WidgetRenderer {
 	private formatShortDate(dateStr: string): string {
 		try {
 			const d = new Date(dateStr);
-			return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getFullYear()).slice(2)}`;
+			const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+			return formatShortDateDisplay(iso);
 		} catch {
 			return dateStr;
 		}
 	}
 
-	// ── wl-todo ───────────────────────────────────────────────────────────────────
+	// wl-todo
 
 	private processWlTodo(source: string, el: HTMLElement): void {
 		const lines = source.trim().split('\n').map((l) => l.trim()).filter(Boolean);
@@ -385,7 +374,7 @@ export class WidgetRenderer {
 		}
 	}
 
-	// ── wl-stat ───────────────────────────────────────────────────────────────────
+	// wl-stat
 
 	private processWlStat(source: string, el: HTMLElement): void {
 		this.widgetRerender.set(el, () => this.renderWlStat(source, el));
@@ -500,7 +489,7 @@ export class WidgetRenderer {
 		completedCol.createDiv({ cls: 'wl-full-card-sub', text: 'completed' });
 	}
 
-	// ── wl-upcoming ───────────────────────────────────────────────────────────────
+	// wl-upcoming
 
 	private processWlUpcoming(source: string, el: HTMLElement): void {
 		this.widgetRerender.set(el, () => this.renderWlUpcoming(source, el));
@@ -520,7 +509,7 @@ export class WidgetRenderer {
 		const titles = this.dataManager.getTitles();
 		const titleMap = new Map(titles.map((t) => [t.id, t]));
 
-		// Find the entry with the soonest future release date
+		// the entry with the soonest future release date
 		const now = Date.now();
 		let bestEntry: { titleName: string; type: string; releaseDate: string; daysUntil: number } | null = null;
 		let bestMs = Infinity;
@@ -564,7 +553,7 @@ export class WidgetRenderer {
 		});
 		if (colored && typeDef) badge.style.backgroundColor = getThemedColor(bestEntry.type, typeDef.color, this.plugin.settings.colorTheme);
 
-		card.createSpan({ cls: 'wl-upcoming-date', text: bestEntry.releaseDate });
+		card.createSpan({ cls: 'wl-upcoming-date', text: formatDateDisplay(bestEntry.releaseDate) });
 		const daysUntil = bestEntry.daysUntil;
 		const monthSuffix = daysUntil >= 30 ? ` (${Math.round(daysUntil / 30)} month${Math.round(daysUntil / 30) !== 1 ? 's' : ''})` : '';
 		const countdown = daysUntil === 0 ? 'today' : daysUntil === 1 ? 'tomorrow' : `in ${daysUntil} days${monthSuffix}`;
@@ -594,10 +583,10 @@ export class WidgetRenderer {
 		const daysUntil = bestEntry.daysUntil;
 		const countdown = daysUntil === 0 ? 'today' : daysUntil === 1 ? 'tomorrow' : `in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}`;
 		meta.createSpan({ text: countdown });
-		meta.createSpan({ cls: 'wl-full-card-sub', text: bestEntry.releaseDate });
+		meta.createSpan({ cls: 'wl-full-card-sub', text: formatDateDisplay(bestEntry.releaseDate) });
 	}
 
-	// ── wl-nowwatching ────────────────────────────────────────────────────────────
+	// wl-nowwatching
 
 	private processWlNowWatching(source: string, el: HTMLElement): void {
 		this.widgetRerender.set(el, () => this.renderWlNowWatching(source, el));
@@ -718,7 +707,7 @@ export class WidgetRenderer {
 		barCol.createDiv({ cls: 'wl-full-card-bar-wrap' }).createDiv({ cls: 'wl-full-card-bar' }).style.width = `${progress}%`;
 	}
 
-	// ── wl-now-next ───────────────────────────────────────────────────────────────
+	// wl-now-next
 
 	private processWlNowNext(source: string, el: HTMLElement): void {
 		this.widgetRerender.set(el, () => this.renderWlNowNext(source, el));
@@ -766,7 +755,7 @@ export class WidgetRenderer {
 		const card = el.createDiv({ cls: 'wl-full-card wl-full-card-now-next' });
 		const cols = card.createDiv({ cls: 'wl-double-cols' });
 
-		// Left column: Now Watching
+		// left column: Now Watching
 		const nowCol = cols.createDiv({ cls: 'wl-double-col' });
 		nowCol.createDiv({ cls: 'wl-full-card-header', text: 'NOW WATCHING' });
 
@@ -790,10 +779,9 @@ export class WidgetRenderer {
 			nowCol.createDiv({ cls: 'wl-full-card-sub', text: `${progress}%` });
 		}
 
-		// Vertical separator
 		cols.createDiv({ cls: 'wl-vert-sep' });
 
-		// Right column: Up Next
+		// right column: Up Next
 		const nextCol = cols.createDiv({ cls: 'wl-double-col' });
 		nextCol.createDiv({ cls: 'wl-full-card-header', text: 'UPCOMING NEXT' });
 

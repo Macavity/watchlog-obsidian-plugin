@@ -4,7 +4,7 @@ import type { Book, Manga, ReadingStatus } from './types';
 import { READING_STATUSES, SELECTABLE_READING_STATUSES } from './types';
 import type { ReadingCsvKind } from './ReadingCsvChoiceModal';
 
-// ── CSV helpers (self-contained — deliberately not shared with the watch CsvModal) ──
+// CSV helpers — self-contained, deliberately not shared with the watch CsvModal
 
 function escapeCsvField(value: string | number | null | undefined): string {
 	const s = String(value ?? '');
@@ -51,14 +51,14 @@ function parseCSV(text: string): string[][] {
 	return rows;
 }
 
-// ── Date parsing (same logic as the watch CSV path) ─────────────────────────────
+// Date parsing (same logic as the watch CSV path)
 
 const MONTH_NAMES: Record<string, number> = {
 	jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
 	jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
 
-/** Parses a date string in any common format and returns YYYY-MM-DD, or null if unparseable. */
+/** Parses a date in any common format to YYYY-MM-DD, or null when unparseable. */
 function parseCsvDate(raw: string): string | null {
 	const s = raw.trim();
 	if (!s) return null;
@@ -67,7 +67,7 @@ function parseCsvDate(raw: string): string | null {
 
 		const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
 		if (slash) {
-			const a = parseInt(slash[1]!), b = parseInt(slash[2]!), y = parseInt(slash[3]!);
+			const a = parseInt(slash[1]!, 10), b = parseInt(slash[2]!, 10), y = parseInt(slash[3]!, 10);
 			let dd: number, mm: number;
 			if (a > 12)      { dd = a; mm = b; }
 			else if (b > 12) { mm = a; dd = b; }
@@ -79,20 +79,20 @@ function parseCsvDate(raw: string): string | null {
 		const dmy = s.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})$/);
 		if (dmy) {
 			const mm = MONTH_NAMES[dmy[2]!.toLowerCase().slice(0, 3)];
-			const dd = parseInt(dmy[1]!), y = parseInt(dmy[3]!);
+			const dd = parseInt(dmy[1]!, 10), y = parseInt(dmy[3]!, 10);
 			if (mm) return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 		}
 
 		const mdy = s.match(/^([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{4})$/);
 		if (mdy) {
 			const mm = MONTH_NAMES[mdy[1]!.toLowerCase().slice(0, 3)];
-			const dd = parseInt(mdy[2]!), y = parseInt(mdy[3]!);
+			const dd = parseInt(mdy[2]!, 10), y = parseInt(mdy[3]!, 10);
 			if (mm) return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 		}
 
 		const dotDash = s.match(/^(\d{1,2})[.-](\d{1,2})[.-](\d{4})$/);
 		if (dotDash) {
-			const dd = parseInt(dotDash[1]!), mm = parseInt(dotDash[2]!), y = parseInt(dotDash[3]!);
+			const dd = parseInt(dotDash[1]!, 10), mm = parseInt(dotDash[2]!, 10), y = parseInt(dotDash[3]!, 10);
 			if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31)
 				return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 		}
@@ -109,7 +109,7 @@ function parseCsvDate(raw: string): string | null {
 	}
 }
 
-// ── Schemas (Books and Manga kept fully separate) ───────────────────────────────
+// Schemas (Books and Manga kept fully separate)
 
 type Coercion = 'string' | 'int' | 'rating' | 'date';
 
@@ -120,10 +120,11 @@ interface ReadingFieldDef {
 	autoDetect: string[];
 }
 
-// Export column order (includes dateAdded, which is export-only).
+// export column order (dateAdded is export-only)
 const BOOK_EXPORT_COLUMNS = [
 	'title', 'author', 'status', 'rating',
-	'pagesRead', 'totalPages', 'chaptersRead', 'totalChapters',
+	'progressUnit', 'pagesRead', 'totalPages', 'wordsRead', 'totalWords',
+	'chaptersRead', 'totalChapters',
 	'dateStarted', 'dateFinished', 'releaseDate', 'dateAdded',
 	'externalLink', 'googleBooksId',
 ] as const;
@@ -135,7 +136,7 @@ const MANGA_EXPORT_COLUMNS = [
 	'externalLink', 'malId',
 ] as const;
 
-// Import targets — same as export minus dateAdded (auto-set on insert).
+// import targets — export minus dateAdded (auto-set on insert)
 const COMMON_HEAD: ReadingFieldDef[] = [
 	{ key: 'title',  label: 'Title',  coercion: 'string', autoDetect: ['title', 'name'] },
 	{ key: 'author', label: 'Author', coercion: 'string', autoDetect: ['author', 'writer', 'by'] },
@@ -152,8 +153,11 @@ const COMMON_TAIL: ReadingFieldDef[] = [
 
 const BOOK_IMPORT_FIELDS: ReadingFieldDef[] = [
 	...COMMON_HEAD,
+	{ key: 'progressUnit',  label: 'Progress Unit',  coercion: 'string', autoDetect: ['progressunit', 'progress unit', 'unit'] },
 	{ key: 'pagesRead',     label: 'Pages Read',     coercion: 'int', autoDetect: ['pagesread', 'pages read', 'read pages', 'page'] },
 	{ key: 'totalPages',    label: 'Total Pages',    coercion: 'int', autoDetect: ['totalpages', 'total pages', 'pages', 'page count'] },
+	{ key: 'wordsRead',     label: 'Words Read',     coercion: 'int', autoDetect: ['wordsread', 'words read', 'read words', 'word'] },
+	{ key: 'totalWords',    label: 'Total Words',    coercion: 'int', autoDetect: ['totalwords', 'total words', 'words', 'word count'] },
 	{ key: 'chaptersRead',  label: 'Chapters Read',  coercion: 'int', autoDetect: ['chaptersread', 'chapters read', 'read chapters'] },
 	{ key: 'totalChapters', label: 'Total Chapters', coercion: 'int', autoDetect: ['totalchapters', 'total chapters', 'chapters', 'chapter count'] },
 	...COMMON_TAIL,
@@ -190,7 +194,7 @@ function autoMap(fields: ReadingFieldDef[], headers: string[]): Record<string, s
 	return mapping;
 }
 
-// ── Modal ───────────────────────────────────────────────────────────────────────
+// Modal
 
 type ReadingEntry = Partial<Book & Manga>;
 
@@ -208,20 +212,16 @@ export class ReadingCsvModal extends Modal {
 		return this.kind === 'book' ? 'book' : 'manga';
 	}
 
-	// Export state
 	private selectedIds = new Set<string>();
 
-	// Import state
 	private csvRows: string[][] = [];
 	private csvHeaders: string[] = [];
 	private columnMapping: Record<string, string> = {};
 	private importRows: { entry: ReadingEntry; isDuplicate: boolean; selected: boolean }[] = [];
 
-	// Value-mapping state
 	private statusValueMap: Record<string, string> = {};  // csvValue → resolved status ('' = blank)
 	private ratingValueMap: Record<string, string> = {};  // csvValue → '1'–'5' or '' (blank)
 
-	// Step containers
 	private stepUpload: HTMLElement | null = null;
 	private stepMapping: HTMLElement | null = null;
 	private stepValueMap: HTMLElement | null = null;
@@ -229,7 +229,6 @@ export class ReadingCsvModal extends Modal {
 	private importBtn: HTMLButtonElement | null = null;
 	private cancelBtn: HTMLButtonElement | null = null;
 
-	// Progress state
 	private isImporting = false;
 	private importCancelled = false;
 	private progressWrap: HTMLElement | null = null;
@@ -262,7 +261,7 @@ export class ReadingCsvModal extends Modal {
 		this.contentEl.empty();
 	}
 
-	// ── Export ──────────────────────────────────────────────────────────────────
+	// Export
 
 	private itemsToCsv(items: (Book | Manga)[]): string {
 		const cols = this.schema.exportColumns;
@@ -345,7 +344,7 @@ export class ReadingCsvModal extends Modal {
 		});
 	}
 
-	// ── Import ──────────────────────────────────────────────────────────────────
+	// Import
 
 	private renderImport(el: HTMLElement): void {
 		el.createEl('h2', { cls: 'wl-modal-title', text: `Import ${this.kindLabel} from CSV` });
@@ -407,7 +406,7 @@ export class ReadingCsvModal extends Modal {
 		});
 	}
 
-	// ── Step: Column Mapping ──────────────────────────────────────────────────────
+	// Step: column mapping
 
 	private showMappingStep(): void {
 		if (!this.stepUpload || !this.stepMapping) return;
@@ -452,7 +451,7 @@ export class ReadingCsvModal extends Modal {
 			this.importRows = this.applyMapping()
 				.map((r) => ({ ...r, selected: !r.isDuplicate }));
 
-			// Unknown statuses and non-numeric ratings → value-mapping step.
+			// unknown statuses and non-numeric ratings → the value-mapping step
 			const knownStatuses = new Set<string>(READING_STATUSES as string[]);
 			const unknownStatuses: string[] = [];
 			const unknownRatings: string[] = [];
@@ -512,7 +511,7 @@ export class ReadingCsvModal extends Modal {
 							(entry as Record<string, unknown>)[field.key] = raw;
 							break;
 						case 'int':
-							(entry as Record<string, unknown>)[field.key] = parseInt(raw) || 0;
+							(entry as Record<string, unknown>)[field.key] = parseInt(raw, 10) || 0;
 							break;
 						case 'rating': {
 							const v = parseFloat(raw) || 0;
@@ -537,7 +536,7 @@ export class ReadingCsvModal extends Modal {
 			.filter((r): r is { entry: ReadingEntry; isDuplicate: boolean } => r !== null);
 	}
 
-	// ── Step: Value Mapping ───────────────────────────────────────────────────────
+	// Step: value mapping
 
 	private showValueMapStep(unknownStatuses: string[], unknownRatings: string[]): void {
 		if (!this.stepMapping || !this.stepValueMap) return;
@@ -554,7 +553,7 @@ export class ReadingCsvModal extends Modal {
 			text: 'Some values in your CSV were not recognized. Map each to an existing value, or leave it blank.',
 		});
 
-		// Reading statuses are a fixed set — no "create new status" option (unlike watch types).
+		// reading statuses are a fixed set — no "create new status" option, unlike watch types
 		const statusSelects: Record<string, HTMLSelectElement> = {};
 		const ratingSelects: Record<string, HTMLSelectElement> = {};
 
@@ -629,13 +628,13 @@ export class ReadingCsvModal extends Modal {
 				const rawRating = (rawValues[ratingIdx] ?? '').trim();
 				if (rawRating && Object.prototype.hasOwnProperty.call(this.ratingValueMap, rawRating)) {
 					const resolved = this.ratingValueMap[rawRating] ?? '';
-					r.entry.rating = resolved ? parseInt(resolved) : 0;
+					r.entry.rating = resolved ? parseInt(resolved, 10) : 0;
 				}
 			}
 		}
 	}
 
-	// ── Step: Preview ─────────────────────────────────────────────────────────────
+	// Step: preview
 
 	private showPreviewStep(): void {
 		if (!this.stepValueMap || !this.stepMapping || !this.stepPreview || !this.importBtn) return;
@@ -715,7 +714,7 @@ export class ReadingCsvModal extends Modal {
 		updateCount();
 	}
 
-	// ── Import ──────────────────────────────────────────────────────────────────
+	// Import
 
 	private buildBook(entry: ReadingEntry, defaultStatus: ReadingStatus): Book {
 		const titleName = entry.title!.trim();
@@ -726,8 +725,16 @@ export class ReadingCsvModal extends Modal {
 			author: entry.author ?? '',
 			status: (entry.status) || defaultStatus,
 			rating: entry.rating ?? 0,
+			// an explicit Progress Unit column wins; otherwise a CSV carrying only word counts is taken to be
+			// words-tracked
+			progressUnit: entry.progressUnit === 'words' ? 'words'
+				: entry.progressUnit === 'pages' ? 'pages'
+				: ((entry.totalWords ?? 0) > 0 || (entry.wordsRead ?? 0) > 0) ? 'words'
+				: 'pages',
 			pagesRead: entry.pagesRead ?? 0,
 			totalPages: entry.totalPages ?? 0,
+			wordsRead: entry.wordsRead ?? 0,
+			totalWords: entry.totalWords ?? 0,
 			chaptersRead: entry.chaptersRead ?? 0,
 			totalChapters: entry.totalChapters ?? 0,
 			coverUrl: '',

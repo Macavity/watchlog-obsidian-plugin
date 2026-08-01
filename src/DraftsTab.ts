@@ -2,10 +2,16 @@ import Fuse from 'fuse.js';
 import type { EventRef } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
-import type { DraftPersistState, WatchLogTitle } from './types';
-import { AddTitleModal } from './AddTitleModal';
-import { AddReadingModal } from './AddReadingModal';
-import { DraftChoiceModal } from './DraftChoiceModal';
+import type { DraftPersistState } from './types';
+import { openAddForTitle } from './AddRouter';
+
+/** Libraries a draft can already live in — used for the "In …" duplicate label. */
+type DraftLibrary = 'Watchlist' | 'Books' | 'Manga' | 'Games';
+
+interface DraftLibraryEntry {
+	title: string;
+	library: DraftLibrary;
+}
 
 interface LiveDraftEntry {
 	titleKey: string;
@@ -68,7 +74,7 @@ export class DraftsTab {
 		}
 	}
 
-	// ── Persistence ───────────────────────────────────────────────────────────────
+	// Persistence
 
 	private async loadPersistState(): Promise<void> {
 		const data = this.plugin.dataManager.getData() as unknown as Record<string, unknown>;
@@ -89,17 +95,16 @@ export class DraftsTab {
 		this.plugin.dataManager.queueSave();
 	}
 
-	// ── Vault scanning ────────────────────────────────────────────────────────────
+	// Vault scanning
 
 	private getTag(): string {
 		return this.plugin.settings.draftsVaultTag ?? '#watchlog';
 	}
 
 	/**
-	 * Scans the vault for inline-tag draft mentions, returning a map of
-	 * lowercase title key → { sources, displayTitle }. Pure (no persistState side
-	 * effects) so it can back both the full render and the count-only badge scan.
-	 * Inline-tag matching only — frontmatter tags are intentionally ignored.
+	 * Scans the vault for inline-tag draft mentions, returning lowercase title key →
+	 * { sources, displayTitle }. Pure (no persistState side effects), so it backs both the full render
+	 * and the count-only badge scan. Inline tags only — frontmatter tags are ignored.
 	 */
 	private static async scanTaggedFiles(
 		plugin: WatchLogPlugin,
@@ -122,7 +127,7 @@ export class DraftsTab {
 					const afterTag = line.slice(tagIdx + tag.length).trim();
 					if (!afterTag) continue;
 
-					// Each comma-separated segment after the tag is a separate title
+					// each comma-separated segment after the tag is a separate title
 					const segments = afterTag.split(',');
 					for (const seg of segments) {
 						const displayTitle = seg.trim();
@@ -135,7 +140,7 @@ export class DraftsTab {
 					}
 				}
 			} catch {
-				// Skip unreadable files
+				// skip unreadable files
 			}
 		}
 
@@ -146,7 +151,7 @@ export class DraftsTab {
 		const tag = this.getTag();
 		const liveMap = await DraftsTab.scanTaggedFiles(this.plugin, tag);
 
-		// Record firstSeen and displayTitle for newly discovered entries
+		// record firstSeen and displayTitle for newly discovered entries
 		let stateChanged = false;
 		const now = new Date().toISOString();
 		for (const [key, { displayTitle }] of liveMap) {
@@ -163,7 +168,7 @@ export class DraftsTab {
 			await this.savePersistState();
 		}
 
-		// Build visible entries (dismissed entries are excluded entirely)
+		// dismissed entries are excluded entirely
 		const entries: LiveDraftEntry[] = [];
 		for (const [key, { sources }] of liveMap) {
 			if (this.persistState.dismissed.includes(key)) continue;
@@ -176,13 +181,13 @@ export class DraftsTab {
 			});
 		}
 
-		// Sort oldest-first (FIFO queue)
+		// oldest-first (FIFO queue)
 		entries.sort((a, b) => a.firstSeen.localeCompare(b.firstSeen));
 		this.lastScanEntries = entries;
 		return entries;
 	}
 
-	// ── Event listener ────────────────────────────────────────────────────────────
+	// Event listener
 
 	private triggerDebouncedRender(): void {
 		if (this.scanDebounceTimer) window.clearTimeout(this.scanDebounceTimer);
@@ -201,29 +206,41 @@ export class DraftsTab {
 		});
 	}
 
-	// ── Fuzzy match helper ────────────────────────────────────────────────────────
+	// Fuzzy match helper
 
-	private static buildFuse(titles: WatchLogTitle[]): Fuse<WatchLogTitle> {
-		return new Fuse(titles, {
+	/**
+	 * Fuse index over every library a draft can be routed into — Watchlist, Books, Manga and Games — so
+	 * a draft already added anywhere counts as a duplicate. Each entry carries its library so the card
+	 * can name it ("In Games", "In Books", …).
+	 */
+	private static buildFuse(plugin: WatchLogPlugin): Fuse<DraftLibraryEntry> {
+		const entries: DraftLibraryEntry[] = [
+			...plugin.dataManager.getTitles().map((t) => ({ title: t.title, library: 'Watchlist' as const })),
+			...plugin.readingDataManager.getBooks().map((b) => ({ title: b.title, library: 'Books' as const })),
+			...plugin.readingDataManager.getMangaList().map((m) => ({ title: m.title, library: 'Manga' as const })),
+			...plugin.gameDataManager.getGames().map((g) => ({ title: g.title, library: 'Games' as const })),
+		];
+		return new Fuse(entries, {
 			keys: ['title'],
 			threshold: 0.35,
 			includeScore: true,
 		});
 	}
 
-	private static fuzzyMatchesWatchlist(displayTitle: string, fuse: Fuse<WatchLogTitle>): boolean {
+	/** The library holding a matching entry, or null when the draft is new. */
+	private static findLibraryMatch(displayTitle: string, fuse: Fuse<DraftLibraryEntry>): DraftLibrary | null {
 		const results = fuse.search(displayTitle);
-		return results.length > 0 && (results[0]?.score ?? 1) <= 0.35;
+		const best = results[0];
+		if (!best || (best.score ?? 1) > 0.35) return null;
+		return best.item.library;
 	}
 
 	/**
-	 * Count-only drafts scan for the tab badge — mirrors the pending-count logic in
-	 * renderUI without touching the DOM or mutating persistState. "Pending" = a tagged
-	 * draft that is not dismissed, not marked added, and not already in the Watchlist
-	 * (exact key or fuzzy title match). Cheap: only tagged files are read, the rest is
-	 * in-memory. Inline-tag matching only.
+	 * Count-only drafts scan for the tab badge — mirrors renderUI's pending-count logic without touching
+	 * the DOM or persistState. "Pending" = tagged, not dismissed, not marked added, and not already in
+	 * Watchlist / Reading / Games (exact key or fuzzy title). Cheap: only tagged files are read.
 	 */
-	static async computePendingCount(plugin: WatchLogPlugin, dataManager: DataManager): Promise<number> {
+	static async computePendingCount(plugin: WatchLogPlugin, _dataManager: DataManager): Promise<number> {
 		const tag = plugin.settings.draftsVaultTag ?? '#watchlog';
 		const liveMap = await DraftsTab.scanTaggedFiles(plugin, tag);
 
@@ -233,38 +250,37 @@ export class DraftsTab {
 		const added = new Set(drafts?.added ?? []);
 		const titleDisplay = drafts?.titleDisplay ?? {};
 
-		const fuse = DraftsTab.buildFuse(dataManager.getTitles());
+		const fuse = DraftsTab.buildFuse(plugin);
 
 		let pending = 0;
 		for (const [key, { displayTitle }] of liveMap) {
 			if (dismissed.has(key) || added.has(key)) continue;
 			const display = titleDisplay[key] ?? displayTitle;
-			if (!DraftsTab.fuzzyMatchesWatchlist(display, fuse)) pending++;
+			if (!DraftsTab.findLibraryMatch(display, fuse)) pending++;
 		}
 		return pending;
 	}
 
-	// ── Rendering ─────────────────────────────────────────────────────────────────
+	// Rendering
 
 	private renderUI(entries: LiveDraftEntry[]): void {
 		const el = this.containerEl;
 		el.empty();
 
 		const tag = this.getTag();
-		const watchlistTitles = this.dataManager.getTitles();
-		const fuse = DraftsTab.buildFuse(watchlistTitles);
+		const fuse = DraftsTab.buildFuse(this.plugin);
 
-		// Compute fuzzy match results once per entry and cache them
-		const fuzzyCache = new Map<string, boolean>();
+		// resolve the matching library once per entry and cache it (null = new draft)
+		const fuzzyCache = new Map<string, DraftLibrary | null>();
 		for (const entry of entries) {
 			if (entry.added) {
-				fuzzyCache.set(entry.titleKey, false);
+				fuzzyCache.set(entry.titleKey, null);
 			} else {
-				fuzzyCache.set(entry.titleKey, DraftsTab.fuzzyMatchesWatchlist(entry.titleDisplay, fuse));
+				fuzzyCache.set(entry.titleKey, DraftsTab.findLibraryMatch(entry.titleDisplay, fuse));
 			}
 		}
 
-		// Pending = not added AND not already present in the Watchlist (exact or fuzzy)
+		// pending = not added AND not already present in any library
 		const pendingCount = entries.filter((e) => {
 			if (e.added) return false;
 			return !fuzzyCache.get(e.titleKey);
@@ -274,11 +290,10 @@ export class DraftsTab {
 		if (this.plugin.settings.showHintBanners) {
 			el.createDiv({
 				cls: 'wl-drafts-notice',
-				text: `⚠ Write ${tag} Movie Name in any note and it appears here automatically. Hit Add when you're ready to add it to your Watchlist.`,
+				text: `⚠ Write ${tag} Title in any note and it appears here automatically. Hit Add when you're ready to send it to your Watchlist, Books, Manga or Games.`,
 			});
 		}
 
-		// Count pill
 		const countWrap = el.createDiv({ cls: 'wl-list-title-wrap' });
 		countWrap.createSpan({ cls: 'wl-list-count', text: String(pendingCount) });
 		countWrap.createSpan({
@@ -294,33 +309,32 @@ export class DraftsTab {
 			return;
 		}
 
-		// Sort: non-Watchlist entries first (oldest-first), Watchlist entries last (oldest-first)
+		// entries not yet in a library first (oldest-first), already-present ones last
 		entries.sort((a, b) => {
-			const aDup = fuzzyCache.get(a.titleKey) ?? false;
-			const bDup = fuzzyCache.get(b.titleKey) ?? false;
+			const aDup = fuzzyCache.get(a.titleKey) != null;
+			const bDup = fuzzyCache.get(b.titleKey) != null;
 			if (aDup !== bDup) return aDup ? 1 : -1;
 			return a.firstSeen.localeCompare(b.firstSeen);
 		});
 
-		// Cards (Upcoming tab card style)
 		const cards = el.createDiv({ cls: 'wl-drafts-cards' });
 		for (const entry of entries) {
-			this.renderCard(cards, entry, fuzzyCache.get(entry.titleKey) ?? false);
+			this.renderCard(cards, entry, fuzzyCache.get(entry.titleKey) ?? null);
 		}
 	}
 
-	private renderCard(cards: HTMLElement, entry: LiveDraftEntry, isDuplicate: boolean): void {
-		// Build class list — dim watchlist rows; style added rows
+	private renderCard(cards: HTMLElement, entry: LiveDraftEntry, dupLibrary: DraftLibrary | null): void {
+		const isDuplicate = dupLibrary !== null;
+
+		// dim rows already in a library; style added rows
 		let cls = 'wl-drafts-card';
 		if (isDuplicate) cls += ' wl-drafts-card-watchlist';
 		if (entry.added) cls += ' wl-drafts-card-added';
 
 		const card = cards.createDiv({ cls });
 
-		// Title (left, bold)
 		card.createDiv({ cls: 'wl-drafts-card-title', text: entry.titleDisplay });
 
-		// Source link (center)
 		const sourceEl = card.createDiv({ cls: 'wl-drafts-card-source' });
 		if (entry.sources.length > 0) {
 			const primaryNote = entry.sources[0]!;
@@ -341,16 +355,16 @@ export class DraftsTab {
 			}
 		}
 
-		// "In Watchlist" indicator (center-right, only when applicable)
+		// "In <library>" indicator, only when applicable
 		const dupEl = card.createDiv({ cls: 'wl-drafts-card-dup' });
-		if (isDuplicate) {
+		if (dupLibrary) {
+			const where = dupLibrary === 'Watchlist' ? 'your Watchlist' : `your ${dupLibrary} library`;
 			dupEl.createSpan({
-				text: 'In Watchlist',
-				attr: { title: 'This title already exists in your Watchlist' },
+				text: `In ${dupLibrary}`,
+				attr: { title: `This title already exists in ${where}` },
 			});
 		}
 
-		// Actions (far right)
 		const actions = card.createDiv({ cls: 'wl-drafts-card-actions' });
 
 		if (entry.added || isDuplicate) {
@@ -381,7 +395,7 @@ export class DraftsTab {
 		this.renderUI(entries);
 	}
 
-	// ── Actions ───────────────────────────────────────────────────────────────────
+	// Actions
 
 	private async dismissEntry(titleKey: string): Promise<void> {
 		if (!this.persistState.dismissed.includes(titleKey)) {
@@ -393,45 +407,12 @@ export class DraftsTab {
 	}
 
 	private openAddModal(entry: LiveDraftEntry): void {
-		new DraftChoiceModal(this.plugin.app, entry.titleDisplay, (choice) => {
-			if (choice === 'watchlist') {
-				this.openWatchlistAddModal(entry);
-			} else {
-				this.openReadingAddModal(entry, choice);
-			}
-		}).open();
-	}
-
-	private openWatchlistAddModal(entry: LiveDraftEntry): void {
-		const modal = new AddTitleModal(
-			this.plugin.app,
-			this.plugin,
-			this.dataManager,
-			() => void this.afterAdded(entry.titleKey),
-			{
-				searchQuery: entry.titleDisplay,
-				title: entry.titleDisplay,
-				type: 'Anime',
-				episodes: 0,
-				duration: 0,
-				releaseDate: '',
-				link: '',
-				seasons: [],
-			},
-		);
-		modal.open();
-	}
-
-	private openReadingAddModal(entry: LiveDraftEntry, mode: 'book' | 'manga'): void {
-		new AddReadingModal(
-			this.plugin.app,
-			this.plugin,
-			this.plugin.readingDataManager,
-			mode,
-			() => void this.afterAdded(entry.titleKey),
-			undefined,
-			entry.titleDisplay,
-		).open();
+		openAddForTitle({
+			plugin: this.plugin,
+			dataManager: this.dataManager,
+			title: entry.titleDisplay,
+			onAdded: () => void this.afterAdded(entry.titleKey),
+		});
 	}
 
 	private async afterAdded(titleKey: string): Promise<void> {

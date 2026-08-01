@@ -1,17 +1,17 @@
 import { App, Modal } from 'obsidian';
 
-export type DraftAddChoice = 'watchlist' | 'book' | 'manga';
+export type DraftAddChoice = 'watchlist' | 'book' | 'manga' | 'game';
 
 /**
- * Small choice modal shown when adding a draft. Offers three inline options
- * (Watchlist / Book / Manga), each routing to its own corresponding Add modal.
- * The draft's text is shown as a subtitle to identify what's being added.
+ * Choice modal shown when adding a draft: four inline options (Watchlist / Book / Manga / Game),
+ * each routing to its own Add modal. The draft's text is the subtitle.
  */
 export class DraftChoiceModal extends Modal {
 	constructor(
 		app: App,
 		private draftText: string,
 		private onChoice: (choice: DraftAddChoice) => void,
+		private heading = 'Add draft',
 	) {
 		super(app);
 	}
@@ -21,7 +21,7 @@ export class DraftChoiceModal extends Modal {
 		contentEl.empty();
 		contentEl.addClass('wl-draft-choice-modal');
 
-		this.titleEl.setText('Add draft');
+		this.titleEl.setText(this.heading);
 		contentEl.createDiv({ cls: 'wl-draft-choice-subtitle', text: this.draftText });
 
 		const grid = contentEl.createDiv({ cls: 'wl-draft-choice-grid' });
@@ -38,6 +38,7 @@ export class DraftChoiceModal extends Modal {
 		makeOption('Add in Watchlist', 'watchlist');
 		makeOption('Add book', 'book');
 		makeOption('Add manga', 'manga');
+		makeOption('Add to Games', 'game');
 	}
 
 	onClose(): void {

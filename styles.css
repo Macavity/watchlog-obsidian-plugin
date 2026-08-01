@@ -1,9 +1,6 @@
-/* ════════════════════════════════════════════════════════
-   WatchLog Plugin Styles
-   Uses Obsidian CSS variables throughout.
-   ════════════════════════════════════════════════════════ */
+/* ══ WatchLog plugin styles — Obsidian CSS vars throughout ══ */
 
-/* ── View shell ─────────────────────────────────────────── */
+/* View shell */
 .wl-view {
   display: flex;
   flex-direction: column;
@@ -11,29 +8,25 @@
   overflow: hidden;
   font-size: var(--font-ui-small);
   color: var(--text-normal);
-  /* Default theme: plugin-specific accent vars (themed variants override below) */
+  /* default accents; themes override below */
   --wl-accent: hsl(258deg 6.48% 13.98%);
   --wl-rating-color: #BA7517;
   --wl-watched-color: #1D9E75;
   --wl-group-border-overlay: rgb(0 0 0 / 20%);
 }
 
-/* ── Tab bar ────────────────────────────────────────────── */
+/* Tab bar */
 .wl-tab-bar {
   display: flex;
   gap: 2px;
   padding: 8px 10px 0;
   border-bottom: 0.5px solid var(--background-modifier-border);
   flex-shrink: 0;
-  /* Clip the button row so it can never extend past the panel and let the whole
-     view be dragged sideways ("loose sheet" pan). On mobile the tabs go icon-only
-     (below) so nothing is actually clipped. */
+  /* clip so the view can't be panned sideways */
   overflow-x: hidden;
 }
 
-/* ── Mobile: icon-only tabs ─────────────────────────────────
-   Seven text labels overflow a phone-width panel; render Lucide icons instead
-   and let them share the row equally so all seven fit with no horizontal scroll. */
+/* Mobile: icon-only tabs — 7 text labels overflow a phone panel */
 .wl-view.wl-mobile .wl-tab-bar {
   gap: 0;
   padding: 6px 4px 0;
@@ -54,7 +47,7 @@
   height: 20px;
 }
 
-/* Count badge in icon mode: a small purple dot on the icon (vs. "(N)" on desktop). */
+/* icon mode: dot instead of (N) */
 .wl-tab-btn-icon.wl-tab-has-badge::after {
   content: '';
   position: absolute;
@@ -88,61 +81,49 @@
   border-bottom-color: var(--text-accent);
 }
 
-/* ── Tab content ────────────────────────────────────────── */
+/* Tab content */
 .wl-tab-content {
   flex: 1 1 0%;
   min-height: 0;
   overflow-y: auto;
-  /* Clip horizontal overflow so the view can't be panned sideways like a loose
-     sheet. Without this, overflow-y:auto + the default overflow-x:visible forces
-     overflow-x to compute to `auto` (per the CSS overflow spec), turning the
-     scroller into a horizontal scroll container on mobile. */
+  /* overflow-y:auto forces overflow-x:auto per spec; clip it or mobile pans sideways */
   overflow-x: hidden;
   padding: 12px 10px;
 }
 
-/* Mobile keyboard fix: WatchLogView pins the tab content to an explicit px
-   height (passed via --wl-pinned-tab-height) while an editor is focused.
-   The two-class selector outranks the flex base rule above. */
+/* mobile keyboard: WatchLogView pins a px height via --wl-pinned-tab-height */
 .wl-tab-content.wl-tab-content-pinned {
   flex: none;
   height: var(--wl-pinned-tab-height);
 }
 
-/* ════════════════════════════════════════════════════════
-   DASHBOARD TAB
-   ════════════════════════════════════════════════════════ */
+/* ══ DASHBOARD TAB ══ */
 
-/* ── Dashboard container ────────────────────────────────── */
+/* Dashboard container */
 .wl-dashboard {
   display: flex;
   flex-direction: column;
   gap: 0;
 }
 
-/* ── Rings grid ─────────────────────────────────────────── */
+/* Rings grid */
 .wl-rings-grid {
   display: grid;
-  /* Desktop: fixed 3-column layout (original look). Mobile overrides this with a
-     container-responsive auto-fit grid below. */
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin-bottom: 16px;
 }
 
-/* Mobile: reflow on the actual panel width (not the viewport). Wide enough panels
-   show up to 3 columns at full ring size and degrade to 2 then 1 as it narrows.
-   min(110px, 100%) caps the track at the container width so a panel narrower than
-   one card can never force horizontal overflow. */
+/* reflow on panel width, not viewport; min() caps the track so it can't overflow */
 .wl-view.wl-mobile .wl-rings-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(110px, 100%), 1fr));
+  /* container for the card below; mobile-only, so desktop is untouched */
+  container-type: inline-size;
+  container-name: wl-dash;
 }
 
-/* ── Unified Total / Time card ──────────────────────────── */
-/* The two vertical dividers are rendered as 1px grid gaps that reveal the
-   card's background colour. A 1px child border-left did not paint reliably at the
-   exact column boundary, so the gap-reveal technique is used instead: the gaps
-   always span the full row height and are guaranteed to paint. */
+/* Unified Total / Time card */
+/* dividers = 1px grid gaps revealing the card bg (a 1px border didn't paint reliably) */
 .wl-dash-unified {
   grid-column: 1 / -1;
   display: grid;
@@ -152,6 +133,67 @@
   background-color: var(--background-modifier-border); /* shows through the gaps */
   border-radius: 8px;
   overflow: hidden;
+}
+
+/* 4-up when games add a Time Played segment */
+.wl-dash-unified-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* Unified card on mobile */
+/* stacks to ONE column: the only arrangement where every value shares a right edge */
+@container wl-dash (max-width: 559px) {
+  .wl-mobile .wl-dash-unified-4 {
+    grid-template-columns: 1fr;
+    /* stacked: dividers run horizontally */
+    gap: 1px;
+  }
+
+  .wl-mobile .wl-dash-unified-4 .wl-dash-seg-time {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    text-align: left;
+  }
+
+  .wl-mobile .wl-dash-unified-4 .wl-dash-seg-time .wl-dash-seg-label {
+    margin-bottom: 0;
+  }
+
+  .wl-mobile .wl-dash-unified-4 .wl-dash-seg-time .wl-dash-seg-value {
+    font-size: 16px;
+  }
+}
+
+/* same stack for the 3-segment card; it flips at a different width */
+@container wl-dash (max-width: 439px) {
+  .wl-mobile .wl-dash-unified {
+    grid-template-columns: 1fr;
+    gap: 1px;
+  }
+
+  .wl-mobile .wl-dash-seg-time {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    text-align: left;
+  }
+
+  .wl-mobile .wl-dash-seg-time .wl-dash-seg-label {
+    margin-bottom: 0;
+  }
+
+  .wl-mobile .wl-dash-seg-time .wl-dash-seg-value {
+    font-size: 16px;
+  }
+}
+
+/* nowrap holds the values to a common right edge */
+.wl-mobile .wl-dash-seg-label,
+.wl-mobile .wl-dash-seg-value {
+  white-space: nowrap;
 }
 
 .wl-dash-unified-bordered {
@@ -193,23 +235,18 @@
 }
 
 .wl-ring-item {
-  /* Single source of truth for the gauge circle size; the SVG and the accent
-     ring (::before) both derive from it so they stay locked together. */
+  /* single source of truth for gauge size; SVG + ring derive from it */
   --wl-ring-size: 110px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
   position: relative;
-  /* Let the grid track shrink below the card's intrinsic content width. */
+  /* let the track shrink below content width */
   min-width: 0;
 }
 
-/* Accent ring: anchored to the SVG circle rather than the whole card.
-   The SVG is the first child (so its centre is one half-size down from the
-   item top) and its viewBox is 120 with the arc's outer edge at radius 50,
-   i.e. 100/120 of the box. Sizing the ring just outside that keeps it flush
-   against the arc at any gauge size. */
+/* ring sized off the SVG arc (viewBox 120, outer radius 50) so it stays flush */
 .wl-ring-item::before {
     content: '';
     position: absolute;
@@ -225,8 +262,7 @@
 
 .wl-ring-svg {
   width: var(--wl-ring-size);
-  /* Scale down (keeping the square aspect) if the cell is narrower than the
-     gauge, so a column can drop below 110px without overflowing. */
+  /* scale down if the cell is narrower than the gauge */
   max-width: 100%;
   height: auto;
   aspect-ratio: 1 / 1;
@@ -263,8 +299,7 @@
   color: var(--text-muted);
 }
 
-/* Single-line reading subline under a ring card (reserved on type cards too,
-   so every ring card stays the same height). */
+/* reserved on every ring card so heights match */
 .wl-ring-subline {
   font-size: 11px;
   min-height: 1.3em;
@@ -275,7 +310,7 @@
   text-overflow: ellipsis;
 }
 
-/* ── Summary metrics ────────────────────────────────────── */
+/* Summary metrics */
 .wl-summary-metrics {
   margin-bottom: 16px;
   border: 0.5px solid var(--background-modifier-border);
@@ -304,14 +339,169 @@
   color: var(--text-normal);
 }
 
-/* ── Time ring text ─────────────────────────────────────── */
+/* More statistics accordion */
+.wl-accordion {
+  border: 0.5px solid var(--background-modifier-border);
+  border-radius: 6px;
+}
+
+.wl-more-stats {
+  margin-bottom: 16px;
+}
+
+.wl-accordion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text-normal);
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.wl-accordion-chevron {
+  color: var(--text-muted);
+  font-size: 1.1em;
+  line-height: 1;
+  transition: transform 0.25s ease;
+}
+
+.wl-accordion.is-open > .wl-accordion-header .wl-accordion-chevron {
+  transform: rotate(90deg);
+}
+
+/* expand: 0fr → 1fr */
+.wl-accordion-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.25s ease;
+}
+
+.wl-accordion.is-open > .wl-accordion-body {
+  grid-template-rows: 1fr;
+}
+
+.wl-accordion-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.wl-more-stats > .wl-accordion-body > .wl-accordion-inner {
+  padding: 0 10px;
+}
+
+.wl-more-stats-pinned {
+  margin-bottom: 8px;
+}
+
+/* source filter pills (All / Watchlist / Reading / Games) */
+.wl-stats-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  padding: 2px 0 10px;
+}
+
+.wl-stats-filter-btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.wl-stats-filter-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.wl-stats-filter-btn.is-active {
+  background: #8B5CF6;
+  border-color: #8B5CF6;
+  color: #FFFFFF;
+}
+
+/* ~3 per row desktop, 2 then 1; rows stretch so cards equalize */
+.wl-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+/* wl-stats-card ≠ wl-stat-card (the inline widget pill) */
+.wl-stats-card {
+  border: 0.5px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 8px 0 4px;
+  min-width: 0;
+}
+
+.wl-stats-card-header {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 6px;
+}
+
+.wl-stats-card-title {
+  font-weight: 600;
+  text-align: center;
+}
+
+/* separator under every row but the last */
+.wl-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 0.5px solid var(--background-modifier-border);
+}
+
+/* truncate long credit names */
+.wl-stat-row .wl-metric-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wl-stat-row .wl-metric-value {
+  flex-shrink: 0;
+}
+
+.wl-stat-list .wl-stat-row:last-child {
+  border-bottom: none;
+}
+
+.wl-stat-toggle {
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.wl-stats-card .wl-empty-state {
+  padding: 2px 10px 8px;
+}
+
+/* Time ring text */
 .wl-ring-time-text {
   font-size: 13px;
   font-weight: 700;
   fill: var(--text-normal);
 }
 
-/* ── Recently watched ───────────────────────────────────── */
+/* Recently watched */
 .wl-section-title {
   font-size: var(--font-ui-small);
   font-weight: 600;
@@ -344,7 +534,7 @@
   text-overflow: ellipsis;
 }
 
-/* Fixed 3-column right side: badge | ep | pct */
+/* badge | ep | pct */
 .wl-rw-col-badge {
   flex-shrink: 0;
 }
@@ -368,7 +558,7 @@
   white-space: nowrap;
 }
 
-/* ── Empty state ────────────────────────────────────────── */
+/* Empty state */
 .wl-empty-state {
   color: var(--text-muted);
   font-style: italic;
@@ -376,17 +566,15 @@
   text-align: center;
 }
 
-/* ════════════════════════════════════════════════════════
-   LIST TAB
-   ════════════════════════════════════════════════════════ */
+/* ══ LIST TAB ══ */
 
 .wl-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 1px;
 }
 
-/* ── Header ─────────────────────────────────────────────── */
+/* Header */
 .wl-list-header {
   display: flex;
   align-items: center;
@@ -408,7 +596,7 @@
   font-weight: 500;
 }
 
-/* ── Search ─────────────────────────────────────────────── */
+/* Search */
 .wl-search-wrap {
   width: 100%;
 }
@@ -451,14 +639,14 @@
   border-color: var(--interactive-accent);
 }
 
-/* ── Divider ────────────────────────────────────────────── */
+/* Divider */
 .wl-divider {
   height: 0.5px;
   background: var(--background-modifier-border);
   margin: 2px 0;
 }
 
-/* ── Results count ──────────────────────────────────────── */
+/* Results count */
 .wl-results-count {
   font-size: 14px;
   font-weight: 700;
@@ -466,7 +654,38 @@
   padding: 2px 0;
 }
 
-/* ── Table ──────────────────────────────────────────────── */
+/* rows view: the count line also carries the gear */
+.wl-results-count-rows {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wl-rows-customize-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 2px 3px;
+  margin: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-radius: var(--radius-s, 4px);
+}
+
+.wl-rows-customize-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.wl-rows-customize-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Table */
 .wl-table-section {
   display: flex;
   flex-direction: column;
@@ -479,12 +698,12 @@
   overflow: hidden;
 }
 
-/* Virtual-scroll: fixed-height container; children are absolutely positioned */
+/* virtual scroll: fixed height, children absolute */
 .wl-virt-container {
   position: relative;
 }
 
-/* Virtual-scroll: each rendered item; top is set inline from the offset table */
+/* virtual scroll: top set inline from the offset table */
 .wl-virt-item {
   position: absolute;
   left: 0;
@@ -510,7 +729,7 @@
   text-align: center;
 }
 
-/* ── Row ────────────────────────────────────────────────── */
+/* Row */
 .wl-row {
   display: grid;
   grid-template-columns: 1fr 56px 72px 56px 90px 20px;
@@ -524,7 +743,7 @@
   border-right: 2px solid rgb(255 255 255 / 20%);
 }
 
-/* Visible gap between top-level rows and after accordions */
+/* gap between top-level rows and after accordions */
 .wl-row + .wl-row:not(.wl-row-indented),
 .wl-accordion + .wl-row:not(.wl-row-indented) {
   margin-top: 8px;
@@ -543,7 +762,7 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  /* Fix #2: prevent badge from stretching to full column width */
+  /* keep the badge from stretching the column */
   align-items: flex-start;
 }
 
@@ -560,7 +779,7 @@
   text-align: center;
 }
 
-/* ── Rating column ──────────────────────────────────────── */
+/* Rating column */
 .wl-col-rating {
   display: flex;
   align-items: center;
@@ -585,7 +804,7 @@
   justify-content: center;
 }
 
-/* wl-chevron kept for season headers only */
+/* season headers only */
 .wl-chevron {
   font-size: 18px;
   color: var(--text-muted);
@@ -597,7 +816,7 @@
   transform: rotate(90deg);
 }
 
-/* ── Progress bar ───────────────────────────────────────── */
+/* Progress bar */
 .wl-progress-wrap {
   height: 3px;
   background: var(--background-modifier-border);
@@ -614,7 +833,7 @@
   min-width: 0;
 }
 
-/* ── Badges ─────────────────────────────────────────────── */
+/* Badges */
 .wl-badge {
   display: inline-block;
   padding: 2px 7px;
@@ -639,9 +858,7 @@
   white-space: nowrap;
 }
 
-/* ════════════════════════════════════════════════════════
-   ACCORDION
-   ════════════════════════════════════════════════════════ */
+/* ══ ACCORDION ══ */
 
 .wl-accordion {
   padding: 12px 10px;
@@ -649,7 +866,7 @@
   border-bottom: 0.5px solid var(--background-modifier-border);
 }
 
-/* ── Accordion header ───────────────────────────────────── */
+/* Accordion header */
 .wl-accordion-header {
   display: flex;
   justify-content: space-between;
@@ -698,12 +915,12 @@
   width: 70px;
 }
 
-/* ── Accordion body ─────────────────────────────────────── */
+/* Accordion body */
 .wl-accordion-body {
   margin-bottom: 12px;
 }
 
-/* ── Season ─────────────────────────────────────────────── */
+/* Season */
 .wl-season-wrap {
   margin-bottom: 10px;
 }
@@ -736,7 +953,7 @@
   flex: 1;
 }
 
-/* ── Episode grid ───────────────────────────────────────── */
+/* Episode grid */
 .wl-episode-grid {
   display: flex;
   flex-wrap: wrap;
@@ -784,7 +1001,7 @@
   border-color: #6b2972;
 }
 
-/* ── Season fill/clear button ───────────────────────────── */
+/* Season fill/clear button */
 .wl-season-fill-btn {
   width: 20px;
   height: 28px;
@@ -816,7 +1033,7 @@
   opacity: 0.75;
 }
 
-/* ── Movie row ──────────────────────────────────────────── */
+/* Movie row */
 .wl-movie-row {
   display: flex;
   align-items: center;
@@ -824,17 +1041,39 @@
   padding: 6px 0;
 }
 
-.wl-movie-checkbox {
-  width: 16px;
-  height: 16px;
+/* detail-modal stand-in for the movie checkbox; green once watched */
+.wl-mark-watched-btn {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
   cursor: pointer;
+  background: transparent;
+  border: 0.5px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  box-shadow: none;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
 }
 
-.wl-movie-label {
-  font-weight: 500;
+.wl-mark-watched-btn:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--background-modifier-border-hover);
+  color: var(--text-normal);
 }
 
-/* ── Accordion footer ───────────────────────────────────── */
+.wl-mark-watched-btn.is-watched {
+  background: transparent;
+  border-color: rgba(var(--color-green-rgb), 0.65);
+  color: var(--color-green);
+}
+
+/* watched hover fills green */
+.wl-mark-watched-btn.is-watched:hover {
+  background: var(--color-green);
+  border-color: var(--color-green);
+  color: var(--text-on-accent);
+}
+
+/* Accordion footer */
 .wl-accordion-footer {
   border-top: 0.5px solid var(--background-modifier-border);
   padding-top: 10px;
@@ -874,6 +1113,89 @@
   color: var(--wl-rating-color);
 }
 
+/* Shared star-rating control (StarRating.ts) */
+/* JS drives hover via is-active/is-half, so kill the CSS :hover here */
+/* doubled class beats any caller class regardless of order */
+.wl-star-rating.wl-star-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wl-star-rating-stars {
+  display: inline-flex;
+  gap: 3px;
+}
+
+/* tier text; JS sets the color */
+.wl-star-rating-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.wl-star-rating-label.is-unrated {
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+.wl-star-rating .wl-star {
+  position: relative;
+}
+
+.wl-star-rating .wl-star:hover {
+  color: var(--text-faint);
+}
+
+.wl-star-rating .wl-star.is-active,
+.wl-star-rating .wl-star.is-active:hover {
+  color: var(--wl-rating-color);
+}
+
+/* half star: clipped overlay glyph over a faint base */
+.wl-star-rating .wl-star.is-half::after {
+  content: '★';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 50%;
+  overflow: hidden;
+  color: var(--wl-rating-color);
+}
+
+/* Rating system (Settings → Customize) */
+.wl-rating-tier-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.wl-rating-tier-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* static preview; stars are direct children, so restate the gap */
+.wl-rating-tier-preview {
+  pointer-events: none;
+  flex-shrink: 0;
+  gap: 3px;
+}
+
+.wl-rating-tier-preview .wl-star {
+  font-size: 15px;
+  cursor: default;
+}
+
+.wl-rating-tier-label {
+  flex: 1;
+  min-width: 0;
+  max-width: 200px;
+}
+
 .wl-footer-row {
   display: flex;
   align-items: center;
@@ -885,6 +1207,33 @@
   color: var(--text-muted);
   width: 80px;
   flex-shrink: 0;
+}
+
+/* second label hugs its text */
+.wl-footer-label-auto {
+  width: auto;
+}
+
+/* Date field (label + Today + input) */
+/* shared by the detail modal and the List expanded footer */
+.wl-date-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+/* fits dd/mm/yyyy */
+.wl-date-input {
+  box-sizing: border-box;
+  width: calc(10ch + 13px);
+  flex-shrink: 0;
+}
+
+/* wrap to two lines in a narrow sidebar */
+.wl-footer-row-pair {
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 .wl-notes-input {
@@ -926,7 +1275,7 @@
 .wl-edit-btn {
   padding: 3px 10px;
   background: transparent;
-  border: 0.5px solid var(--background-modifier-border);
+  border: 0.5px solid var(--color-cyan);
   color: var(--text-normal);
   border-radius: 4px;
   cursor: pointer;
@@ -945,9 +1294,7 @@
   font-size: 11px;
 }
 
-/* ════════════════════════════════════════════════════════
-   INLINE WIDGET
-   ════════════════════════════════════════════════════════ */
+/* ══ INLINE WIDGET ══ */
 
 .wl-widget {
   border: 0.5px solid var(--background-modifier-border);
@@ -1024,9 +1371,7 @@
   padding: 4px 8px;
 }
 
-/* ════════════════════════════════════════════════════════
-   MODALS
-   ════════════════════════════════════════════════════════ */
+/* ══ MODALS ══ */
 
 .wl-add-modal {
   display: flex;
@@ -1048,34 +1393,33 @@
   flex-shrink: 0;
 }
 
-/* Two labelled fields sharing one row, with fixed-width inputs anchored into
-   two columns (rather than stretched to 50%) to save vertical space. */
+/* two fields per row, fixed-width inputs in two columns */
 .wl-modal-pair-cell {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-/* Right group anchors to the row's right edge, leaving empty space in the
-   middle, so its input's right edge meets the full-width fields' right edge. */
 .wl-modal-pair-cell-right {
   margin-left: auto;
 }
 
-/* Left cell keeps the standard 110px label so its input's left edge lines up
-   with the full-width (Title) input; the right cell's label is natural width. */
+/* 110px label lines its input up with the full-width one */
 .wl-modal-pair-cell-right .wl-modal-label {
   width: auto;
 }
 
-/* All four paired fields (two number inputs + two selects) share one fixed,
-   narrow width — only their left/right edges align with the full-width fields;
-   they intentionally do not span the row. */
+
 .wl-modal-pair-cell .wl-modal-input,
 .wl-modal-pair-cell .wl-select {
   flex: 0 0 auto;
   width: 110px;
   min-width: 0;
+}
+
+.wl-modal-pair-cell .wl-modal-input[type='number'] {
+  box-sizing: border-box;
+  width: 50px;
 }
 
 .wl-modal-input {
@@ -1110,8 +1454,7 @@
   font-style: italic;
 }
 
-/* Doubled class (+ :focus variant) outranks Obsidian's `input[type=…]` /
-   `input[type=…]:focus` border rules and `.wl-modal-input:focus` above. */
+/* doubled class outranks Obsidian's input[type=…] rules */
 .wl-input-error.wl-input-error,
 .wl-input-error.wl-input-error:focus {
   border-color: var(--text-error);
@@ -1149,16 +1492,30 @@
 }
 
 .wl-modal-results {
-  /* Grown by ~2 reclaimed form rows (Episodes/duration + Status/priority now
-     pair onto single rows) so the results list fills the freed vertical space
-     while the overall modal height stays the same. */
-  max-height: 272px;
+  max-height: 400px;
   overflow-y: auto;
   border: 0.5px solid var(--background-modifier-border);
   border-radius: 5px;
   margin-top: 2px;
 }
 
+/* add-flow search: 3 posters per row, text beneath */
+.wl-modal-results.wl-results-grid {
+  display: grid;
+  /* minmax(0,1fr) so long meta can't widen the column */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  align-content: start;
+}
+
+/* Loading / no-API / empty messages span the whole grid width. */
+.wl-results-grid > .wl-modal-loading,
+.wl-results-grid > .wl-modal-no-api {
+  grid-column: 1 / -1;
+}
+
+/* text-only rows: maybe-add modal + autofill dropdown */
 .wl-result-item {
   padding: 7px 10px;
   cursor: pointer;
@@ -1166,29 +1523,44 @@
   transition: background 0.1s;
 }
 
-/* Rows that carry a cover thumbnail lay out as a flex row (thumb · text). */
-.wl-result-item.wl-has-thumb {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
 .wl-result-item:last-child {
   border-bottom: none;
 }
 
-.wl-result-text {
-  min-width: 0;
-  flex: 1 1 auto;
+.wl-result-item:hover,
+.wl-result-item.is-selected,
+.wl-result-item.wl-result-item-focused {
+  background: var(--background-modifier-hover);
 }
 
-/* Shared cover thumbnail for add-flow search-result rows (poster 2:3). */
+/* Card — add-flow search results. */
+.wl-result-card {
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.wl-result-card:hover,
+.wl-result-card.is-selected {
+  background: var(--background-modifier-hover);
+  border-color: var(--background-modifier-border);
+}
+
+.wl-result-card .wl-result-text {
+  min-width: 0;
+  margin-top: 6px;
+}
+
+/* cover: full card width, 2:3 */
 .wl-result-thumb {
   position: relative;
-  flex: 0 0 auto;
-  width: 40px;
-  height: 60px;
-  border-radius: 3px;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 4px;
   overflow: hidden;
   background: var(--background-modifier-border);
   display: flex;
@@ -1197,7 +1569,7 @@
 }
 
 .wl-result-thumb-icon {
-  font-size: 18px;
+  font-size: 28px;
   opacity: 0.6;
   line-height: 1;
 }
@@ -1210,10 +1582,39 @@
   object-fit: cover;
 }
 
-.wl-result-item:hover,
-.wl-result-item.is-selected,
-.wl-result-item.wl-result-item-focused {
-  background: var(--background-modifier-hover);
+/* already-in-library marker */
+.wl-result-card.is-in-library .wl-result-thumb-img,
+.wl-result-card.is-in-library .wl-result-thumb-icon {
+  opacity: 0.45;
+}
+
+.wl-result-card.is-in-library .wl-result-title {
+  color: var(--text-muted);
+}
+
+.wl-result-owned-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  right: 4px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-on-accent);
+  background: var(--color-green);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wl-result-owned-check {
+  flex-shrink: 0;
 }
 
 .wl-result-title {
@@ -1224,6 +1625,22 @@
 .wl-result-meta {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+/* clamp title to 2 lines, ellipsis the meta */
+.wl-result-card .wl-result-title {
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wl-result-card .wl-result-meta {
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wl-modal-loading {
@@ -1289,7 +1706,7 @@
   background: var(--background-secondary);
 }
 
-/* ── Custom Lists import modal ─────────────────────────── */
+/* Custom Lists import modal */
 .wl-import-textarea {
   min-height: 140px;
   margin: 8px 0;
@@ -1358,9 +1775,7 @@
   border-color: var(--color-green);
 }
 
-/* ════════════════════════════════════════════════════════
-   SETTINGS
-   ════════════════════════════════════════════════════════ */
+/* ══ SETTINGS ══ */
 
 .wl-settings-nav {
   display: flex;
@@ -1411,6 +1826,11 @@
   border-left: 3px solid var(--interactive-accent);
 }
 
+/* secondary clause in an info box */
+.wl-settings-info-note {
+  color: var(--text-faint);
+}
+
 .wl-status-indicator {
   font-size: 12px;
   color: var(--text-muted);
@@ -1427,51 +1847,595 @@
   font-weight: 600;
 }
 
-/* ── API settings callouts ──────────────────────────────── */
-.wl-api-callout {
-  border: 1px solid var(--background-modifier-border);
-  border-left-width: 3px;
-  border-radius: 8px;
-  padding: 10px 14px 14px;
-  margin: 14px 0;
-  background: var(--background-secondary);
+/* API page: groups & provider cards — accent is an "R, G, B" triple in --wl-sg-accent, spent
+   on the header only */
+.wl-sg-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 6px;
 }
 
-.wl-api-callout-title {
+.wl-sg {
+  --wl-sg-accent: 74, 137, 220;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--background-primary);
+}
+
+/* watchlist = movies blue, reading = books yellow */
+.wl-sg--movies,
+.wl-sg--watchlist { --wl-sg-accent: 74, 137, 220; }
+.wl-sg--anime { --wl-sg-accent: 45, 168, 115; }
+.wl-sg--books,
+.wl-sg--reading { --wl-sg-accent: 214, 158, 46; }
+.wl-sg--games { --wl-sg-accent: 229, 72, 77; }
+.wl-sg--theme { --wl-sg-accent: 139, 92, 246; }
+.wl-sg--cards { --wl-sg-accent: 45, 168, 115; }
+.wl-sg--shared { --wl-sg-accent: 138, 143, 158; }
+
+/* Per-tab "Main" accents: one colour per settings page. */
+.wl-sg--general { --wl-sg-accent: 38, 166, 154; }
+.wl-sg--drafts { --wl-sg-accent: 196, 86, 170; }
+.wl-sg--lists { --wl-sg-accent: 32, 156, 190; }
+
+/* utility accents: green CSV, orange folders, purple tree, slate backup */
+.wl-sg--csv { --wl-sg-accent: 45, 168, 115; }
+.wl-sg--folders { --wl-sg-accent: 216, 128, 62; }
+.wl-sg--subfolders { --wl-sg-accent: 139, 92, 246; }
+.wl-sg--backup { --wl-sg-accent: 108, 122, 145; }
+
+.wl-sg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(
+    90deg,
+    rgba(var(--wl-sg-accent), 0.16),
+    rgba(var(--wl-sg-accent), 0.03)
+  );
+  border-bottom: 1px solid rgba(var(--wl-sg-accent), 0.28);
+}
+
+.wl-sg-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: rgb(var(--wl-sg-accent));
+  background: rgba(var(--wl-sg-accent), 0.16);
+  border: 1px solid rgba(var(--wl-sg-accent), 0.28);
+}
+
+.wl-sg-icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.wl-sg-titles {
+  min-width: 0;
+}
+
+.wl-sg-title {
   font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
+  color: rgb(var(--wl-sg-accent));
+}
+
+.wl-sg-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+/* Status chips (group header + per provider) */
+.wl-sg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+}
+
+.wl-sg-head .wl-sg-chip {
+  margin-left: auto;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* Buy Me a Coffee button in a group header — brand yellow, dark text in both themes */
+.wl-sg-head .wl-bmc-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: #FFDD00;
+  border: 2px solid #E5C700;
+  color: #0D0C0C;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-decoration: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.wl-sg-head .wl-bmc-btn:hover {
+  background: #FFE84D;
+  text-decoration: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
+}
+
+.wl-bmc-icon {
+  display: grid;
+  place-items: center;
+}
+
+.wl-bmc-icon .svg-icon {
+  width: 15px;
+  height: 15px;
+  color: #0D0C0C;
+}
+
+/* header stacks on narrow panes; keep the button on its own line, not squeezed */
+@media (max-width: 480px) {
+  .wl-sg-head .wl-bmc-btn .wl-bmc-text {
+    display: none;
+  }
+  .wl-sg-head .wl-bmc-btn {
+    padding: 5px 8px;
+  }
+}
+
+.wl-sg-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+.wl-sg-chip.is-ok { color: #1D9E75; }
+.wl-sg-chip.is-warn { color: #D89A2B; }
+.wl-sg-chip.is-error { color: #E24B4A; }
+.wl-sg-chip.is-idle { color: var(--text-muted); }
+.wl-sg-chip.is-pending { color: var(--text-muted); }
+.wl-sg-chip.is-pending .wl-sg-chip-dot {
+  animation: wl-sg-pulse 1s ease-in-out infinite;
+}
+.wl-sg-chip.is-idle .wl-sg-chip-dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+/* neutral read-out; a dot would imply a state */
+.wl-sg-chip.is-count {
+  color: var(--text-muted);
+}
+.wl-sg-chip.is-count .wl-sg-chip-dot {
+  display: none;
+}
+
+@keyframes wl-sg-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+.wl-sg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+/* Bodies of bare Obsidian `Setting` rows — those bring their own padding + separator, so the
+   group border is the frame */
+.wl-sg-body--rows {
+  gap: 0;
+  padding: 4px 14px 12px;
+}
+
+.wl-sg-body--rows > .setting-item {
+  padding: 11px 0;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.wl-sg-body--rows > .setting-item:first-child {
+  border-top: none;
+}
+
+.wl-sg-body--rows > .setting-item:last-child {
+  padding-bottom: 0;
+}
+
+.wl-sg-body--rows > .setting-item .setting-item-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.wl-sg-body--rows > .setting-item .setting-item-description {
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+/* non-Setting children still need spacing */
+.wl-sg-body--rows > .wl-regen-progress-wrap {
+  margin: 10px 0 0;
+}
+
+/* group padding is the margin; the last rule would double the border */
+.wl-sg-body > .wl-folder-list {
+  margin: 0;
+}
+
+.wl-sg-body > .wl-folder-list > .wl-folder-row:last-child {
+  border-bottom: none;
+}
+
+/* Sub-card inside a group (Customize lists) */
+.wl-sg-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  padding: 10px 12px 11px;
+  background: var(--background-secondary);
+}
+
+.wl-sg-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.wl-sg-card-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.wl-sg-card-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.wl-sg-card-body {
+  margin-top: 9px;
+}
+
+.wl-sg-card-body > *:last-child {
+  margin-bottom: 0;
+}
+
+/* keep the +add row compact */
+.wl-sg-card .wl-tag-add-row .wl-modal-input {
+  flex: 0 1 200px;
+  min-width: 0;
+}
+
+/* help panel sits between head and body here */
+.wl-sg-help--card {
+  margin-top: 9px;
+}
+
+/* Segmented "Active API" picker */
+.wl-sg-seg-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wl-sg-seg-label {
+  font-size: 13px;
+  color: var(--text-normal);
+}
+
+.wl-sg-seg {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+}
+
+button.wl-sg-seg-btn {
+  padding: 4px 14px;
+  height: auto;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+button.wl-sg-seg-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+button.wl-sg-seg-btn.is-active {
+  background: rgba(var(--wl-sg-accent), 0.14);
+  color: rgb(var(--wl-sg-accent));
+  font-weight: 600;
+}
+
+/* Provider cards */
+.wl-api-provider {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  padding: 10px 12px 11px;
+  background: var(--background-secondary);
+  transition: opacity 0.15s;
+}
+
+.wl-api-provider.is-inactive {
+  opacity: 0.6;
+}
+
+.wl-api-provider.is-inactive:hover,
+.wl-api-provider.is-inactive:focus-within {
+  opacity: 1;
+}
+
+.wl-api-provider-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wl-api-provider-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgb(var(--wl-sg-accent));
+  background: rgba(var(--wl-sg-accent), 0.14);
+  border: 1px solid rgba(var(--wl-sg-accent), 0.25);
+}
+
+.wl-api-provider-names {
+  min-width: 0;
+}
+
+.wl-api-provider-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.wl-api-provider-note {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.wl-api-provider-state {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.wl-api-provider-state:empty {
+  display: none;
+}
+
+.wl-api-provider-state.is-active {
+  color: rgb(var(--wl-sg-accent));
+  background: rgba(var(--wl-sg-accent), 0.12);
+  border-color: rgba(var(--wl-sg-accent), 0.35);
+}
+
+/* Credential fields */
+.wl-api-field {
+  margin-top: 10px;
+}
+
+.wl-api-field-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
   margin-bottom: 4px;
 }
 
-/* Muted, theme-aware tints — discreet rather than loud. */
-.wl-api-callout--movies {
-  border-left-color: rgba(74, 137, 220, 0.55);
-  background: rgba(74, 137, 220, 0.06);
+.wl-api-field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.wl-api-callout--movies .wl-api-callout-title { color: rgba(74, 137, 220, 0.95); }
 
-.wl-api-callout--anime {
-  border-left-color: rgba(45, 168, 115, 0.55);
-  background: rgba(45, 168, 115, 0.06);
+/* width of the reveal button + its gap */
+.wl-api-field-row--plain {
+  padding-right: 34px;
 }
-.wl-api-callout--anime .wl-api-callout-title { color: rgba(45, 168, 115, 0.95); }
 
-.wl-api-callout--books {
-  border-left-color: rgba(214, 158, 46, 0.6);
-  background: rgba(214, 158, 46, 0.07);
+input.wl-api-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-monospace);
+  font-size: 12px;
 }
-.wl-api-callout--books .wl-api-callout-title { color: rgba(214, 158, 46, 0.95); }
 
-/* ── Tag sections ───────────────────────────────────────── */
-.wl-tag-section {
-  margin-bottom: 16px;
-  padding: 10px 12px;
-  border: 0.5px solid var(--background-modifier-border);
+button.wl-sg-icon-btn {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+button.wl-sg-icon-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+button.wl-sg-icon-btn .svg-icon {
+  width: 15px;
+  height: 15px;
+}
+
+button.wl-sg-help-btn {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+button.wl-sg-help-btn.is-active {
+  color: rgb(var(--wl-sg-accent));
+  border-color: rgba(var(--wl-sg-accent), 0.4);
+  background: rgba(var(--wl-sg-accent), 0.1);
+}
+
+/* Provider footer */
+.wl-api-provider-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.wl-api-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.wl-api-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 4px 6px;
   border-radius: 6px;
 }
 
+.wl-api-link:hover {
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+  text-decoration: none;
+}
+
+.wl-api-link-icon {
+  display: inline-flex;
+}
+
+.wl-api-link-icon .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+
+button.wl-api-test {
+  padding: 4px 12px;
+  height: auto;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.wl-sg-help {
+  display: none;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 0 6px 6px 0;
+  border-left: 2px solid rgba(var(--wl-sg-accent), 0.5);
+  background: var(--background-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.wl-sg-help.is-open {
+  display: block;
+}
+
+/* group-level footnote */
+.wl-sg-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-faint);
+  padding: 0 2px;
+}
+
+/* Steam sync row, hanging off its provider card */
+.wl-api-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.wl-api-action-texts {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wl-api-action-title {
+  font-size: 13px;
+  color: var(--text-normal);
+}
+
+.wl-api-action-desc {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+button.wl-api-action-btn {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  height: auto;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.wl-sg-page .wl-settings-card {
+  margin-top: 0;
+}
+
+/* Tag sections */
 .wl-tags-list {
   display: flex;
   flex-wrap: wrap;
@@ -1573,7 +2537,7 @@
   background: none;
 }
 
-/* ── Folders ────────────────────────────────────────────── */
+/* Folders */
 .wl-folder-list {
   margin: 8px 0;
 }
@@ -1598,12 +2562,10 @@
   font-size: 11px;
 }
 
-/* ════════════════════════════════════════════════════════
-   MOBILE RESPONSIVE
-   ════════════════════════════════════════════════════════ */
+/* ══ MOBILE RESPONSIVE ══ */
 
 @media (max-width: 600px) {
-  /* FEATURE 2 — hide Priority, Started, Rating columns */
+  /* hide Priority / Started / Rating */
   .wl-col-priority,
   .wl-col-priority-h,
   .wl-col-started,
@@ -1618,7 +2580,7 @@
     grid-template-columns: 1fr 90px 20px;
   }
 
-  /* FEATURE 3 — smaller toolbar buttons */
+  /* smaller toolbar buttons */
   .wl-header-controls .wl-btn,
   .wl-header-controls .wl-add-btn {
     font-size: 10px;
@@ -1627,8 +2589,7 @@
 }
 
 @media (max-width: 400px) {
-  /* Tighten the rings-grid gap on very small screens; column count and ring
-     size are now handled by the auto-fit grid + scaling SVG above. */
+  /* tighter rings gap on very small screens */
   .wl-rings-grid {
     gap: 8px;
   }
@@ -1671,11 +2632,9 @@
     }
 }
 
-/* ════════════════════════════════════════════════════════
-   NEW IN 0.3.0
-   ════════════════════════════════════════════════════════ */
+/* ══ NEW IN 0.3.0 ══ */
 
-/* ── +Add / Edit button dropdown ────────────────────────── */
+/* +Add / Edit button dropdown */
 .wl-add-btn-wrap {
   position: relative;
 }
@@ -1693,13 +2652,12 @@
   padding: 4px 0;
 }
 
-/* Popovers anchored to a button via dynamic top/left (ReadingTab) instead of
-   the default right-aligned drop placement. */
+/* popovers anchored by inline top/left (ReadingTab) */
 .wl-dropdown.wl-popover-anchored {
   right: auto;
 }
 
-/* ── Group header row ────────────────────────────────────── */
+/* Group header row */
 .wl-table .wl-group-row {
     background: transparent;
     border: 2px solid var(--wl-group-border-overlay);
@@ -1717,14 +2675,14 @@
   margin-top: 2px;
 }
 
-/* ── Indented member rows (inside expanded group) ────────── */
+/* Indented member rows (inside expanded group) */
 .wl-row-indented {
   padding-left: 24px;
   background: var(--background-primary-alt);
   border-left: 2px solid var(--background-modifier-border);
 }
 
-/* ── Per-title stats: right-side group (3 stat blocks + progress) ── */
+/* per-title stats: 3 blocks + progress */
 .wl-acc-right-group {
   display: flex;
   flex-direction: row;
@@ -1738,16 +2696,14 @@
   font-size: 5px;
 }
 
-/* Each stat block (left / watched / episodes) — centered under their numbers */
+/* each stat block, centered */
 .wl-acc-stat-block {
   flex-shrink: 0;
   text-align: center;
   min-width: 50px;
 }
 
-/* ════════════════════════════════════════════════════════
-   MINIMAL WIDGET
-   ════════════════════════════════════════════════════════ */
+/* ══ MINIMAL WIDGET ══ */
 
 .wl-widget-minimal {
   display: inline-flex;
@@ -1765,9 +2721,7 @@
   white-space: nowrap;
 }
 
-/* ════════════════════════════════════════════════════════
-   GROUP ACTION BUTTONS (rename / delete)
-   ════════════════════════════════════════════════════════ */
+/* ══ GROUP ACTION BUTTONS (rename / delete) ══ */
 
 .wl-group-name-row {
   display: flex;
@@ -1818,9 +2772,7 @@
   outline: none;
 }
 
-/* ════════════════════════════════════════════════════════
-   AIRTIME TAB
-   ════════════════════════════════════════════════════════ */
+/* ══ AIRTIME TAB ══ */
 
 .wl-airtime {
   display: flex;
@@ -1828,7 +2780,7 @@
   gap: 6px;
 }
 
-/* ── Cards container ─────────────────────────────────── */
+/* Cards container */
 .wl-airtime-cards {
   display: flex;
   flex-direction: column;
@@ -1836,7 +2788,7 @@
   margin-top: 4px;
 }
 
-/* ── Single card ─────────────────────────────────────── */
+/* Single card */
 .wl-airtime-card {
   display: flex;
   align-items: flex-start;
@@ -1853,7 +2805,7 @@
   background: var(--background-modifier-hover);
 }
 
-/* ── Left section ────────────────────────────────────── */
+/* Left section */
 .wl-airtime-card-left {
   flex: 1;
   min-width: 0;
@@ -1882,7 +2834,7 @@
   color: var(--text-muted);
 }
 
-/* ── Right section ───────────────────────────────────── */
+/* Right section */
 .wl-airtime-card-right {
   flex-shrink: 0;
   display: flex;
@@ -1891,7 +2843,7 @@
   gap: 6px;
 }
 
-/* ── Countdown pill ──────────────────────────────────── */
+/* Countdown pill */
 .wl-airtime-pill {
   padding: 2px 10px;
   border-radius: 20px;
@@ -1934,7 +2886,7 @@
   border: 0.5px solid #F7C1C1;
 }
 
-/* ── Episode badge ───────────────────────────────────── */
+/* Episode badge */
 .wl-ep-badge {
   display: inline-flex;
   align-items: center;
@@ -1965,14 +2917,343 @@
   border: 0.5px solid #F7C1C1;
 }
 
-/* ── Schedule hint text ──────────────────────────────── */
+/* Tracker Cards view (poster grid, month-grouped) */
+
+.wl-tracker-scroll {
+  position: relative;
+  width: 100%;
+  overflow-y: auto;
+  /* scrollbar-gutter: the virtual-scroll math reads clientWidth */
+  scrollbar-gutter: stable;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 4px;
+}
+
+/* month header "July 2026 (3)" */
+.wl-tracker-month-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin: 0 0 6px 2px;
+}
+
+/* divider above later months; pseudo-element so it can be faded */
+.wl-tracker-month-spacer + .wl-tracker-month-title {
+  position: relative;
+  margin-top: -4px;
+  padding-top: 8px;
+}
+
+.wl-tracker-month-spacer + .wl-tracker-month-title::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 8px;
+  height: 2px;
+  background: var(--background-modifier-border);
+  opacity: 0.45;
+}
+
+/* spacer reserving the month's scroll extent */
+.wl-tracker-month-spacer {
+  position: relative;
+  width: 100%;
+}
+
+/* poster + text cell; height pinned to what the scroll math reserves */
+.wl-cards-grid.wl-cards-grid-virtual .wl-tracker-cell,
+.wl-cards-grid.wl-cards-grid-virtual .wl-card-cell {
+  height: var(--wl-card-height, auto);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* keep the 2:3 poster; cancel the virtual-grid full-height rule */
+.wl-cards-grid.wl-cards-grid-virtual .wl-tracker-cell .wl-card,
+.wl-cards-grid.wl-cards-grid-virtual .wl-card-cell .wl-card {
+  height: auto;
+  aspect-ratio: 2 / 3;
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+/* same cell outside a virtual grid (rows strips, plain grids) */
+.wl-card-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.wl-card-cell .wl-card {
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+/* text under the poster; heights must add up to POSTER_CARD_TEXT_H */
+.wl-card-under-info {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 2px 0;
+}
+
+.wl-card-under-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-normal);
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wl-card-under-year {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+/* progress bar on a normal bg (not the poster scrim) */
+.wl-card-under-info .wl-card-progress-bar {
+  margin-top: 2px;
+  background: var(--background-modifier-border);
+}
+
+.wl-card-under-info .wl-card-progress-fill {
+  background: var(--interactive-accent);
+}
+
+/* type badge, top-left over the poster */
+.wl-tracker-type-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 0.6rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #fff;
+  max-width: calc(100% - 54px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wl-tracker-type-badge.is-plain {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+/* countdown badge, top-right */
+.wl-tracker-countdown {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.wl-tracker-countdown-num {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.wl-tracker-countdown-label {
+  margin-top: 2px;
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  opacity: 0.85;
+}
+
+.wl-tracker-countdown-word {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+/* State colors mirror the List countdown pills. */
+.wl-tracker-countdown.is-today-before {
+  background: #7F77DD;
+}
+
+.wl-tracker-countdown.is-aired {
+  background: #FAEEDA;
+  color: #633806;
+  border: 0.5px solid #FAC775;
+}
+
+.wl-tracker-countdown.is-due {
+  background: #FCEBEB;
+  color: #791F1F;
+  border: 0.5px solid #F7C1C1;
+}
+
+/* green tick once the release passed; the extra `button` outranks Obsidian's base rule */
+.wl-tracker-card button.wl-tracker-tick-btn {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: #1D9E75;
+  background-color: #1D9E75;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.wl-tracker-card button.wl-tracker-tick-btn:hover {
+  background-color: #178563;
+}
+
+/* globe in the corner, ⋮ above it; ancestor beats the base card-menu rule */
+.wl-tracker-card .wl-tracker-globe-btn {
+  top: auto;
+  bottom: 4px;
+  right: 4px;
+  font-size: 12px;
+}
+
+.wl-tracker-card .wl-tracker-menu-btn {
+  top: auto;
+  bottom: 32px;
+  right: 4px;
+}
+
+/* Menu opens upward, clear of the stacked ⋮ / globe buttons. */
+.wl-tracker-card .wl-card-context-menu {
+  top: auto;
+  bottom: 60px;
+}
+
+/* height = TRACKER_CARD_TEXT_H in AirtimeTab.ts — keep in sync */
+.wl-tracker-card-info {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 2px 0;
+}
+
+.wl-tracker-card-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-normal);
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wl-tracker-card-sub {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* text-inside mode: same block as a bottom overlay on the poster */
+.wl-tracker-card-overlay {
+  gap: 3px;
+}
+
+.wl-tracker-card-overlay .wl-tracker-card-title {
+  color: #fff;
+}
+
+.wl-tracker-card-overlay .wl-tracker-card-sub {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+/* season · episode · airing next */
+.wl-ep-badge.wl-tracker-ep-badge {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  font-size: 10px;
+  padding: 1px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Schedule hint text */
 .wl-schedule-hint {
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 2px;
 }
 
-/* ── Action buttons ──────────────────────────────────── */
+/* Set-schedule modal: Single release / Recurring episodes toggle */
+.wl-schedule-mode-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.wl-schedule-mode-btn.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+/* One compact progress line: Season [2] of [3] · Episode [7] of [13] */
+.wl-schedule-progress-row {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wl-schedule-progress-row .wl-modal-label {
+  width: auto;
+}
+
+.wl-schedule-num {
+  width: 58px;
+  max-width: 58px;
+  flex: unset;
+}
+
+.wl-schedule-progress-sep {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.wl-schedule-progress-dot {
+  margin: 0 4px;
+}
+
+/* date input, sized like the time input */
+.wl-date-input {
+  min-width: 130px;
+  max-width: 160px;
+  flex: unset;
+}
+
+/* Action buttons */
 .wl-airtime-actions {
   display: flex;
   gap: 4px;
@@ -2003,7 +3284,7 @@
 
 /* .wl-airtime-action-btn-delete — color via .wl-btn-danger */
 
-/* ── Tick (complete) button ───────────────────────────────── */
+/* Tick (complete) button */
 .wl-airtime-action-btn-tick {
   color: #1D9E75;
   border-color: #1D9E75;
@@ -2016,14 +3297,14 @@
   border-color: #1D9E75;
 }
 
-/* ── Time input — wide enough for HH:MM ──────────────────── */
+/* Time input — wide enough for HH:MM */
 .wl-time-input {
   min-width: 110px;
   max-width: 130px;
   flex: unset;
 }
 
-/* ── JST clock display ───────────────────────────────────── */
+/* JST clock display */
 .wl-jst-clock {
   font-size: 11px;
   color: var(--text-muted);
@@ -2032,7 +3313,7 @@
   padding-left: 4px;
 }
 
-/* ── Upcoming title count badge ──────────────────────────── */
+/* Upcoming title count badge */
 .wl-list-title-wrap {
   display: flex;
   align-items: center;
@@ -2053,9 +3334,7 @@
   font-weight: 600;
 }
 
-/* ════════════════════════════════════════════════════════
-   RECTANGLE DASHBOARD CARDS
-   ════════════════════════════════════════════════════════ */
+/* ══ RECTANGLE DASHBOARD CARDS ══ */
 
 .wl-rect-item {
   display: flex;
@@ -2111,8 +3390,7 @@
   transition: width 0.3s ease;
 }
 
-/* Single-line caption under a rect card's bar (e.g. "X / Y pages").
-   min-height reserves the line so cards without a sublabel stay the same height. */
+/* caption under the bar; min-height keeps card heights equal */
 .wl-rect-subline {
   font-size: 10px;
   color: var(--text-muted);
@@ -2123,9 +3401,7 @@
   text-overflow: ellipsis;
 }
 
-/* ════════════════════════════════════════════════════════
-   SELECTION MODE
-   ════════════════════════════════════════════════════════ */
+/* ══ SELECTION MODE ══ */
 
 /* Header controls area (right side of header) */
 .wl-header-controls {
@@ -2136,12 +3412,7 @@
   min-width: 0;
 }
 
-/* Toolbar action-button wrapper — a nested flex row that fills the space left
-   by the (max-width-capped) search input, mirroring the controls row's gap so
-   the buttons lay out exactly as if they were direct flex items. ListTab can
-   rebuild the wrapper in isolation (selection-mode toggles) without touching
-   the search input; margin-left:auto children (wl-header-controls-right) still
-   pin to the row's right edge because the wrapper spans the remaining width. */
+/* nested flex row so the buttons lay out as direct items; ListTab rebuilds it alone */
 .wl-toolbar-actions {
   display: flex;
   align-items: center;
@@ -2170,20 +3441,12 @@
   margin-left: 8px;
 }
 
-/* Overflow guard (WatchLogView.guardOverflow): re-enables scrolling when an
-   outside mutation forces the tab content to overflow: hidden. The two-class
-   selector outranks single-class rules; inline overrides are stripped by the
-   guard itself (style.removeProperty) so no !important is needed. */
+/* overflow guard (WatchLogView.guardOverflow); two-class beats single-class rules */
 .wl-tab-content.wl-force-overflow-auto {
   overflow: auto;
 }
 
-/* ── Mobile toolbar crossfade slot ──────────────────────────
-   On mobile the search input and the action buttons overlap inside a single
-   fixed-height slot and crossfade between each other (toggled by the chevron
-   button). Both panes are absolutely positioned so swapping them causes no
-   reflow — only opacity is animated (mobile WebView layout transitions are
-   unreliable). */
+/* Mobile toolbar crossfade — search and actions overlap in one slot; only opacity animates */
 .wl-toolbar-slot {
   position: relative;
   flex: 1;
@@ -2199,8 +3462,7 @@
   gap: 6px;
 }
 
-/* Search input fills the full slot width on mobile (overriding the desktop
-   max-width cap). */
+/* search fills the slot on mobile */
 .wl-toolbar-slot-pane .wl-reading-search-wrap {
   max-width: none;
 }
@@ -2233,6 +3495,17 @@
   border-color: var(--interactive-accent);
 }
 
+/* Select button while selection mode is on — reads Cancel, red text + border */
+.wl-btn.wl-btn-cancel {
+  color: var(--text-error);
+  border-color: var(--text-error);
+}
+
+.wl-btn.wl-btn-cancel:hover {
+  color: var(--text-error);
+  background: var(--background-modifier-error-hover, var(--background-modifier-hover));
+}
+
 /* Saved filter preset button — active state (green tint) */
 .wl-btn.wl-btn-preset-active {
   background: rgba(29, 158, 117, 0.15);
@@ -2247,8 +3520,7 @@
   gap: 5px;
 }
 
-/* Selected row highlight — scoped to .wl-row and given a :hover variant so it
-   outranks .wl-row:hover / .wl-row.is-expanded / .wl-table .wl-group-row. */
+/* selected row; :hover variant outranks the other row states */
 .wl-row.wl-row-selected,
 .wl-row.wl-row-selected:hover {
   background: color-mix(in srgb, var(--background-secondary) 80%, var(--interactive-accent) 20%);
@@ -2297,15 +3569,13 @@
   border: 2px solid #2C7DA0;
 }
 
-/* ════════════════════════════════════════════════════════
-   v0.5.5 NEW STYLES
-   ════════════════════════════════════════════════════════ */
+/* ══ v0.5.5 NEW STYLES ══ */
 
 .wl-dashboard > * {
   flex-shrink: 0;
 }
 
-/* ── Priority column ────────────────────────────────────── */
+/* Priority column */
 .wl-col-priority-h,
 .wl-col-priority {
   font-size: 12px;
@@ -2328,12 +3598,12 @@
   grid-template-columns: 24px 1fr 56px 72px 56px 90px 20px;
 }
 
-/* ── Row spacing ────────────────────────────────────────── */
+/* Row spacing */
 .wl-row:not(.wl-row-indented) {
   margin-bottom: 3px;
 }
 
-/* ── Pin icon ───────────────────────────────────────────── */
+/* Pin icon */
 .wl-col-pin {
   display: flex;
   align-items: center;
@@ -2356,23 +3626,30 @@
   opacity: 1;
 }
 
-/* ── Link icon in accordion ─────────────────────────────── */
+/* Link icon in accordion */
 .wl-acc-link-icon {
   font-size: 13px;
+  /* kill the inherited 1.5 line-height; min-height below sets the chip height */
+  line-height: 1;
   --icon-size: 13px;
   text-decoration: none;
-  opacity: 0.6;
-  transition: opacity 0.15s;
+  opacity: 0.75;
+  transition: opacity 0.15s, background-color 0.15s;
   cursor: pointer;
   flex-shrink: 0;
-  /* Center the glyph/SVG in a fixed box so the emoji globe and the file-text
-     icon align identically, instead of the SVG sitting on the text baseline. */
+  /* fixed box so the glyph and the SVG align */
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* pill matching the Type / Status / Priority badges beside it */
+  min-height: calc(11px * 1.5);
+  padding: 1px 8px;
+  border-radius: 999px;
+  background-color: var(--background-modifier-border);
+  color: var(--text-normal);
 }
 
-/* Block-center the Lucide SVG at the same size as the globe glyph (13px). */
+/* center the SVG at glyph size (13px) */
 .wl-acc-link-icon svg {
   display: block;
   width: 13px;
@@ -2381,9 +3658,10 @@
 
 .wl-acc-link-icon:hover {
   opacity: 1;
+  background-color: var(--background-modifier-border-hover);
 }
 
-/* ── wl-stat widget ─────────────────────────────────────── */
+/* wl-stat widget */
 .wl-wstat {
   display: inline-block;
   margin: 2px 0;
@@ -2420,7 +3698,7 @@
   margin: 0 2px;
 }
 
-/* ── Full cards (140×55px base) ─────────────────────────── */
+/* Full cards (140×55px base) */
 .wl-full-card {
   display: flex;
   flex-direction: column;
@@ -2490,7 +3768,7 @@
   border-radius: 2px;
 }
 
-/* ── Time full card (280×55px, two-column) ──────────────── */
+/* Time full card (280×55px, two-column) */
 .wl-full-card-time {
   width: 320px;
 }
@@ -2512,7 +3790,7 @@
   white-space: nowrap;
 }
 
-/* ── wl-upcoming widget ─────────────────────────────────── */
+/* wl-upcoming widget */
 .wl-wupcoming {
   display: inline-block;
   margin: 2px 0;
@@ -2552,7 +3830,7 @@
   color: var(--interactive-accent);
 }
 
-/* ── wl-nowwatching widget ──────────────────────────────── */
+/* wl-nowwatching widget */
 .wl-wnowwatching {
   display: inline-block;
   margin: 2px 0;
@@ -2607,7 +3885,7 @@
   font-weight: 600;
 }
 
-/* ── wl-nowwatching full layout ─────────────────────────── */
+/* wl-nowwatching full layout */
 .wl-full-card-nw {
   height: auto;
   width: 200px;
@@ -2635,7 +3913,7 @@
   font-weight: 600;
 }
 
-/* ── Shared vertical separator ──────────────────────────── */
+/* Shared vertical separator */
 .wl-vert-sep {
   width: 1px;
   background: var(--background-modifier-border);
@@ -2644,7 +3922,7 @@
   margin: 0 4px;
 }
 
-/* ── wl-stat: time completed full (triple card) ─────────── */
+/* wl-stat: time completed full (triple card) */
 .wl-wstat.wl-wstat-triple {
   display: block;
 }
@@ -2671,7 +3949,7 @@
   padding-left: 0;
 }
 
-/* ── wl-now-next (combined now watching + up next) ──────── */
+/* wl-now-next (combined now watching + up next) */
 .wl-wnownext {
   display: block;
   margin: 2px 0;
@@ -2699,7 +3977,7 @@
   padding-left: 0;
 }
 
-/* ── Widgets settings tab ───────────────────────────────── */
+/* Widgets settings tab */
 .wl-widget-info-section {
   margin-bottom: 16px;
   padding: 10px 12px;
@@ -2738,9 +4016,7 @@
   font-family: var(--font-monospace);
 }
 
-/* ════════════════════════════════════════════════════════
-   THEME SYSTEM — CSS VARIABLES
-   ════════════════════════════════════════════════════════ */
+/* ══ THEME SYSTEM — CSS VARIABLES ══ */
 
 /* Nightfall theme — accent colors only, no background/text overrides */
 .wl-view[data-theme="nightfall"] {
@@ -2758,9 +4034,7 @@
   --wl-group-border-overlay: rgba(1, 73, 124, 0.3);
 }
 
-/* ════════════════════════════════════════════════════════
-   THEME PICKER (Settings → Customize)
-   ════════════════════════════════════════════════════════ */
+/* ══ THEME PICKER (Settings → Customize) ══ */
 
 .wl-theme-cards {
   display: flex;
@@ -2809,9 +4083,7 @@
   height: 12px;
 }
 
-/* ════════════════════════════════════════════════════════
-   FILTERS DROPDOWN PANEL
-   ════════════════════════════════════════════════════════ */
+/* ══ FILTERS DROPDOWN PANEL ══ */
 
 .wl-filters-panel {
   min-width: 240px;
@@ -2830,7 +4102,7 @@
   padding: 0;
 }
 
-/* QoL 3 — Collapsible section header */
+/* collapsible section header */
 .wl-filter-section-header {
   display: flex;
   align-items: center;
@@ -2884,9 +4156,157 @@
   cursor: pointer;
 }
 
+/* standalone row, so it needs the padding sections provide */
+.wl-filter-favorites-row {
+  padding: 2px 12px 4px;
+}
+
+.wl-favorites-filter {
+  color: var(--text-error);
+  font-size: 11px;
+}
+
+/* Games "🎁 Wishlist" standalone filter row — the Favorites-row treatment. */
+.wl-wishlist-filter {
+  color: #EAB308;
+  font-size: 11px;
+}
+
 .wl-sorting-panel {
   min-width: 200px;
   padding: 8px 0;
+}
+
+/* ListTab — View popover (Cards / List switcher) */
+.wl-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  border: 0.5px solid rgba(var(--color-blue-rgb), 0.65);
+}
+
+.wl-view-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.wl-view-panel {
+  min-width: 190px;
+}
+
+.wl-view-option-row {
+  /* fixed grid + trailing check so the rows align */
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+}
+
+.wl-view-option-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.wl-view-option-row.is-active {
+  color: var(--text-accent);
+}
+
+.wl-view-option-label {
+  grid-column: 2;
+  white-space: nowrap;
+}
+
+.wl-view-option-icon,
+.wl-view-option-check {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.wl-view-option-icon svg,
+.wl-view-option-check svg {
+  width: 14px;
+  height: 14px;
+}
+
+.wl-view-option-row.is-active .wl-view-option-icon,
+.wl-view-option-check {
+  color: var(--text-accent);
+}
+
+.wl-view-option-icon {
+  grid-column: 1;
+}
+
+.wl-view-option-check {
+  grid-column: 3;
+  justify-self: end;
+}
+
+/* Rows customize modal (RowsCustomizeModal) */
+
+.wl-rows-customize-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin-bottom: 12px;
+}
+
+.wl-rows-customize-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wl-rows-customize-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m, 8px);
+  background: var(--background-secondary);
+}
+
+.wl-rows-customize-name {
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.wl-rows-customize-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wl-rows-customize-move {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  box-shadow: none;
+  color: var(--text-normal);
+  cursor: pointer;
+  padding: 3px 5px;
+}
+
+.wl-rows-customize-move:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+
+.wl-rows-customize-move:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.wl-rows-customize-move svg {
+  width: 14px;
+  height: 14px;
 }
 
 .wl-filter-row {
@@ -2908,9 +4328,7 @@
   min-width: 0;
 }
 
-/* ════════════════════════════════════════════════════════
-   SUGGESTIONS SECTION (Dashboard)
-   ════════════════════════════════════════════════════════ */
+/* ══ SUGGESTIONS SECTION (Dashboard) ══ */
 
 .wl-suggestions {
   margin-bottom: 16px;
@@ -2970,9 +4388,7 @@
   opacity: 1;
 }
 
-/* ════════════════════════════════════════════════════════
-   CSV IMPORT / EXPORT MODAL
-   ════════════════════════════════════════════════════════ */
+/* ══ CSV IMPORT / EXPORT MODAL ══ */
 
 .wl-csv-modal {
   min-width: 420px;
@@ -3142,7 +4558,7 @@
   justify-content: flex-end;
 }
 
-/* ── Value mapping step ──────────────────────────────────── */
+/* Value mapping step */
 
 .wl-csv-valmap-section-title {
   font-size: 11px;
@@ -3192,7 +4608,7 @@
   gap: 8px;
 }
 
-/* ── Import progress bar ─────────────────────────────────── */
+/* Import progress bar */
 
 .wl-csv-bg-note {
   font-size: 11px;
@@ -3237,7 +4653,7 @@
   text-align: right;
 }
 
-/* ── Settings regenerate progress bar ───────────────────── */
+/* Settings regenerate progress bar */
 
 .wl-regen-progress-wrap {
   display: flex;
@@ -3248,7 +4664,7 @@
   padding: 0 2px;
 }
 
-/* ── Header import progress bar ─────────────────────────── */
+/* Header import progress bar */
 
 .wl-header-import-progress {
   display: flex;
@@ -3282,9 +4698,7 @@
   white-space: nowrap;
 }
 
-/* ════════════════════════════════════════════════════════
-   CUSTOM LISTS TAB (v0.8.0)
-   ════════════════════════════════════════════════════════ */
+/* ══ CUSTOM LISTS TAB (v0.8.0) ══ */
 
 .wl-custom-lists {
   display: flex;
@@ -3294,7 +4708,7 @@
   flex: 1;
 }
 
-/* ── Empty state ──────────────────────────────────────────── */
+/* Empty state */
 .wl-cl-empty-state {
   display: flex;
   flex-direction: column;
@@ -3309,7 +4723,7 @@
   color: var(--text-muted);
 }
 
-/* ── Sub-tab bar ──────────────────────────────────────────── */
+/* Sub-tab bar */
 .wl-cl-sub-tabs {
   display: flex;
   align-items: center;
@@ -3407,7 +4821,7 @@
   outline: none;
 }
 
-/* ── List view ────────────────────────────────────────────── */
+/* List view */
 .wl-cl-list-view {
   display: flex;
   flex-direction: column;
@@ -3416,7 +4830,7 @@
   padding-top: 8px;
 }
 
-/* ── Header ───────────────────────────────────────────────── */
+/* Header */
 .wl-cl-header {
   display: flex;
   align-items: center;
@@ -3438,7 +4852,7 @@
   position: relative;
 }
 
-/* ── Draft banner ─────────────────────────────────────────── */
+/* Draft banner */
 .wl-cl-draft-banner {
   margin: 6px 0;
   padding: 6px 10px;
@@ -3450,7 +4864,7 @@
   flex-shrink: 0;
 }
 
-/* ── Table ────────────────────────────────────────────────── */
+/* Table */
 .wl-cl-table-wrap {
   flex: 1;
   overflow-x: auto;
@@ -3470,13 +4884,12 @@
   border-bottom: 0.5px solid var(--background-modifier-border);
 }
 
-/* ── Column resize (Excel-style) ──────────────────────────── */
-/* Resizable mode: explicit column widths, no flex redistribution, horizontal scroll. */
+/* Column resize (Excel-style) */
+/* resizable: explicit widths, no flex, horizontal scroll */
 .wl-cl-table-resizable {
   width: max-content;
   min-width: 100%;
-  /* Let the scroll container (.wl-cl-table-wrap) own the horizontal scroll so
-     the sticky actions cell clamps to the viewport edge, not the table edge. */
+  /* the wrap owns the h-scroll so the sticky cell clamps to the viewport edge */
   overflow: visible;
 }
 
@@ -3489,16 +4902,10 @@
   flex: 0 0 var(--wl-cl-cw);
 }
 
-/* ── Sticky row actions (resizable mode only) ─────────────── */
-/* Keep the actions cell pinned to the visible right edge while the table
-   scrolls horizontally. Opaque backgrounds (base colour + translucent state
-   overlay) match the row so scrolled cell content does not show through. */
+/* Sticky row actions (resizable mode only) */
+/* pin actions to the visible right edge; opaque bg matches the row */
 .wl-cl-table-resizable .wl-cl-td-actions {
-  /* margin-left:auto pushes the cell flush to the right edge when the table fits
-     (free space to the right); it resolves to 0 when the table overflows, letting
-     sticky pin it to the visible right edge. The opaque background (matched to the
-     row state below) means revealed controls never let cell content bleed through —
-     the reveal animates only the inner controls' opacity, not this cell. */
+  /* margin-left:auto pins right when the table fits, resolves to 0 when it overflows */
   margin-left: auto;
   position: sticky;
   right: 0;
@@ -3540,7 +4947,7 @@
   z-index: 2;
 }
 
-/* Always-visible quiet separator; brighter + thicker on hover to signal resize. */
+/* quiet separator; brighter + thicker on hover to signal resize */
 .wl-cl-col-resize::after {
   content: '';
   position: absolute;
@@ -3591,6 +4998,11 @@ body.wl-cl-col-resizing {
   opacity: 1;
 }
 
+/* no hover on touch — row actions would sit invisible but tappable */
+.is-mobile .wl-cl-row-action {
+  opacity: 1;
+}
+
 .wl-cl-th {
   font-size: 11px;
   font-weight: 600;
@@ -3620,7 +5032,7 @@ body.wl-cl-col-resizing {
 }
 
 .wl-cl-th-actions {
-  flex: 0 0 64px;
+  flex: 0 0 86px;
 }
 
 .wl-cl-td {
@@ -3648,7 +5060,7 @@ body.wl-cl-col-resizing {
 }
 
 .wl-cl-td-actions {
-  flex: 0 0 64px;
+  flex: 0 0 86px;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -3657,7 +5069,7 @@ body.wl-cl-col-resizing {
   overflow: visible;
 }
 
-/* ── Row actions ──────────────────────────────────────────── */
+/* Row actions */
 .wl-cl-row-action {
   width: 20px;
   height: 20px;
@@ -3684,6 +5096,16 @@ body.wl-cl-col-resizing {
   background: var(--background-modifier-hover);
 }
 
+.wl-cl-add-btn {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.wl-cl-add-btn:hover {
+  color: var(--text-on-accent);
+  background: var(--color-green);
+}
+
 .wl-cl-dup-btn:hover {
   color: var(--interactive-accent);
   background: var(--background-modifier-hover);
@@ -3694,13 +5116,12 @@ body.wl-cl-col-resizing {
   background: #E24B4A;
 }
 
-/* ── Drag state ───────────────────────────────────────────── */
+/* Drag state */
 .wl-cl-dragging {
   opacity: 0.4;
 }
 
-/* Element+state selectors per drop target outrank each target's own border
-   rules (e.g. the .wl-cl-sub-tab border shorthand). */
+/* element+state beats each target's own border rule */
 .wl-cl-sub-tab.wl-cl-drag-over,
 .wl-cl-tr-body.wl-cl-drag-over,
 .wl-editcol-card.wl-cl-drag-over,
@@ -3708,7 +5129,7 @@ body.wl-cl-col-resizing {
   border-top: 2px solid var(--interactive-accent);
 }
 
-/* ── Cell content ─────────────────────────────────────────── */
+/* Cell content */
 .wl-cl-cell-text {
   display: block;
   white-space: nowrap;
@@ -3726,7 +5147,7 @@ body.wl-cl-col-resizing {
   color: #E24B4A;
 }
 
-/* ── Editing state ────────────────────────────────────────── */
+/* Editing state */
 .wl-cl-editing {
   overflow: visible;
   z-index: 10;
@@ -3756,7 +5177,7 @@ body.wl-cl-col-resizing {
   font-size: var(--font-ui-small);
 }
 
-/* ── Autofill dropdown ────────────────────────────────────── */
+/* Autofill dropdown */
 .wl-cl-autofill-wrap {
   position: relative;
   width: 100%;
@@ -3777,7 +5198,7 @@ body.wl-cl-col-resizing {
   z-index: 9999;
 }
 
-/* ── Select badge (neutral, no color) ────────────────────── */
+/* Select badge (neutral, no color) */
 .wl-cl-select-badge {
   display: inline-block;
   padding: 1px 8px;
@@ -3790,13 +5211,13 @@ body.wl-cl-col-resizing {
   white-space: nowrap;
 }
 
-/* ── Add row footer ───────────────────────────────────────── */
+/* Add row footer */
 .wl-cl-add-row {
   padding: 6px 2px;
   border-top: 0.5px solid var(--background-modifier-border);
 }
 
-/* ── Sort panel ───────────────────────────────────────────── */
+/* Sort panel */
 .wl-cl-sort-panel {
   position: absolute;
   top: calc(100% + 4px);
@@ -3810,9 +5231,7 @@ body.wl-cl-col-resizing {
   padding: 6px 0;
 }
 
-/* ════════════════════════════════════════════════════════
-   EDIT COLUMNS MODAL (v0.8.0)
-   ════════════════════════════════════════════════════════ */
+/* ══ EDIT COLUMNS MODAL (v0.8.0) ══ */
 
 .wl-editcol-modal {
   --dialog-width: 820px;
@@ -3831,7 +5250,7 @@ body.wl-cl-col-resizing {
   overflow-y: auto;
 }
 
-/* ── Horizontal card layout for Edit Columns ─────────────────────── */
+/* Horizontal card layout for Edit Columns */
 
 .wl-editcol-card-grid {
   display: flex;
@@ -4053,7 +5472,7 @@ body.wl-cl-col-resizing {
   margin: -4px 0 6px;
 }
 
-/* ── Notes modal ─────────────────────────────────────────── */
+/* Notes modal */
 
 .wl-notes-modal {
   display: flex;
@@ -4099,7 +5518,7 @@ body.wl-cl-col-resizing {
   line-height: 1.6;
 }
 
-/* ── Edit Columns modal — mobile responsive ──────────────── */
+/* Edit Columns modal — mobile responsive */
 
 @media (max-width: 720px) {
   .wl-editcols-modal {
@@ -4113,7 +5532,7 @@ body.wl-cl-col-resizing {
   }
 }
 
-/* ── Clear filters button ────────────────────────────────── */
+/* Clear filters button */
 
 .wl-btn-clear-filters {
   color: var(--text-muted);
@@ -4123,7 +5542,7 @@ body.wl-cl-col-resizing {
   color: var(--text-normal);
 }
 
-/* ── Filter active dot ───────────────────────────────────── */
+/* Filter active dot */
 
 .wl-filter-dot {
   display: inline-block;
@@ -4136,11 +5555,9 @@ body.wl-cl-col-resizing {
   margin-bottom: 1px;
 }
 
-/* ════════════════════════════════════════════════════════
-   DRAFTS TAB
-   ════════════════════════════════════════════════════════ */
+/* ══ DRAFTS TAB ══ */
 
-/* ── Notice banner (matches Custom Lists draft banner) ── */
+/* Notice banner (matches Custom Lists draft banner) */
 .wl-drafts-notice {
   margin: 4px 0 10px;
   padding: 6px 10px;
@@ -4152,14 +5569,14 @@ body.wl-cl-col-resizing {
   line-height: 1.5;
 }
 
-/* ── Count label ─────────────────────────────────────── */
+/* Count label */
 .wl-drafts-count-label {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   margin-left: 4px;
 }
 
-/* ── Empty state ─────────────────────────────────────── */
+/* Empty state */
 .wl-drafts-empty {
   text-align: center;
   padding: 32px 16px;
@@ -4167,7 +5584,7 @@ body.wl-cl-col-resizing {
   font-style: italic;
 }
 
-/* ── Cards list (mirrors .wl-airtime-cards) ──────────── */
+/* Cards list (mirrors .wl-airtime-cards) */
 .wl-drafts-cards {
   display: flex;
   flex-direction: column;
@@ -4175,7 +5592,7 @@ body.wl-cl-col-resizing {
   margin-top: 6px;
 }
 
-/* ── Single card (mirrors .wl-airtime-card) ──────────── */
+/* Single card (mirrors .wl-airtime-card) */
 .wl-drafts-card {
   display: flex;
   align-items: center;
@@ -4191,7 +5608,7 @@ body.wl-cl-col-resizing {
   background: var(--background-modifier-hover);
 }
 
-/* ── Title ───────────────────────────────────────────── */
+/* Title */
 .wl-drafts-card-title {
   font-weight: 600;
   font-size: var(--font-ui-small);
@@ -4202,7 +5619,7 @@ body.wl-cl-col-resizing {
   text-overflow: ellipsis;
 }
 
-/* ── Source note link ────────────────────────────────── */
+/* Source note link */
 .wl-drafts-card-source {
   flex-shrink: 0;
   max-width: 180px;
@@ -4228,7 +5645,7 @@ body.wl-cl-col-resizing {
   cursor: help;
 }
 
-/* ── "In Watchlist" indicator ────────────────────────── */
+/* "In Watchlist" indicator */
 .wl-drafts-card-dup {
   flex-shrink: 0;
   font-size: var(--font-ui-smaller);
@@ -4237,7 +5654,7 @@ body.wl-cl-col-resizing {
   min-width: 0;
 }
 
-/* ── Action buttons ──────────────────────────────────── */
+/* Action buttons */
 .wl-drafts-card-actions {
   flex-shrink: 0;
   display: flex;
@@ -4263,19 +5680,19 @@ body.wl-cl-col-resizing {
   color: var(--color-red, #e24b4a);
 }
 
-/* ── "In Watchlist" state — italic + dimmed (Fix 4) ──── */
+/* "In Watchlist" state — italic + dimmed (Fix 4) */
 .wl-drafts-card-watchlist {
   opacity: 0.55;
   font-style: italic;
 }
 
-/* ── "Added" state ───────────────────────────────────── */
+/* "Added" state */
 .wl-drafts-card-added .wl-drafts-card-title {
   font-style: italic;
   color: var(--text-muted);
 }
 
-/* ── Season total preview (Edit modal) ───────────────── */
+/* Season total preview (Edit modal) */
 .wl-modal-season-total {
   font-size: 11px;
   color: var(--text-muted);
@@ -4283,14 +5700,14 @@ body.wl-cl-col-resizing {
   font-style: italic;
 }
 
-/* ── Skip count inline labels next to Total Episodes input ── */
+/* Skip count inline labels next to Total Episodes input */
 .wl-modal-skip-inline {
   font-size: var(--font-ui-small);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
-/* ── Quick Info tab ──────────────────────────────────── */
+/* Quick Info tab */
 .wl-qi-section {
   margin-bottom: 6px;
 }
@@ -4351,52 +5768,40 @@ body.wl-cl-col-resizing {
   white-space: pre-line;
 }
 
-/* ════════════════════════════════════════════════════════
-   LINT-REFACTORED UTILITY CLASSES
-   (Replaced inline style= assignments)
-   ════════════════════════════════════════════════════════ */
+/* ══ utility classes replacing inline style= ══ */
 
-/* AirtimeTab — time row top spacing */
 .wl-modal-row-mt {
   margin-top: 10px;
 }
 
-/* AirtimeTab — cancel button right spacing */
 .wl-btn-mr {
   margin-right: 6px;
 }
 
-/* DashboardTab — time rect bar full width */
 .wl-rect-bar-full {
   width: 100%;
 }
 
-/* CustomListsTab — bold toggle button preview */
 .wl-editcols-bold-btn {
   font-weight: bold;
 }
 
-/* CustomListsTab — italic toggle button preview */
 .wl-editcols-italic-btn {
   font-style: italic;
 }
 
-/* CustomListsTab — bold cell text */
 .wl-cell-bold {
   font-weight: 700;
 }
 
-/* CustomListsTab — italic cell text */
 .wl-cell-italic {
   font-style: italic;
 }
 
-/* CustomListsTab — fixed-position autofill dropdown */
 .wl-pos-fixed {
   position: fixed;
 }
 
-/* ListTab — inline group name input */
 .wl-group-name-input {
   width: 110px;
   font-size: 11px;
@@ -4404,7 +5809,6 @@ body.wl-cl-col-resizing {
   flex: unset;
 }
 
-/* ListTab — filters panel popup (fixed, body-level) */
 .wl-filters-panel-popup {
   position: fixed;
   z-index: 9999;
@@ -4418,7 +5822,6 @@ body.wl-cl-col-resizing {
   width: 230px;
 }
 
-/* ListTab — mobile sorting panel */
 .wl-sorting-panel-mobile {
   position: fixed;
   left: 8px;
@@ -4427,12 +5830,11 @@ body.wl-cl-col-resizing {
   overflow-y: auto;
 }
 
-/* SettingsTab — hidden quick-info section body */
 .wl-qi-section-body-hidden {
   display: none;
 }
 
-/* ── Inner sub-tab bar (Watchlist List/History, Upcoming Tracker/History/Maybe) ─ */
+/* Inner sub-tab bar (Upcoming Tracker/History/Maybe) */
 .wl-inner-tab-bar {
   display: flex;
   gap: 2px;
@@ -4459,7 +5861,7 @@ body.wl-cl-col-resizing {
   border-bottom-color: var(--text-accent);
 }
 
-/* ── Feature 1: Recently arrived label ──────────────────────────────────────── */
+/* Feature 1: Recently arrived label */
 .wl-badge-row {
   display: flex;
   align-items: center;
@@ -4479,7 +5881,7 @@ body.wl-cl-col-resizing {
   font-size: 11px;
 }
 
-/* ── Feature 3: Watchlist History sub-tab ────────────────────────────────────── */
+/* Feature 3: Watchlist History sub-tab */
 .wl-history-list {
   padding: 8px 12px;
   display: flex;
@@ -4504,7 +5906,7 @@ body.wl-cl-col-resizing {
   font-style: italic;
 }
 
-/* ── Log Tab (timeline) ───────────────────────────────────────────────────── */
+/* Log Tab (timeline) */
 .wl-log-tab {
   padding: 12px 0 0;
   display: flex;
@@ -4565,8 +5967,7 @@ body.wl-cl-col-resizing {
   left: 0;
   right: 0;
 }
-/* Virtual-scroll rows are absolutely positioned inside the viewport; the
-   per-row `top` offset is set dynamically by LogTab. */
+/* rows are absolutely positioned; top is set by LogTab */
 .wl-log-viewport .wl-log-day-header,
 .wl-log-viewport .wl-log-entry {
   position: absolute;
@@ -4643,8 +6044,42 @@ body.wl-cl-col-resizing {
   flex-shrink: 0;
   padding-top: 3px;
 }
+.wl-log-del {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  padding: 0;
+  margin-top: 1px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+}
+.wl-log-del svg {
+  width: 13px;
+  height: 13px;
+}
+.wl-log-entry:hover .wl-log-del,
+.wl-log-del:focus-visible {
+  opacity: 1;
+}
+.wl-log-del:hover {
+  color: var(--text-error);
+  background: var(--background-modifier-hover);
+}
+/* mobile has no hover — keep it out permanently */
+.is-mobile .wl-log-del {
+  opacity: 1;
+}
 
-/* ── Feature 2: Upcoming History sub-tab ────────────────────────────────────── */
+/* Feature 2: Upcoming History sub-tab */
 .wl-airtime-history-card {
   opacity: 0.92;
 }
@@ -4654,7 +6089,7 @@ body.wl-cl-col-resizing {
   gap: 4px;
 }
 
-/* ── Feature 2c: Maybe cards ─────────────────────────────────────────────────── */
+/* Feature 2c: Maybe cards */
 .wl-maybe-card {
   display: flex;
   align-items: center;
@@ -4697,14 +6132,14 @@ body.wl-cl-col-resizing {
   flex-shrink: 0;
 }
 
-/* ── Feature 4: Sort direction toggle ───────────────────────────────────────── */
+/* Feature 4: Sort direction toggle */
 .wl-sort-dir-btn {
   min-width: 28px;
   padding: 3px 6px;
   font-size: 13px;
 }
 
-/* ── Feature 5: Custom Lists tick button ─────────────────────────────────────── */
+/* Feature 5: Custom Lists tick button */
 .wl-cl-th-tick {
   width: 28px;
   max-width: 28px;
@@ -4750,36 +6185,17 @@ body.wl-cl-col-resizing {
 
 
 
-/* Generic hide utility — doubled class outranks single-class display rules
-   (e.g. .wl-filter-section-content). */
+/* doubled class outranks single-class display rules */
 .wl-hidden.wl-hidden { display: none; }
 
-/* ── Cards view ─────────────────────────────────────────────────────────── */
+/* Cards view */
 
 .wl-cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  /* --wl-card-min-width is the card-size setting; the JS grid math uses the same value */
+  grid-template-columns: repeat(auto-fill, minmax(var(--wl-card-min-width, 160px), 1fr));
   gap: 12px;
   padding: 8px;
-}
-
-.wl-cards-scroll-container {
-  position: relative;
-  width: 100%;
-  overflow-y: auto;
-  /* Reserve the scrollbar gutter so clientWidth (which the virtual-scroll math
-     reads to size cards) doesn't change when the scrollbar appears — otherwise
-     the cards would re-layout to a new width/height the first time content
-     overflows, a one-off layout shift. */
-  scrollbar-gutter: stable;
-  /* Fill remaining vertical space inside the watchlist container. */
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.wl-cards-scroll-spacer {
-  position: relative;
-  width: 100%;
 }
 
 .wl-cards-grid.wl-cards-grid-virtual {
@@ -4789,16 +6205,11 @@ body.wl-cl-col-resizing {
   right: 0;
   display: grid;
   grid-template-columns: repeat(var(--wl-cards-cols, 1), 1fr);
-  /* Pin every row to the exact height the virtual-scroll math uses for the
-     spacer/padding offset. Without this, auto rows size to content and a card
-     whose intrinsic height exceeds --wl-card-height would stretch the whole
-     row, desyncing rendered height from reserved height (the CLS source). */
+  /* pin rows to the virtual-scroll height or content stretches them (CLS) */
   grid-auto-rows: var(--wl-card-height, auto);
   align-content: start;
   gap: 12px;
-  /* The virtual-scroll row offset is an inline padding-top set by ListTab —
-     deliberately NOT transform: translateY, which made Chromium's layout-shift
-     tracker report a row of stationary cards as shifted on every row advance. */
+  /* inline padding-top, NOT translateY — translateY made Chromium report phantom CLS */
   padding: 0;
   box-sizing: border-box;
 }
@@ -4806,12 +6217,119 @@ body.wl-cl-col-resizing {
 .wl-cards-grid.wl-cards-grid-virtual .wl-card {
   width: 100%;
   height: var(--wl-card-height, auto);
-  /* --wl-card-height is the single source of truth for card height. Explicitly
-     cancel the base .wl-card aspect-ratio:2/3 here: in the grid it would give the
-     card an intrinsic height of trackWidth*1.5, which (when the real 1fr track is
-     wider than the computed cardWidth) overflows the reserved row and stretches
-     the card after layout — shifting the absolute poster (the logged CLS). */
+  /* --wl-card-height rules; cancel the 2:3 aspect-ratio or the card overflows its row (CLS) */
   aspect-ratio: auto;
+}
+
+/* Rows view (horizontal shelves) */
+
+.wl-rows-scroll-container {
+  width: 100%;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  /* fill remaining height */
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px;
+}
+
+.wl-rows-shelf {
+  margin-bottom: 20px;
+}
+
+.wl-rows-shelf-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin: 0 0 8px 2px;
+}
+
+.wl-rows-shelf-count {
+  margin-left: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.wl-rows-shelf-empty {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  padding: 4px 2px 8px;
+}
+
+.wl-rows-strip {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* room for the card's hover translateY(-2px) */
+  padding: 4px 2px 8px;
+}
+
+.wl-rows-strip > .wl-card,
+.wl-rows-strip > .wl-card-cell {
+  /* fixed-width cards so the strip scrolls; direct children only (text-under wraps the card) */
+  flex: 0 0 var(--wl-rows-card-width, 160px);
+  width: var(--wl-rows-card-width, 160px);
+}
+
+/* strip scrollbars hidden until hover, same size in both states so nothing shifts; webkit path
+   is for iOS */
+.wl-rows-strip {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.wl-rows-shelf:hover .wl-rows-strip {
+  scrollbar-color: var(--scrollbar-thumb-bg) transparent;
+}
+
+.wl-rows-strip::-webkit-scrollbar {
+  height: 8px;
+  background: transparent;
+}
+
+.wl-rows-strip::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 4px;
+}
+
+.wl-rows-shelf:hover .wl-rows-strip::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb-bg);
+}
+
+/* "By type" — wrapping Cards-style grids among the shelves (any position). */
+.wl-rows-bytype {
+  margin-top: 4px;
+}
+
+.wl-rows-bytype-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-normal);
+  margin: 0 0 12px 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.wl-rows-bytype .wl-cards-grid:not(.wl-cards-grid-virtual) {
+  /* Align the grid with the shelf strips (the base .wl-cards-grid pads 8px). */
+  padding: 4px 2px 8px;
+  margin-bottom: 12px;
+}
+
+/* fixed-height wrapper; the inline height reserves the grid's full extent up-front */
+.wl-rows-bytype-spacer {
+  position: relative;
+  /* tops the trailing gap up to the 20px the non-virtual grid had */
+  margin: 4px 0 8px;
+}
+
+.wl-rows-bytype-spacer .wl-cards-grid.wl-cards-grid-virtual {
+  /* longhand only — padding-top is owned by VirtualGrid */
+  padding-left: 2px;
+  padding-right: 2px;
 }
 
 .wl-detail-modal {
@@ -4836,14 +6354,16 @@ body.wl-cl-col-resizing {
   gap: 6px;
   flex: 1;
   min-width: 0;
+  /* container so the stats reflow on the modal, not the viewport */
+  container-type: inline-size;
+  container-name: wl-detail-left;
 }
 
-/* Cover box: in-flow aspect-ratio slot (reserves its space from first paint,
-   same as ReadingTab's cover). Placeholder + poster are stacked absolutely and
-   swapped by opacity via .has-poster so revealing the image causes no shift. */
+/* in-flow aspect-ratio slot; placeholder + poster stacked, swapped by opacity */
 .wl-detail-cover {
   position: relative;
-  width: 96px;
+  width: 120px;
+  height: 200px;
   aspect-ratio: 2 / 3;
   flex-shrink: 0;
   border-radius: 6px;
@@ -4891,6 +6411,71 @@ body.wl-cl-col-resizing {
   font-weight: 700;
 }
 
+/* studio / network line under the title (the Games title -> developer order) */
+.wl-detail-studio {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 1px;
+}
+
+.wl-detail-studio-chip {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.wl-detail-studio-chip:not(:last-child)::after {
+  content: '·';
+  margin-left: 6px;
+  color: var(--text-faint);
+}
+
+.wl-detail-studio-chip.is-clickable {
+  cursor: pointer;
+}
+
+.wl-detail-studio-chip.is-clickable:hover {
+  color: var(--text-accent);
+  text-decoration: underline;
+}
+
+.wl-detail-studio-more {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  cursor: pointer;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 0 6px;
+}
+
+.wl-detail-studio-more:hover {
+  color: var(--text-normal);
+}
+
+/* heading hugs its text so the dotted hint underlines the title, not the row */
+.wl-detail-title-wrap {
+  line-height: 1;
+}
+
+.wl-detail-title-wrap .wl-detail-title {
+  display: inline-block;
+}
+
+.wl-detail-title-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 1.3rem;
+  font-weight: 700;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1.5px solid var(--interactive-accent);
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--text-normal);
+}
+
 .wl-detail-badge-row {
   display: flex;
   align-items: center;
@@ -4912,8 +6497,39 @@ body.wl-cl-col-resizing {
   border-radius: 6px;
 }
 
-/* Narrow widths: same font, tighter item gap + container padding so the
-   4-block bar (left / watched / episodes / progress) fits without clipping. */
+/* title-detail: 4 stats in one row over a full-width bar (modifier only; group modals keep the
+   plain box) */
+.wl-detail-stats-box-bar {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  /* shrink to the stats instead of stretching */
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+/* equal columns; shrink:0 blocks spilled out of a narrow modal */
+.wl-detail-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px 10px;
+}
+
+.wl-detail-stats-row .wl-acc-stat-block,
+.wl-detail-stats-row .wl-acc-header-right {
+  min-width: 0;
+  text-align: center;
+}
+
+.wl-detail-stats-row .wl-acc-progress-label {
+  margin-bottom: 0;
+}
+
+.wl-detail-stats-box-bar .wl-detail-stats-bar {
+  width: auto;
+}
+
+/* narrow: tighter gap + padding so the 4 blocks fit */
 @media (max-width: 600px) {
   .wl-detail-stats-box {
     gap: 7px;
@@ -4921,7 +6537,44 @@ body.wl-cl-col-resizing {
   }
 }
 
-/* ── Credits (director / cast) rows — detail modal + List expanded row ────── */
+/* under ~290px: 3 time stats on top, progress centered below */
+@container wl-detail-left (max-width: 310px) {
+  .wl-detail-stats-box-bar {
+    gap: 6px;
+    padding: 8px 8px;
+  }
+
+  .wl-detail-stats-row {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  /* progress spans all three columns */
+  .wl-detail-stats-row .wl-acc-header-right {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: center;
+    align-items: baseline;
+    gap: 5px;
+  }
+}
+
+/* cover is a fixed 120px; tighten spacing so 3 columns fit a 360px phone */
+@container wl-detail-left (max-width: 213px) {
+  .wl-detail-stats-box-bar {
+    padding: 8px 6px;
+  }
+
+  .wl-detail-stats-row {
+    gap: 5px 4px;
+  }
+
+  .wl-detail-stats-row .wl-acc-percent {
+    font-size: 13px;
+  }
+}
+
+/* Credits (director / cast) rows — detail modal + List expanded row */
 .wl-detail-credits {
   display: flex;
   flex-direction: column;
@@ -4936,6 +6589,35 @@ body.wl-cl-col-resizing {
   margin-top: 2px;
 }
 
+/* manual credits re-fetch; spins while in flight */
+.wl-credits-refresh {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  box-shadow: none;
+  border-radius: 4px;
+  width: 44px;
+  height: 8px;
+  padding: 0;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wl-credits-refresh:hover {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
+}
+
+.wl-credits-refresh.is-loading {
+  animation: wl-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+
 .wl-credits-row {
   font-size: 12px;
   color: var(--text-muted);
@@ -4948,18 +6630,236 @@ body.wl-cl-col-resizing {
   margin-right: 6px;
 }
 
-.wl-credits-label::after {
+.wl-credits-label-text::after {
   content: ':';
 }
 
-.wl-credits-name.is-clickable {
+.wl-credits-name-text.is-clickable {
   cursor: pointer;
   color: var(--text-normal);
 }
 
-.wl-credits-name.is-clickable:hover {
+.wl-credits-name-text.is-clickable:hover {
   color: var(--text-accent, var(--interactive-accent));
   text-decoration: underline;
+}
+
+/* Leading + on each credits row — opens the add-credit modal for that field. */
+.wl-credits-add {
+  background: none;
+  border: none;
+  box-shadow: none;
+  border-radius: 4px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin-right: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: -3px;
+}
+
+.wl-credits-add:hover {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
+}
+
+/* User-added names: a dotted underline marks them apart from fetched credits. */
+.wl-credits-name.is-manual .wl-credits-name-text {
+  border-bottom: 1px dotted var(--text-faint);
+}
+
+/* ✕ on a user-added name, revealed on hover so the row stays quiet at rest. */
+.wl-credits-name-del {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin-left: 3px;
+  width: 12px;
+  height: 12px;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-faint);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  vertical-align: 1px;
+}
+
+.wl-credits-name:hover .wl-credits-name-del {
+  display: inline-flex;
+}
+
+/* no hover on touch — the remove control has to be there from the start */
+@media (hover: none) {
+  .wl-credits-name-del {
+    display: inline-flex;
+  }
+}
+
+.wl-credits-name-del:hover {
+  color: var(--text-error, var(--text-accent));
+}
+
+/* expands in place; a popover would be clipped by the accordion */
+.wl-credits-more {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0 4px;
+  margin-left: 4px;
+  height: 15px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-accent, var(--interactive-accent));
+}
+
+.wl-credits-more:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.wl-credits-overflow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 3px 0 2px 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.wl-credits-chip {
+  background: var(--background-secondary);
+  border-radius: 4px;
+  padding: 1px 6px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Add-credit modal */
+.wl-credit-panes {
+  display: flex;
+  gap: 12px;
+  margin: 10px 0;
+  align-items: stretch;
+}
+
+.wl-credit-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wl-credit-pane-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.wl-credit-search-input {
+  width: 100%;
+}
+
+.wl-credit-results,
+.wl-credit-staged {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  min-height: 180px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.wl-credit-staged {
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-content: flex-start;
+}
+
+.wl-credit-result .wl-result-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.wl-credit-result-new .wl-result-title {
+  color: var(--text-accent, var(--interactive-accent));
+}
+
+.wl-credit-result.is-disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.wl-credit-result.is-disabled:hover {
+  background: none;
+}
+
+.wl-credit-hint {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.wl-credit-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  background: var(--background-secondary);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.wl-credit-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wl-credit-chip-del {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wl-credit-chip-del:hover {
+  color: var(--text-error, var(--text-accent));
+}
+
+/* Narrow sidebar / mobile: the two panes stack rather than squeeze. */
+@media (max-width: 520px) {
+  .wl-credit-panes {
+    flex-direction: column;
+  }
+
+  .wl-credit-results,
+  .wl-credit-staged {
+    min-height: 120px;
+    max-height: 180px;
+  }
 }
 
 .wl-detail-episodes {
@@ -4983,11 +6883,20 @@ body.wl-cl-col-resizing {
   flex-wrap: wrap;
 }
 
+/* started + watched, then release date; the field is shared with the List footer */
 .wl-detail-date {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.wl-detail-date-row {
+  display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 10px;
+  gap: 16px;
   flex-wrap: wrap;
+  row-gap: 8px;
 }
 
 .wl-detail-status {
@@ -5014,8 +6923,231 @@ body.wl-cl-col-resizing {
   gap: 12px;
 }
 
+/* favorite heart, centered by the footer's space-between */
+.wl-detail-fav-btn {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  color: var(--text-muted);
+}
+
+.wl-detail-fav-btn:hover {
+  color: var(--text-normal);
+}
+
+.wl-detail-fav-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.wl-detail-fav-btn.is-active {
+  color: var(--text-error);
+}
+
+.wl-detail-fav-btn.is-active svg {
+  fill: currentColor;
+}
+
 .wl-detail-group-grid {
   /* Scrolls inside the parent .wl-detail-modal, no own scroll container. */
+}
+
+/* Collections (TMDB) */
+
+/* space-between only centers the middle child when the outer two match in width — the
+   Collection button breaks that. minmax(0,1fr) side columns pin the heart to true centre. */
+.wl-detail-footer-centered {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.wl-detail-footer-centered .wl-detail-remove {
+  justify-self: start;
+}
+
+.wl-detail-footer-centered .wl-detail-fav-btn {
+  justify-self: center;
+}
+
+.wl-detail-footer-centered .wl-detail-footer-right {
+  justify-self: end;
+}
+
+/* mobile + Collection button: heart moves beside Remove (set by paintCollectionButton) */
+.wl-detail-footer-centered.wl-footer-heart-left {
+  grid-template-columns: auto auto minmax(0, 1fr);
+}
+
+.wl-detail-footer-centered.wl-footer-heart-left .wl-detail-fav-btn {
+  justify-self: start;
+}
+
+.wl-detail-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wl-detail-collection-host {
+  display: flex;
+  align-items: center;
+}
+
+/* no button = no width, no gap */
+.wl-detail-collection-host:empty {
+  display: none;
+}
+
+.wl-collection-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 4px 10px;
+  height: auto;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.wl-collection-btn:hover {
+  color: var(--text-normal);
+  border-color: var(--interactive-accent);
+}
+
+.wl-collection-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* has something to add */
+.wl-collection-btn.has-missing {
+  color: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+}
+
+.wl-collection-header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.wl-collection-cover {
+  flex: 0 0 auto;
+  width: 84px;
+  aspect-ratio: 2 / 3;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--background-secondary);
+}
+
+.wl-collection-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.wl-collection-header-left {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wl-collection-meta {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-top: 2px;
+}
+
+.wl-collection-overview {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin-top: 8px;
+  /* clamp — long blurbs push the grid off-screen */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* not added yet */
+.wl-collection-card-missing:not(.wl-card-selected) {
+  opacity: 0.72;
+}
+
+.wl-collection-card-missing:hover {
+  opacity: 1;
+}
+
+/* right side — the "Not added" status badge owns top-left */
+.wl-collection-tick {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  background: rgba(0, 0, 0, 0.45);
+  color: transparent;
+  font-size: 12px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* card handles the click */
+  pointer-events: none;
+}
+
+.wl-card-selected .wl-collection-tick {
+  background: var(--wl-watched-color);
+  border-color: var(--wl-watched-color);
+  color: #fff;
+}
+
+/* default modal is too narrow for the grid */
+.wl-collection-modal-shell {
+  width: min(860px, 92vw);
+  max-width: 92vw;
+}
+
+/* sticky comes from .wl-sticky-bottom */
+.wl-collection-footer {
+  flex-wrap: wrap;
+  margin-top: 0;
+}
+
+.wl-collection-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wl-collection-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.wl-collection-group-toggle input {
+  margin: 0;
 }
 
 .wl-card {
@@ -5033,15 +7165,8 @@ body.wl-cl-col-resizing {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
-/* Selected card in selection mode — border only (no background tint), in the
-   theme accent used by the Watched checkbox. Drawn as an inset outline rather
-   than a border: outlines paint above the absolutely-positioned poster, follow
-   the border-radius, and never change the card's layout box. */
-/* Drawn as an ::after overlay, not an outline/border on the card itself: the
-   absolutely-positioned poster paints above a negative-offset outline, leaving
-   only the ~1px sliver outside the padding box visible. The overlay is the
-   card's last paint-order child, so the full border width shows over the poster
-   without affecting layout or intercepting clicks. */
+/* selected card: border only, drawn as the ::after below */
+/* ::after overlay, not an outline — the absolute poster paints over an outline */
 .wl-card.wl-card-selected::after {
   content: '';
   position: absolute;
@@ -5075,8 +7200,7 @@ body.wl-cl-col-resizing {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
-/* Group-card collage: equal vertical strips of member covers, separated by
-   thin background-color lines (the flex gap reveals the card background). */
+/* group collage: vertical strips, the gaps reveal the card bg */
 .wl-card-collage {
   position: absolute;
   inset: 0;
@@ -5185,18 +7309,13 @@ body.wl-cl-col-resizing {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  /* display:block from first paint so the absolute inset:0 box is reserved
-     before the image data arrives; the unloaded poster is hidden with opacity
-     (which keeps the box) and fades in on load over the letter placeholder.
-     Note: the scroll-CLS logged against this img was NOT the reveal — it was
-     the grid's translateY offset (see .wl-cards-grid-virtual / ListTab). */
+  /* block from first paint so the box is reserved; hidden by opacity, fades in on load */
   display: block;
   opacity: 0;
   transition: opacity 0.2s ease;
 }
 
-/* Poster loaded: fade the image in on top of the letter placeholder (which
-   stays behind it). Opacity — not display — so the swap causes zero layout shift. */
+/* opacity, not display — zero layout shift */
 .wl-card.has-poster .wl-card-poster {
   opacity: 1;
 }
@@ -5225,12 +7344,29 @@ body.wl-cl-col-resizing {
   overflow: hidden;
 }
 
+.wl-card-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .wl-card-type-badge {
   font-size: 0.65rem;
-  padding: 1px 6px;
+  padding: 3px 6px;
   border-radius: 3px;
   color: #fff;
   width: fit-content;
+}
+
+.wl-card-year {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* release year in the List expanded row */
+.wl-row-year {
+  font-size: 0.7rem;
+  color: var(--text-muted);
 }
 
 .wl-card-status-badge {
@@ -5241,6 +7377,26 @@ body.wl-cl-col-resizing {
   padding: 2px 6px;
   border-radius: 3px;
   color: #fff;
+}
+
+/* wishlist marker, parked left of the ⋮ so the menu never covers it */
+.wl-card-flag-badge {
+  position: absolute;
+  top: 4px;
+  right: 32px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: #EAB308;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wl-card-flag-badge .svg-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .wl-card-menu-btn {
@@ -5271,7 +7427,7 @@ body.wl-cl-col-resizing {
   opacity: 1;
 }
 
-/* ── Community rating ────────────────────────────────────────────────── */
+/* Community rating */
 .wl-rating-divider {
   display: inline-block;
   width: 1px;
@@ -5352,10 +7508,9 @@ body.wl-cl-col-resizing {
 }
 
 .wl-trailer-btn {
-  /* Wide clickable frame (~3× the icon) with the YouTube glyph centred at its
-     natural proportions — only the frame widens, never the icon. */
-  min-width: 66px;
-  padding: 2px 20px;
+  /* wide frame, icon stays its natural size */
+  min-width: 40px;
+  padding: 1px 3px;
   margin-left: 8px;
   background: transparent;
   border: none;
@@ -5367,6 +7522,8 @@ body.wl-cl-col-resizing {
   justify-content: center;
   vertical-align: middle;
   box-shadow: none;
+  height: 23px;
+  width: 40px; 
 }
 
 .wl-trailer-btn:hover {
@@ -5388,12 +7545,170 @@ body.wl-cl-col-resizing {
   height: 14px;
 }
 
+/* Store button — the trailer-button frame with a store glyph (Games). */
+.wl-store-btn {
+  min-width: 28px;
+  padding: 1px 3px;
+  margin-left: 8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #4A89DC; /* Permanent store blue, the YouTube-button treatment. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  box-shadow: none;
+  height: 22px;
+  width: 28px;
+}
+
+.wl-store-btn:hover {
+  color: #3A6FBE;
+  background: var(--background-modifier-hover);
+}
+
+.wl-store-btn .svg-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* Wishlist toggle beside the store button: muted until set, amber when on. */
+.wl-wishlist-btn {
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+.wl-wishlist-btn:hover {
+  color: var(--text-normal);
+}
+
+.wl-wishlist-btn.is-active,
+.wl-wishlist-btn.is-active:hover {
+  color: #EAB308;
+}
+
+/* generic segmented pill (renderSegmentedToggle), accented via --wl-seg-color */
+.wl-seg-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  flex: 0 0 auto;
+}
+
+button.wl-seg-toggle-btn {
+  padding: 2px 10px;
+  height: auto;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+button.wl-seg-toggle-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+button.wl-seg-toggle-btn.is-active {
+  background: color-mix(in srgb, var(--wl-seg-color) 16%, transparent);
+  color: var(--wl-seg-color);
+}
+
+/* game modes: Solo (red) | Co-op (green) | Multi (blue), each toggleable */
+.wl-mode-pill {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.wl-mode-pill-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 9px;
+  border: none;
+  border-radius: 0;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: none;
+  height: 25px;
+}
+
+.wl-mode-pill-seg + .wl-mode-pill-seg {
+  border-left: 1px solid var(--background-modifier-border);
+}
+
+.wl-mode-pill-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.wl-mode-pill-icon .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.wl-mode-pill-seg:not(.is-active) .wl-mode-pill-icon {
+  opacity: 0.7;
+}
+
+.wl-mode-pill-seg:not(.is-active):hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.wl-mode-pill-solo.is-active {
+  background: rgba(229, 72, 77, 0.18);
+  color: #E5484D;
+}
+
+.wl-mode-pill-coop.is-active {
+  background: rgba(45, 168, 115, 0.18);
+  color: #2DA873;
+}
+
+.wl-mode-pill-multi.is-active {
+  background: rgba(74, 137, 220, 0.18);
+  color: #4A89DC;
+}
+
+/* Modes row in the game detail modal — sits under the rating row. */
+.wl-game-modal-modes {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
 @keyframes wl-spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
 
-/* ── API routing card ────────────────────────────────────────────────── */
+/* Small numeric settings input (e.g. top directors/actors count): ~3 digits wide. */
+input.wl-settings-count-input {
+  width: 64px;
+  text-align: center;
+}
+
+/* API routing card */
 .wl-settings-card {
   margin-top: 24px;
   padding: 14px 16px;
@@ -5467,7 +7782,7 @@ body.wl-cl-col-resizing {
   opacity: 0.7;
 }
 
-/* ── Filter panel: per-section "All" toggle + Groups-only divider ─────── */
+/* Filter panel: per-section "All" toggle + Groups-only divider */
 .wl-filter-all-toggle {
   color: var(--interactive-accent);
   font-weight: 500;
@@ -5479,9 +7794,7 @@ body.wl-cl-col-resizing {
   margin: 6px 0;
 }
 
-/* ════════════════════════════════════════════════════════
-   READING TAB
-   ════════════════════════════════════════════════════════ */
+/* ══ READING TAB ══ */
 
 .wl-reading-tab {
   display: flex;
@@ -5565,7 +7878,7 @@ body.wl-cl-col-resizing {
   text-align: center;
 }
 
-/* ── Sub-tab bar ───────────────────────────────────────── */
+/* Sub-tab bar */
 .wl-reading-subtabs {
   display: flex;
   gap: 2px;
@@ -5607,7 +7920,7 @@ body.wl-cl-col-resizing {
   line-height: 1;
 }
 
-/* ── Toolbar ──────────────────────────────────────────── */
+/* Toolbar */
 .wl-reading-toolbar {
   display: flex;
   align-items: center;
@@ -5629,11 +7942,17 @@ body.wl-cl-col-resizing {
   flex: 1;
   min-width: 0;
   max-width: 240px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .wl-reading-search-input {
+  flex: 1;
+  min-width: 0;
   width: 100%;
-  padding: 6px 10px;
+  padding: 6px 26px 6px 10px;
   border-radius: 5px;
   border: 0.5px solid var(--background-modifier-border);
   background: var(--background-primary);
@@ -5645,6 +7964,40 @@ body.wl-cl-col-resizing {
 .wl-reading-search-input:focus {
   outline: none;
   border-color: var(--interactive-accent);
+}
+
+/* clear (X) inside the search box — shown only when the input has text */
+.wl-search-clear {
+  position: absolute;
+  right: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.wl-search-clear.is-visible {
+  display: flex;
+}
+
+.wl-search-clear:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.wl-search-clear .svg-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .wl-reading-add-btn {
@@ -5661,7 +8014,7 @@ body.wl-cl-col-resizing {
   font-size: 14px;
 }
 
-/* ── Card grid (placeholder for Phase 2 cards) ───────── */
+/* Card grid (placeholder for Phase 2 cards) */
 .wl-reading-content {
   flex: 1;
   min-height: 0;
@@ -5671,11 +8024,11 @@ body.wl-cl-col-resizing {
 
 .wl-reading-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--wl-card-min-width, 160px), 1fr));
   gap: 12px;
 }
 
-/* ── Empty state ─────────────────────────────────────── */
+/* Empty state */
 .wl-reading-empty {
   display: flex;
   flex-direction: column;
@@ -5713,7 +8066,7 @@ body.wl-cl-col-resizing {
   font-size: var(--font-ui-small);
 }
 
-/* ── Reading cards ───────────────────────────────────── */
+/* Reading cards */
 .wl-reading-card {
   position: relative;
   display: flex;
@@ -5746,9 +8099,7 @@ body.wl-cl-col-resizing {
 }
 
 .wl-reading-card-cover-img {
-  /* Absolutely fill the 2:3 cover box so a lazily-loaded cover image causes ZERO
-     layout shift — the box size is fixed by .wl-reading-card-cover's aspect-ratio
-     before the image arrives, and the in-flow icon fallback stays centred. */
+  /* absolutely fill the 2:3 cover box so a lazy cover causes zero layout shift */
   position: absolute;
   inset: 0;
   width: 100%;
@@ -5820,18 +8171,44 @@ body.wl-cl-col-resizing {
   white-space: nowrap;
 }
 
-/* ── Reading virtual scroll ─────────────────────────── */
+/* Reading cards, text-inside mode — title/author/progress overlay inside the cover */
+.wl-reading-card-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 8px;
+  padding-top: 40px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wl-reading-card-overlay .wl-reading-card-title {
+  margin-top: 0;
+  color: #fff;
+}
+
+.wl-reading-card-overlay .wl-reading-card-author {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.wl-reading-card-overlay .wl-reading-card-progress-bar {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.wl-reading-card-overlay .wl-reading-card-progress-text {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* Reading virtual scroll */
 .wl-reading-scroll-container {
   position: relative;
   width: 100%;
   overflow-y: auto;
   flex: 1 1 auto;
   min-height: 0;
-}
-
-.wl-reading-scroll-spacer {
-  position: relative;
-  width: 100%;
 }
 
 .wl-reading-grid.wl-reading-grid-virtual {
@@ -5841,10 +8218,13 @@ body.wl-cl-col-resizing {
   right: 0;
   display: grid;
   grid-template-columns: repeat(var(--wl-reading-cols, 1), 1fr);
+  /* pin rows to the virtual-scroll height, same as the Cards grid */
+  grid-auto-rows: var(--wl-reading-card-height, auto);
+  align-content: start;
   gap: 12px;
+  /* inline padding-top, NOT translateY (Chromium CLS pitfall — see VirtualGrid.update) */
   padding: 0;
   box-sizing: border-box;
-  will-change: transform;
 }
 
 .wl-reading-grid.wl-reading-grid-virtual .wl-reading-card {
@@ -5858,7 +8238,736 @@ body.wl-cl-col-resizing {
   min-height: 0;
 }
 
-/* ── Reading card context menu ──────────────────────── */
+/* in a Rows strip the card takes --wl-rows-card-width instead of a grid track */
+.wl-rows-strip .wl-reading-card {
+  flex: 0 0 var(--wl-rows-card-width, 160px);
+  width: var(--wl-rows-card-width, 160px);
+}
+
+/* Games tab */
+.wl-games-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+
+/* own flex column so the rows scroller's fill-height sizing still works */
+.wl-games-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Game detail modal */
+/* no width override on purpose: matches the Watchlist / Reading modals */
+
+/* .wl-view's height:100% + overflow:hidden would block scrolling */
+.wl-game-modal .modal-content.wl-view {
+  height: auto;
+  max-height: calc(85vh - 40px);
+  overflow-y: auto;
+}
+
+.wl-game-modal-header {
+  display: flex;
+  gap: 18px;
+}
+
+.wl-game-modal-cover {
+  flex: none;
+  width: 108px;
+  height: 152px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  background: repeating-linear-gradient(
+    135deg,
+    var(--background-secondary) 0 10px,
+    var(--background-secondary-alt) 10px 20px
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wl-game-modal-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wl-game-modal-cover-hint {
+  font-size: 10px;
+  font-family: var(--font-monospace);
+  color: var(--text-faint);
+}
+
+.wl-game-modal-head {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wl-game-modal-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* shared .wl-reading-detail-status pill; only the spacing is game-specific */
+
+.wl-game-modal-rating {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 2px;
+}
+
+.wl-game-modal-section {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wl-game-modal-details-section {
+  padding-top: 16px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.wl-game-modal-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* progress: drag bar + typed %, ±5 steppers, stat strip */
+.wl-game-modal-progress {
+  /* Genre colour, set per game; falls back to the original violet ramp. */
+  --wl-game-progress-color: #8b5cf6;
+}
+
+.wl-game-modal-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.wl-game-modal-progress-pct {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--text-normal);
+}
+
+.wl-game-modal-progress-input {
+  width: 6ch;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+
+.wl-game-modal-progress-input::-webkit-outer-spin-button,
+.wl-game-modal-progress-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.wl-game-modal-progress-input:hover {
+  border-bottom-color: var(--background-modifier-border);
+}
+
+.wl-game-modal-progress-input:focus {
+  border-bottom-color: var(--wl-game-progress-color);
+  outline: none;
+}
+
+.wl-game-modal-progress-sign {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* The 100% check sits before the number, hidden until complete. */
+.wl-game-modal-progress-done {
+  display: none;
+  align-items: center;
+  color: #2DA873;
+}
+
+.wl-game-modal-progress-done .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.wl-game-modal-progress-pct.is-complete .wl-game-modal-progress-done {
+  display: inline-flex;
+}
+
+.wl-game-modal-progress-pct.is-complete .wl-game-modal-progress-input {
+  color: #2DA873;
+}
+
+.wl-game-modal-progress-bar {
+  position: relative;
+  height: 12px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: none; /* the bar owns horizontal drags */
+}
+
+.wl-game-modal-progress-bar:focus-visible {
+  outline: 2px solid var(--wl-game-progress-color);
+  outline-offset: 2px;
+}
+
+.wl-game-modal-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--wl-game-progress-color) 55%, transparent),
+    var(--wl-game-progress-color)
+  );
+  border-radius: 999px;
+  transition: width 90ms linear;
+}
+
+/* Stat strip: steppers on the left, play stats trailing. */
+.wl-game-modal-progress-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 10px;
+}
+
+.wl-game-modal-step-group {
+  display: inline-flex;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.wl-game-modal-step {
+  padding: 3px 11px;
+  border: none;
+  border-radius: 0;
+  background: var(--background-secondary);
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.wl-game-modal-step + .wl-game-modal-step {
+  border-left: 1px solid var(--background-modifier-border);
+}
+
+.wl-game-modal-step:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.wl-game-modal-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.wl-game-modal-stat-icon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+}
+
+.wl-game-modal-stat-icon .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.wl-game-modal-stat-input {
+  padding: 1px 4px;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+  font-size: 13px;
+  font-weight: 600;
+  -moz-appearance: textfield;
+}
+
+.wl-game-modal-stat-input::-webkit-outer-spin-button,
+.wl-game-modal-stat-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.wl-game-modal-stat-input:hover {
+  border-bottom-color: var(--background-modifier-border);
+}
+
+.wl-game-modal-stat-input:focus {
+  border-bottom-color: var(--wl-game-progress-color);
+  outline: none;
+}
+
+.wl-game-modal-stat-time { width: 8ch; }
+.wl-game-modal-stat-num  { width: 6ch; text-align: right; }
+.wl-game-modal-stat-sep  { color: var(--text-faint); }
+
+/* "= 62%" — pushes the achievement ratio into the bar, only when they differ. */
+.wl-game-modal-derive {
+  padding: 1px 7px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.wl-game-modal-derive:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.wl-game-modal-derive.is-hidden {
+  display: none;
+}
+
+.wl-game-modal-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wl-game-modal-platform {
+  padding: 7px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+/* filled with --wl-chip-color from renderTagChips (Settings → Games) */
+.wl-game-modal-platform.is-active {
+  border-color: var(--wl-chip-color, var(--interactive-accent));
+  background: var(--wl-chip-color, var(--interactive-accent));
+  color: var(--text-on-accent);
+}
+
+.wl-game-modal-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 18px;
+}
+
+.wl-game-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.wl-game-modal-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.wl-game-modal-field input {
+  width: 100%;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text-normal);
+  font-size: 13.5px;
+  outline: none;
+}
+
+.wl-game-modal-field input:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: none;
+}
+
+/* group row: the dropdown and the create-new input disable each other */
+.wl-game-modal-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+}
+
+.wl-game-modal-group-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.wl-game-modal-group-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.wl-game-modal-group-controls > * {
+  min-width: 0;
+}
+
+.wl-game-modal-group-controls select,
+.wl-game-modal-group-new {
+  width: 100%;
+  box-sizing: border-box;
+  height: 30px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--text-normal);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.wl-game-modal-group-controls select:focus,
+.wl-game-modal-group-new:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: none;
+}
+
+.wl-game-modal-group-controls select:disabled,
+.wl-game-modal-group-new:disabled {
+  opacity: 0.45;
+}
+
+/* links disclosure: set once by the add flow, rarely edited */
+.wl-game-modal-links {
+  margin-top: 12px;
+}
+
+/* scoped: a bare class ties themes' `.modal button` on specificity and themes load later */
+.wl-game-modal .wl-game-modal-links-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 0;
+  background: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Hover moves the text only — no fill, no border, no shadow. */
+.wl-game-modal .wl-game-modal-links-toggle:hover,
+.wl-game-modal .wl-game-modal-links-toggle:focus,
+.wl-game-modal .wl-game-modal-links-toggle:focus-visible,
+.wl-game-modal .wl-game-modal-links-toggle:active {
+  background: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-normal);
+}
+
+.wl-game-modal .wl-game-modal-links-toggle:hover .wl-game-modal-links-caret {
+  color: var(--text-muted);
+}
+
+.wl-game-modal-links-caret {
+  width: 9px;
+  font-size: 9px;
+  color: var(--text-faint);
+}
+
+.wl-game-modal-links-body {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0 2px 15px;
+}
+
+.wl-game-modal-links.is-open .wl-game-modal-links-body {
+  display: flex;
+}
+
+.wl-game-modal-link-row {
+  display: grid;
+  grid-template-columns: 62px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.wl-game-modal-link-row label {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.wl-game-modal-link-row input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 26px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 0 8px;
+  color: var(--text-normal);
+  font-size: 12px;
+  outline: none;
+}
+
+.wl-game-modal-link-row input:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: none;
+}
+
+/* Steam pull button in the progress stat strip. */
+.wl-game-modal .wl-game-modal-steam-pull {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.wl-game-modal .wl-game-modal-steam-pull:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+  box-shadow: none;
+}
+
+.wl-game-modal-steam-pull .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.wl-game-modal-steam-pull.is-loading {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.wl-game-modal-steam-pull.is-loading .svg-icon {
+  animation: wl-spin 0.9s linear infinite;
+}
+
+/* Steam sync modal */
+.wl-steam-sync .wl-steam-summary {
+  margin: 4px 0 10px;
+  font-size: 13px;
+  color: var(--text-normal);
+}
+
+.wl-steam-sync .wl-steam-status {
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.wl-steam-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.wl-steam-option-note {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.wl-steam-option-note.is-dim {
+  opacity: 0.45;
+}
+
+.wl-steam-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.wl-steam-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.wl-steam-picked {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-right: auto;
+}
+
+.wl-steam-section-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.wl-btn-mini {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+/* cap so a big library scrolls inside the modal */
+.wl-steam-list {
+  max-height: 42vh;
+  overflow-y: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+}
+
+.wl-steam-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.wl-steam-row:last-child {
+  border-bottom: none;
+}
+
+.wl-steam-row:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.wl-steam-row.is-picked {
+  background-color: var(--background-secondary);
+}
+
+.wl-steam-row-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.wl-steam-row-title {
+  font-size: 12.5px;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wl-steam-row-time {
+  font-size: 11px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.wl-steam-progress {
+  height: 6px;
+  border-radius: 3px;
+  background-color: var(--background-modifier-border);
+  overflow: hidden;
+  margin: 10px 0;
+}
+
+.wl-steam-progress-fill {
+  height: 100%;
+  width: var(--wl-steam-progress, 0%);
+  border-radius: 3px;
+  background-color: var(--interactive-accent);
+  transition: width 0.2s ease;
+}
+
+.wl-settings-subhead {
+  margin: 18px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.wl-game-modal-notes {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--text-normal);
+  font-size: 13.5px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.wl-game-modal-notes:focus {
+  border-color: var(--interactive-accent);
+}
+
+.wl-game-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.wl-game-modal-delete {
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+  background: transparent;
+}
+
+.wl-game-modal-delete:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+/* Reading card context menu */
 .wl-reading-card-menu-btn {
   position: absolute;
   top: 4px;
@@ -5920,7 +9029,7 @@ body.wl-cl-col-resizing {
   background: var(--background-modifier-hover, rgba(255, 255, 255, 0.08));
 }
 
-/* ── Reading selection mode ─────────────────────────── */
+/* Reading selection mode */
 .wl-reading-card.is-selected {
   outline: 2px solid var(--interactive-accent);
   outline-offset: -2px;
@@ -5933,7 +9042,7 @@ body.wl-cl-col-resizing {
   gap: 6px;
 }
 
-/* ── Reading filter presets ─────────────────────────── */
+/* Reading filter presets */
 .wl-reading-popover-presets {
   display: flex;
   flex-direction: column;
@@ -5978,9 +9087,7 @@ body.wl-cl-col-resizing {
   min-width: 0;
 }
 
-/* ════════════════════════════════════════════════════════
-   READING MODALS
-   ════════════════════════════════════════════════════════ */
+/* ══ READING MODALS ══ */
 
 .wl-reading-modal {
   display: flex;
@@ -6040,47 +9147,6 @@ body.wl-cl-col-resizing {
   flex-shrink: 0;
 }
 
-.wl-reading-lookup-results {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-height: 260px;
-  max-height: 380px;
-  overflow-y: auto;
-  margin-top: 6px;
-  padding: 4px;
-  border: 0.5px solid var(--background-modifier-border);
-  border-radius: 5px;
-  background: var(--background-secondary);
-}
-
-.wl-reading-lookup-results:empty {
-  display: none;
-}
-
-.wl-reading-lookup-loading,
-.wl-reading-lookup-empty {
-  padding: 8px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-style: italic;
-}
-
-.wl-reading-lookup-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-
-.wl-reading-lookup-item-text {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
 .wl-reading-status-rating-row {
   display: flex;
   flex-direction: row;
@@ -6120,28 +9186,6 @@ body.wl-cl-col-resizing {
   margin-top: 0;
 }
 
-.wl-reading-lookup-item:hover {
-  background: var(--background-modifier-hover);
-  border-color: var(--background-modifier-border);
-}
-
-.wl-reading-lookup-item-title-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.wl-reading-lookup-item-title {
-  font-weight: 500;
-  font-size: 13px;
-}
-
-.wl-reading-lookup-item-meta {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-
 .wl-reading-modal-divider {
   height: 1px;
   background: var(--background-modifier-border);
@@ -6163,6 +9207,15 @@ body.wl-cl-col-resizing {
   margin-top: 8px;
   padding-bottom: 2px;
   border-bottom: 0.5px solid var(--background-modifier-border);
+}
+
+/* section label carrying a control at its tail */
+.wl-reading-section-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
 }
 
 .wl-reading-row {
@@ -6234,7 +9287,7 @@ body.wl-cl-col-resizing {
   /* uses .wl-reading-add-btn — color via .wl-btn-success */
 }
 
-/* ── Reading detail modal ────────────────────────────── */
+/* Reading detail modal */
 .wl-reading-detail {
   display: flex;
   flex-direction: column;
@@ -6300,12 +9353,34 @@ body.wl-cl-col-resizing {
 }
 
 .wl-reading-detail-status {
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
   border-radius: 999px;
   color: #fff;
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
+}
+
+/* colour dot inside the pill (Games) */
+.wl-detail-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  flex-shrink: 0;
+}
+
+.wl-detail-priority-empty .wl-detail-status-dot {
+  background: var(--text-faint);
+}
+
+/* placeholder priority pill, muted */
+.wl-detail-priority-empty {
+  background-color: var(--background-modifier-border);
+  color: var(--text-muted);
 }
 
 .wl-reading-detail-stars {
@@ -6357,7 +9432,7 @@ body.wl-cl-col-resizing {
   font-style: italic;
 }
 
-/* ── Detail progress ─────────────────────────────────── */
+/* Detail progress */
 .wl-reading-detail-progress {
   display: flex;
   flex-direction: column;
@@ -6377,6 +9452,19 @@ body.wl-cl-col-resizing {
   align-items: center;
   gap: 6px;
   min-width: 110px;
+}
+
+/* words mode: 6-digit counters need more room */
+.wl-reading-arc-col-wide {
+  min-width: 150px;
+}
+
+.wl-reading-arc-col-wide .wl-reading-arc-input {
+  width: 74px;
+}
+
+.wl-reading-arc-col-wide .wl-reading-arc-total-input {
+  width: 70px;
 }
 
 .wl-reading-arc-svg-wrap {
@@ -6424,7 +9512,7 @@ body.wl-cl-col-resizing {
   text-align: center;
 }
 
-/* ── Detail details grid ─────────────────────────────── */
+/* Detail details grid */
 .wl-reading-detail-details {
   display: flex;
   flex-direction: column;
@@ -6488,7 +9576,7 @@ body.wl-cl-col-resizing {
   line-height: 1.6;
 }
 
-/* ── Inline-editable title / author ─────────────────── */
+/* Inline-editable title / author */
 .wl-reading-detail-title-wrap {
   line-height: 1;
 }
@@ -6497,9 +9585,7 @@ body.wl-cl-col-resizing {
   line-height: 1;
 }
 
-/* Dotted "editable" hint on hover — a transparent border-bottom that gains
-   colour avoids the partially-supported `text-decoration` shorthand while
-   keeping the layout stable. */
+/* dotted editable hint: transparent border-bottom that gains colour */
 .wl-reading-detail-editable-text {
   cursor: text;
   border-bottom: 1px dotted transparent;
@@ -6541,7 +9627,7 @@ body.wl-cl-col-resizing {
   height: auto;
 }
 
-/* ── Inline status badge & dropdown ─────────────────── */
+/* Inline status badge & dropdown */
 .wl-reading-detail-status-wrap {
   display: inline-block;
 }
@@ -6576,12 +9662,11 @@ body.wl-cl-col-resizing {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  /* Default (neutral) dot for options without an assigned colour. Status
-     options always set an inline background-color, which overrides this. */
+  /* neutral dot; status options set an inline background */
   background: var(--background-modifier-border);
 }
 
-/* ── Editable date cells ─────────────────────────────── */
+/* Editable date cells */
 .wl-reading-detail-cell-date {
   display: flex;
   align-items: center;
@@ -6611,7 +9696,7 @@ body.wl-cl-col-resizing {
   box-sizing: border-box;
 }
 
-/* ── Detail footer ───────────────────────────────────── */
+/* Detail footer */
 .wl-reading-detail-footer {
   display: flex;
   justify-content: space-between;
@@ -6631,7 +9716,7 @@ body.wl-cl-col-resizing {
   /* uses .wl-delete-btn — color via .wl-btn-danger */
 }
 
-/* ── Reading custom fields ──────────────────────────────────── */
+/* Reading custom fields */
 .wl-reading-detail-custom-heading,
 .wl-reading-detail-quotes-heading {
   display: flex;
@@ -6695,14 +9780,13 @@ body.wl-cl-col-resizing {
   color: var(--text-normal);
 }
 
-/* Fill mode: pastel label background (--wl-field-bg set per column by
-   ReadingDetailModal) with dark text for contrast. */
+/* fill mode: --wl-field-bg per column */
 .wl-reading-custom-table:not(.is-border-mode) .wl-reading-custom-label {
   background: var(--wl-field-bg, var(--background-secondary));
   color: #1e1e1e;
 }
 
-/* Border mode: coloured label outline (--wl-field-border set per column). */
+/* border mode: --wl-field-border per column */
 .wl-reading-custom-table.is-border-mode .wl-reading-custom-label {
   border: 1.5px solid var(--wl-field-border, var(--background-modifier-border));
   box-sizing: border-box;
@@ -6734,7 +9818,7 @@ body.wl-cl-col-resizing {
   font-size: 13px;
 }
 
-/* ── Reading favorite quotes ────────────────────────────────── */
+/* Reading favorite quotes */
 .wl-reading-detail-quotes {
   display: flex;
   flex-direction: column;
@@ -6810,7 +9894,7 @@ body.wl-cl-col-resizing {
   gap: 6px;
 }
 
-/* ── Manage columns — style toggle ────────────────────────── */
+/* Manage columns — style toggle */
 .wl-reading-cols-style-row {
   display: flex;
   align-items: center;
@@ -6847,7 +9931,7 @@ body.wl-cl-col-resizing {
   border-color: var(--interactive-accent);
 }
 
-/* ── Manage columns — color dot & palette ──────────────────── */
+/* Manage columns — color dot & palette */
 .wl-reading-col-color-dot {
   flex: 0 0 18px;
   width: 18px;
@@ -6878,8 +9962,7 @@ body.wl-cl-col-resizing {
   color: var(--text-normal);
 }
 
-/* Chosen colour flows through CSS vars set by CustomListsTab; the .is-unset
-   class swaps in the checkerboard below instead. */
+/* colour comes from CustomListsTab vars; .is-unset swaps in the checkerboard */
 .wl-editcols-tabcolor-dot:not(.is-unset) {
   background-color: var(--wl-dot-fill);
 }
@@ -6979,7 +10062,7 @@ body.wl-cl-col-resizing {
     ) 0 / 10px 10px;
 }
 
-/* ── Manage columns modal ──────────────────────────────────── */
+/* Manage columns modal */
 .wl-reading-manage-cols-desc {
   font-size: 12px;
   color: var(--text-muted);
@@ -7096,7 +10179,7 @@ body.wl-cl-col-resizing {
   flex: 0 0 auto;
 }
 
-/* ── Drafts: Add choice modal ─────────────────────────────────────────────── */
+/* Drafts: Add choice modal */
 .wl-draft-choice-subtitle {
   margin-bottom: 14px;
   font-size: 0.9em;
@@ -7108,12 +10191,13 @@ body.wl-cl-col-resizing {
 .wl-draft-choice-grid {
   display: flex;
   flex-direction: row;
+  flex-wrap: wrap;
   gap: 10px;
   justify-content: center;
 }
 
 .wl-draft-choice-btn {
-  flex: 1 1 0;
+  flex: 1 1 110px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -7140,11 +10224,7 @@ body.wl-cl-col-resizing {
   text-align: center;
 }
 
-/* ════════════════════════════════════════════════════════
-   SHARED BUTTON COLOR UTILITIES
-   Color-only — layer on top of any geometry/button class.
-   Resting state is border-only; hover fills with the color.
-   ════════════════════════════════════════════════════════ */
+/* ══ SHARED BUTTON COLOR UTILITIES — color only, border at rest, fill on hover ══ */
 .wl-btn-danger {
   background: transparent;
   border: 0.5px solid rgba(var(--color-red-rgb), 0.65);
@@ -7169,8 +10249,880 @@ body.wl-cl-col-resizing {
   color: var(--text-on-accent);
 }
 
-/* ── Status bar: Upcoming "due" counter ─────────────────── */
+/* Status bar: Upcoming "due" counter */
 .wl-statusbar-upcoming {
   cursor: pointer;
   color: var(--color-orange);
+}
+
+/* Cards group (Settings → Customize) */
+
+/* text-placement picker: two mini card previews */
+.wl-card-style-picker {
+  display: flex;
+  gap: 10px;
+}
+
+.wl-card-style-option {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 10px 10px;
+  /* Obsidian pins button height to --input-height; let the content size the tile */
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.wl-card-style-option:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* Selected option glows in the group's green accent (inherited from .wl-sg--cards). */
+.wl-card-style-option.is-active {
+  border-color: rgb(var(--wl-sg-accent));
+  box-shadow: 0 0 0 1px rgb(var(--wl-sg-accent));
+}
+
+/* fixed-height stage so both variants align */
+.wl-card-style-thumb {
+  width: 46px;
+  height: 84px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.wl-card-style-thumb-poster {
+  position: relative;
+  width: 46px;
+  height: 69px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #6b7280, #3f4450);
+}
+
+.wl-card-style-thumb.is-inside .wl-card-style-thumb-poster {
+  height: 84px;
+}
+
+.wl-card-style-thumb-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Inside variant: pin the lines to the poster bottom over a scrim. */
+.wl-card-style-thumb.is-inside .wl-card-style-thumb-lines {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  padding-top: 14px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+}
+
+.wl-card-style-thumb-line {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--text-muted);
+  opacity: 0.85;
+}
+
+.wl-card-style-thumb.is-inside .wl-card-style-thumb-line {
+  background: #fff;
+}
+
+.wl-card-style-thumb-line.is-short {
+  width: 62%;
+}
+
+.wl-card-style-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.wl-card-style-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* Per-tab rows under the previews: icon · tab name · [Under | Inside]. */
+.wl-card-style-tabs {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wl-card-style-tab-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wl-card-style-tab-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.wl-card-style-tab-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.wl-card-style-tab-label {
+  flex: 1 1 auto;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.wl-card-style-tab-group {
+  display: flex;
+  gap: 4px;
+}
+
+.wl-card-style-tab-btn {
+  font-size: 11px;
+  padding: 3px 12px;
+  height: 24px;
+  border-radius: 4px;
+  border: 0.5px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.wl-card-style-tab-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+/* Active option tinted in the group's green accent (inherited from .wl-sg--cards). */
+.wl-card-style-tab-btn.is-active {
+  background: rgba(var(--wl-sg-accent), 0.16);
+  border-color: rgb(var(--wl-sg-accent));
+  color: var(--text-normal);
+}
+
+/* Size sliders: icon · label · slider · live "Default · 160 px" read-out. */
+.wl-card-size-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wl-card-size-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wl-card-size-row-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.wl-card-size-row-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.wl-card-size-row-label {
+  min-width: 62px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.wl-card-size-row input[type='range'] {
+  flex: 1 1 auto;
+}
+
+.wl-card-size-value {
+  min-width: 104px;
+  text-align: right;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Shared date picker (src/DatePicker.ts) — the field keeps its call-site classes; the calendar
+   is a fixed layer in body, placed via --wl-dp-top/left */
+
+.wl-datepicker-input {
+  cursor: pointer;
+}
+
+.wl-datepicker-panel {
+  position: fixed;
+  top: var(--wl-dp-top, 0);
+  left: var(--wl-dp-left, 0);
+  z-index: var(--layer-menu);
+  width: 252px;
+  max-width: calc(100vw - 16px);
+  padding: 8px;
+  background: var(--background-primary);
+  border: 0.5px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
+  font-size: var(--font-ui-small);
+}
+
+.wl-datepicker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.wl-datepicker-month {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.wl-datepicker-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.wl-datepicker-nav:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.wl-datepicker-dow,
+.wl-datepicker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.wl-datepicker-dow {
+  margin-bottom: 2px;
+}
+
+.wl-datepicker-dow span {
+  text-align: center;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.wl-datepicker-day {
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.wl-datepicker-day:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* Obsidian's accent, not --wl-accent (near-black in the default theme) */
+.wl-datepicker-day.is-today {
+  font-weight: 700;
+  color: var(--interactive-accent);
+}
+
+.wl-datepicker-day.is-selected {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.wl-datepicker-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 0.5px solid var(--background-modifier-border);
+}
+
+/* Phones: a touch-sized grid, still anchored to the field. */
+@media (max-width: 600px) {
+  .wl-datepicker-panel {
+    width: 280px;
+  }
+
+  .wl-datepicker-day {
+    height: 34px;
+  }
+}
+
+/* Editable tag name (Settings → Games) — reads as text until focused */
+
+.wl-tag-name-input {
+  border: none;
+  background: transparent;
+  color: var(--text-normal);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 0 2px;
+  /* Width comes from the `size` attribute, set per entry from the name length. */
+  width: auto;
+  min-width: 4ch;
+  box-shadow: none;
+  border-radius: 3px;
+}
+
+.wl-tag-name-input:hover {
+  background: var(--background-modifier-hover);
+}
+
+.wl-tag-name-input:focus {
+  background: var(--background-primary);
+  box-shadow: 0 0 0 1px var(--interactive-accent);
+  outline: none;
+}
+
+/* Sticky modal footer (StickyModal.ts). Must be a direct child of the modal's scrolling
+   element. Placed last so it overrides each modal's own footer padding/border.
+   --modal-background, not --background-primary: on mobile those differ and the footer
+   painted itself as a black bar over a lighter modal. */
+
+.wl-sticky-bottom {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: var(--modal-background, var(--background-primary));
+  padding-top: 10px;
+  padding-bottom: 2px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* closes the gap under the bar — see pinModalFooter */
+.modal-content.wl-has-sticky-footer {
+  padding-bottom: 0;
+}
+
+/* ══ MOBILE DETAIL MODALS ══ */
+/* Phone layout for the three detail modals. Placed last so the single-class overrides here beat
+   each modal's own rules; see DEVLOG 2026-07-28. */
+
+/* — Watchlist detail modal — */
+
+/* poster + title/rating on top, everything else full width below it */
+/* stretch, not the base flex-start: in column direction that would shrink every row to
+   fit-content and squeeze the title to three lines.
+   nowrap, not the base wrap: column + wrap stretches the flex lines and left ~70px of dead
+   space under the poster row. */
+.wl-detail-mobile .wl-detail-header {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.wl-detail-mobile .wl-detail-header-top {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.wl-detail-mobile .wl-detail-cover {
+  width: 84px;
+  height: auto;
+}
+
+.wl-detail-mobile .wl-detail-header-left {
+  gap: 8px;
+}
+
+.wl-detail-mobile .wl-detail-title,
+.wl-detail-mobile .wl-detail-title-input {
+  font-size: 1.2rem;
+  line-height: 1.25;
+}
+
+.wl-detail-mobile .wl-detail-title-wrap {
+  line-height: 1.25;
+}
+
+/* stars, then community rating + trailer on their own line */
+.wl-detail-rating-stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.wl-detail-community-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wl-detail-mobile .wl-star {
+  font-size: 20px;
+}
+
+/* labelled trailer button replaces the icon-only one */
+.wl-trailer-btn-labeled {
+  width: auto;
+  min-width: 0;
+  height: auto;
+  min-height: 30px;
+  gap: 6px;
+  padding: 2px 12px;
+  margin-left: 4px;
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+}
+
+.wl-trailer-btn-labeled:hover {
+  color: var(--text-normal);
+}
+
+.wl-trailer-btn-labeled .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.wl-trailer-btn-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* badge row: pills, then square icon buttons */
+.wl-detail-mobile .wl-detail-badge-row {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wl-detail-mobile .wl-detail-badge-row .wl-acc-link-icon,
+.wl-detail-mobile .wl-detail-badge-row .wl-credits-refresh {
+  width: 34px;
+  height: 30px;
+  min-height: 30px;
+  align-self: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background-color: var(--background-modifier-border);
+  color: var(--text-normal);
+  opacity: 1;
+  font-size: 15px;
+  --icon-size: 16px;
+}
+
+.wl-detail-mobile .wl-detail-badge-row .wl-acc-link-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* stats: plain text line, full-width bar, caption under it */
+.wl-detail-stats-line {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.wl-detail-statline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.wl-detail-statline-value {
+  font-weight: 700;
+  color: var(--text-normal);
+  margin-right: 4px;
+}
+
+.wl-detail-stats-line .wl-acc-progress-wrap {
+  width: 100%;
+}
+
+.wl-detail-progress-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* studio / director / cast as a label-value grid */
+.wl-detail-mobile .wl-detail-credits {
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.wl-detail-mobile .wl-credits-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  font-size: 13px;
+}
+
+/* row-reverse parks the + after the label so every label starts at the column edge; nowrap
+   stops the + from pushing the text onto its own line */
+.wl-detail-mobile .wl-credits-label {
+  display: flex;
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 2px;
+  font-weight: 400;
+  margin-right: 0;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.wl-detail-mobile .wl-credits-label-text::after {
+  content: '';
+}
+
+.wl-detail-mobile .wl-credits-values {
+  color: var(--text-normal);
+}
+
+.wl-detail-mobile .wl-credits-overflow {
+  padding-left: 98px;
+}
+
+/* Mark as Watched becomes the modal's primary action */
+.wl-detail-mobile .wl-movie-row {
+  display: block;
+  padding: 2px 0;
+}
+
+.wl-detail-mobile .wl-mark-watched-btn {
+  width: 100%;
+  height: auto;
+  min-height: 44px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  background: var(--background-modifier-form-field);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+}
+
+.wl-detail-mobile .wl-mark-watched-btn.is-watched {
+  background: transparent;
+}
+
+.wl-detail-mobile .wl-detail-date-row {
+  gap: 10px;
+}
+
+/* 48px cuts "Date started" in half */
+.wl-detail-mobile .wl-date-field .wl-stars-label {
+  width: 72px;
+}
+
+/* episode boxes keep their desktop 28px — the mock's oversized grid was rejected */
+
+.is-mobile .wl-season-badge,
+.is-mobile .wl-season-ep-count {
+  font-size: 12px;
+}
+
+/* — shared: Obsidian pins mobile buttons to --input-height; the date shortcut stays small — */
+
+.is-mobile .wl-footer-today-btn {
+  height: auto;
+  min-height: 0;
+  padding: 3px 9px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* — Reading detail modal — */
+
+.is-mobile .wl-reading-detail-header {
+  gap: 12px;
+}
+
+.is-mobile .wl-reading-detail-cover {
+  width: 78px;
+}
+
+.is-mobile .wl-reading-detail-meta-row {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.is-mobile .wl-reading-detail-stars-row {
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.is-mobile .wl-reading-detail-meta-row .wl-acc-link-icon {
+  width: 38px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  opacity: 1;
+  --icon-size: 16px;
+}
+
+.is-mobile .wl-reading-detail-meta-row .wl-acc-link-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.is-mobile .wl-reading-detail-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* — Games detail modal — */
+
+.is-mobile .wl-game-modal-header {
+  gap: 12px;
+}
+
+.is-mobile .wl-game-modal-cover {
+  width: 88px;
+  height: 124px;
+}
+
+.is-mobile .wl-game-modal-badges,
+.is-mobile .wl-game-modal-rating {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.is-mobile .wl-game-modal-details {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* — Reading: external link + vault page share one row (desktop + mobile) — */
+
+.wl-reading-detail-links-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 4px;
+}
+
+.wl-reading-detail-links-row .wl-reading-detail-actions,
+.wl-reading-detail-links-row .wl-reading-detail-vault-row {
+  margin-top: 0;
+}
+
+/* — Reading, phone: Obsidian pins buttons and inputs to --input-height and stretches inputs
+     to full width; restate the intended size so the row stays compact — */
+
+.is-mobile .wl-reading-detail-links-row .wl-btn,
+.is-mobile .wl-reading-detail-today-btn {
+  height: auto;
+  min-height: 0;
+  padding: 3px 9px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.is-mobile .wl-reading-detail-today-btn {
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+/* needs 3 classes: Obsidian's `body.is-mobile input[type=text] { width: 100% }` outweighs 2 */
+.is-mobile .wl-reading-detail-details .wl-reading-detail-date-input {
+  height: auto;
+  min-height: 0;
+  flex: none;
+  /* mask is 10 chars + padding + border — no slack */
+  width: calc(10ch + 14px);
+  max-width: calc(10ch + 14px);
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+/* — Games, phone: note · store · wishlist on one line under the rating — */
+
+.wl-game-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.wl-game-modal-actions .wl-acc-link-icon,
+.wl-game-modal-actions .wl-store-btn {
+  width: 34px;
+  height: 30px;
+  min-height: 30px;
+  margin-left: 0;
+  padding: 0;
+  border-radius: 8px;
+  background-color: var(--background-modifier-border);
+  opacity: 1;
+  --icon-size: 16px;
+}
+
+.wl-game-modal-actions .wl-acc-link-icon svg,
+.wl-game-modal-actions .wl-store-btn .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Modes left the head column — space it like a section so it lines up with Progress */
+.is-mobile .wl-game-modal-modes {
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+/* the stat inputs stretch to full width on mobile; restore their intended widths */
+.is-mobile .wl-game-modal-stat-input {
+  height: auto;
+  min-height: 0;
+  flex: none;
+  font-size: 13px;
+}
+
+.is-mobile .wl-game-modal-stat-time {
+  width: 6ch;
+}
+
+.is-mobile .wl-game-modal-stat-num {
+  width: 5ch;
+}
+
+/* Search help ("?") button, at the right end of every search bar */
+/* element-qualified: plain .class loses to core's button:not(.clickable-icon) */
+button.wl-search-help-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+button.wl-search-help-btn:hover,
+button.wl-search-help-btn:active,
+button.wl-search-help-btn:focus {
+  color: var(--text-normal);
+  background: transparent;
+  box-shadow: none;
+}
+
+.wl-search-help-btn .svg-icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* Search tips modal */
+.wl-search-help-intro {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.wl-search-help-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.wl-search-help-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: var(--background-modifier-hover);
+}
+
+.wl-search-help-query {
+  flex: 0 0 auto;
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.wl-search-help-says {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+/* syntax colours: field prefix / operator / value */
+.wl-shq-f { color: var(--color-blue); font-weight: 600; }
+.wl-shq-o { color: var(--color-orange); font-weight: 600; }
+.wl-shq-v { color: var(--color-green); }
+.wl-shq-p { color: var(--text-faint); }
+
+.wl-search-help-fields {
+  margin-top: 12px;
+}
+
+.wl-search-help-fields-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.wl-search-help-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.wl-search-help-chip {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--background-modifier-hover);
+}
+
+.wl-search-help-note {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.4;
 }

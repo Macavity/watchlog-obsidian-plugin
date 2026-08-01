@@ -1,6 +1,6 @@
 import { Platform, setIcon } from 'obsidian';
 
-export interface MobileToolbarOptions {
+interface MobileToolbarOptions {
 	/** The flex container row that holds the toolbar (e.g. wl-header-controls / wl-reading-toolbar). */
 	controls: HTMLElement;
 	/** Builds the search input into the given parent. */
@@ -14,20 +14,18 @@ export interface MobileToolbarOptions {
 }
 
 /**
- * Renders a toolbar that, on mobile only, crossfades between a search input
- * (default / retracted) and its action buttons via a chevron toggle button.
- * Both panes are absolutely positioned inside a fixed-height slot so swapping
- * causes no reflow — only opacity is animated. On desktop the search and the
- * actions render inline together, unchanged.
+ * Renders a toolbar that, on mobile only, crossfades between a search input (default, retracted)
+ * and its action buttons via a chevron toggle. Both panes are absolutely positioned inside a
+ * fixed-height slot so swapping causes no reflow — only opacity animates. Desktop renders both
+ * inline, unchanged.
  *
- * Shared by the Watchlist (ListTab) and Reading (ReadingTab) toolbars so the
- * toggle behaviour lives in exactly one place.
+ * Shared by the Watchlist and Reading toolbars, so the toggle lives in one place.
  */
 export function renderToolbarWithMobileToggle(options: MobileToolbarOptions): void {
 	const { controls, renderSearch, renderActions } = options;
 
 	if (!Platform.isMobile) {
-		// Desktop: search sits inline followed by the full set of action buttons.
+		// desktop: search inline, followed by the full set of action buttons
 		renderSearch(controls);
 		renderActions(controls);
 		return;

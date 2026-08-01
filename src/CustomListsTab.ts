@@ -6,22 +6,28 @@ import { DEFAULT_FIELD_COLOR } from './types';
 import { ConfirmModal } from './ConfirmModal';
 import { openColorPicker, deriveFillColor, deriveBorderColor } from './ColorPicker';
 import { openStatusDropdown } from './StatusDropdown';
+import { openAddForTitle } from './AddRouter';
+
+/** Row name, trimmed — the index signature types it loosely. */
+function rowName(row: CustomListRow): string {
+	return String((row as Record<string, string | undefined>)['name'] ?? '').trim();
+}
 
 /** Minimum width (px) a resizable column can be dragged to. */
 const MIN_COL_WIDTH = 60;
-/** Fallback width (px) for a resizable column that has no explicit width in resizable mode. */
+/** Fallback width (px) for a resizable column with no explicit width. */
 const DEFAULT_COL_WIDTH = 140;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CustomListManager — vault I/O
-// ─────────────────────────────────────────────────────────────────────────────
 
 export class CustomListManager {
 	/** Names of lists whose ## Data JSON is corrupt — never overwrite these. */
 	corruptLists: Set<string> = new Set();
 
-	/** Per-list save queue: serializes writes to the same list file so table
-	 * and notes saves cannot race and clobber each other. */
+	/**
+	 * Per-list save queue: serializes writes to the same file so table and notes saves can't race
+	 * and clobber each other.
+	 */
 	private saveQueues: Map<string, Promise<void>> = new Map();
 
 	constructor(
@@ -71,8 +77,10 @@ export class CustomListManager {
 		}
 	}
 
-	/** Reads each named list and returns a `name → tabColor` map for tab rendering.
-	 *  Lists without a colour (or that fail to load) are simply omitted. */
+	/**
+	 * Reads each named list into a `name → tabColor` map for tab rendering. Lists without a colour,
+	 * or that fail to load, are omitted.
+	 */
 	async loadTabColors(names: string[]): Promise<Map<string, string>> {
 		const out = new Map<string, string>();
 		await Promise.all(names.map(async (name) => {
@@ -141,7 +149,7 @@ export class CustomListManager {
 		});
 	}
 
-	/** Saves only the ## Notes section without touching ## Data JSON. */
+	/** Saves only the ## Notes section, without touching ## Data JSON. */
 	async saveNotes(name: string, notes: string): Promise<void> {
 		await this.saveSerialized(name, async () => {
 			const path = normalizePath(`${this.folderPath}/${name}.md`);
@@ -206,8 +214,10 @@ export class CustomListManager {
 	}
 }
 
-/** Aligns a column's option-colour map with its (trimmed) options on save:
- *  drops colours for removed options and clears the map for non-select columns. */
+/**
+ * Aligns a column's option-colour map with its trimmed options on save: drops colours for
+ * removed options, clears the map for non-select columns.
+ */
 function normalizeOptionColors(col: CustomListColumn): void {
 	if (col.type !== 'select') { delete col.optionColors; return; }
 	if (!col.optionColors) return;
@@ -221,9 +231,7 @@ function normalizeOptionColors(col: CustomListColumn): void {
 	else delete col.optionColors;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared column list renderer (used by EditColumnsModal & DefaultColumnsModal)
-// ─────────────────────────────────────────────────────────────────────────────
+// Shared column list renderer (EditColumnsModal + DefaultColumnsModal)
 
 function renderColumnList(
 	listEl: HTMLElement,
@@ -240,7 +248,7 @@ function renderColumnList(
 	listEl.addClass('wl-editcol-card-grid');
 	let dragFromIndex = -1;
 
-	// Permanent auto-included columns — non-editable, non-deletable, non-draggable.
+	// permanent auto-included columns — non-editable, non-deletable, non-draggable
 	const renderAutoCard = (label: string): void => {
 		const card = listEl.createDiv({ cls: 'wl-editcol-card wl-editcol-card-auto' });
 		card.setAttribute('data-auto', label);
@@ -252,11 +260,9 @@ function renderColumnList(
 	renderAutoCard('#');
 	renderAutoCard('Name');
 
-	// User columns
 	cols.forEach((col, idx) => {
 		const card = listEl.createDiv({ cls: 'wl-editcol-card' });
 
-		// Drag handle (top of card)
 		const handle = card.createDiv({ cls: 'wl-editcol-card-handle', text: '⠿' });
 		handle.title = 'Drag to reorder';
 		handle.addEventListener('mousedown', () => card.setAttribute('draggable', 'true'));
@@ -279,14 +285,12 @@ function renderColumnList(
 			if (from !== to && from >= 0) onReorder(from, to);
 		});
 
-		// Name input
 		const nameInput = card.createEl('input', {
 			cls: 'wl-modal-input wl-editcol-card-name',
 			attr: { type: 'text', placeholder: 'Column name', value: col.label },
 		});
 		nameInput.addEventListener('input', () => { col.label = nameInput.value; });
 
-		// Type select
 		const typeSelect = card.createEl('select', { cls: 'wl-select wl-editcol-card-type' });
 		for (const t of ['text', 'number', 'select'] as const) {
 			const opt = typeSelect.createEl('option', {
@@ -298,11 +302,9 @@ function renderColumnList(
 		typeSelect.addEventListener('change', () => {
 			const newType = typeSelect.value as CustomListColumn['type'];
 			if (newType === 'select') {
-				// Rebuild the option list from the distinct non-empty values already
-				// present in this column's cells, in order of first appearance. This
-				// replaces any previously-stored options (so stale/orphaned options
-				// don't resurrect) and leaves the cell values themselves untouched —
-				// after the switch every populated cell holds a valid option.
+				// rebuild the option list from the distinct non-empty values already in this column's cells, in
+				// order of first appearance. Replaces any stored options (so stale ones don't resurrect) and
+				// leaves the cell values untouched.
 				const seen = new Set<string>();
 				const derived: string[] = [];
 				for (const row of existingRows) {
@@ -319,7 +321,6 @@ function renderColumnList(
 			onTypeChange();
 		});
 
-		// Bold/Italic toggles (text/number only)
 		if (col.type === 'text' || col.type === 'number') {
 			const toggles = card.createDiv({ cls: 'wl-editcol-card-toggles' });
 			const boldBtn = toggles.createEl('button', {
@@ -352,7 +353,6 @@ function renderColumnList(
 			}
 		}
 
-		// Delete card button
 		const delBtn = card.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-editcol-card-del',
 			text: '×',
@@ -372,7 +372,6 @@ function renderColumnList(
 			}
 		});
 
-		// Options block (select type only)
 		if (col.type === 'select') {
 			const optsArea = card.createDiv({ cls: 'wl-editcol-card-opts' });
 			const renderOpts = (): void => {
@@ -380,7 +379,7 @@ function renderColumnList(
 				(col.options ?? []).forEach((opt, oi) => {
 					const optRow = optsArea.createDiv({ cls: 'wl-editcol-card-opt-row' });
 
-					// Per-option colour dot — reuses the shared picker + derivation helpers.
+					// per-option colour dot — reuses the shared picker + derivation helpers
 					const colorDot = optRow.createEl('button', {
 						cls: 'wl-reading-col-color-dot wl-editcol-opt-color-dot',
 					});
@@ -389,7 +388,7 @@ function renderColumnList(
 						const c = col.optionColors?.[col.options?.[oi] ?? ''];
 						if (c) {
 							colorDot.removeClass('is-unset');
-							// Colours flow through CSS vars; .is-unset gates whether they apply.
+							// colours flow through CSS vars; .is-unset gates whether they apply
 							colorDot.setCssProps({ '--wl-dot-fill': deriveFillColor(c), '--wl-dot-border': deriveBorderColor(c) });
 						} else {
 							colorDot.addClass('is-unset');
@@ -426,7 +425,7 @@ function renderColumnList(
 						if (!col.options) col.options = [];
 						const nextVal = optInput.value;
 						if (nextVal !== prevVal) {
-							// Keep any assigned colour attached to the renamed value.
+							// keep any assigned colour attached to the renamed value
 							if (col.optionColors) {
 								const moved = col.optionColors[prevVal];
 								if (moved !== undefined) {
@@ -434,7 +433,7 @@ function renderColumnList(
 									delete col.optionColors[prevVal];
 								}
 							}
-							// Record the rename so row cells can be migrated at save time.
+							// record the rename so row cells can be migrated at save time
 							onOptionRename?.(col.id, prevVal, nextVal);
 						}
 						col.options[oi] = nextVal;
@@ -466,7 +465,6 @@ function renderColumnList(
 		}
 	});
 
-	// Add-column card (last in row)
 	if (onAdd) {
 		const addCard = listEl.createDiv({ cls: 'wl-editcol-card wl-editcol-card-add' });
 		addCard.createDiv({ cls: 'wl-editcol-card-add-label', text: '+ add column' });
@@ -474,19 +472,17 @@ function renderColumnList(
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // EditColumnsModal
-// ─────────────────────────────────────────────────────────────────────────────
 
-export class EditColumnsModal extends Modal {
+class EditColumnsModal extends Modal {
 	private list: CustomList;
 	private manager: CustomListManager;
 	private onSave: (columns: CustomListColumn[]) => Promise<void>;
 	private cols: CustomListColumn[];
 	private tabColor: string | undefined;
 	private listEl!: HTMLElement;
-	// colId → (original option value → latest value). Applied to row cells on Save
-	// only — never live, so a Cancel can't leak a rename into a later cell-edit save.
+	// colId → (original option value → latest value). Applied to row cells on Save only — never live,
+	// so a Cancel can't leak a rename into a later cell-edit save.
 	private optionRenames: Map<string, Map<string, string>> = new Map();
 
 	constructor(
@@ -541,7 +537,7 @@ export class EditColumnsModal extends Modal {
 		const sync = (): void => {
 			if (this.tabColor) {
 				dot.removeClass('is-unset');
-				// Colour flows through a CSS var; .is-unset gates whether it applies.
+				// colour flows through a CSS var; .is-unset gates whether it applies
 				dot.setCssProps({ '--wl-dot-fill': this.tabColor });
 			} else {
 				dot.addClass('is-unset');
@@ -557,7 +553,7 @@ export class EditColumnsModal extends Modal {
 				container: this.contentEl,
 				current: this.tabColor ?? DEFAULT_FIELD_COLOR,
 				allowCustom: true,
-				// Clear swatch → null → revert to the default (uncoloured) tab name.
+				// clear swatch → null → revert to the default (uncoloured) tab name
 				onPick: (color) => { this.tabColor = color ?? undefined; sync(); },
 			});
 		});
@@ -590,21 +586,24 @@ export class EditColumnsModal extends Modal {
 		);
 	}
 
-	/** Accumulates a net (original → latest) rename per option, composing
-	 *  incremental keystrokes so "A"→"Ap"→"Apple" collapses to "A"→"Apple". */
+	/**
+	 * Accumulates a net (original → latest) rename per option, composing keystrokes so
+	 * "A"→"Ap"→"Apple" collapses to "A"→"Apple".
+	 */
 	private recordOptionRename(colId: string, oldVal: string, newVal: string): void {
 		let m = this.optionRenames.get(colId);
 		if (!m) { m = new Map(); this.optionRenames.set(colId, m); }
-		// If some original already maps to oldVal, extend that chain; else start fresh.
+		// if some original already maps to oldVal, extend that chain; else start fresh
 		let origKey: string | null = null;
 		for (const [orig, cur] of m) { if (cur === oldVal) { origKey = orig; break; } }
 		m.set(origKey ?? oldVal, newVal);
 	}
 
-	/** Migrates row cells from each original option value to its final value.
-	 *  Only exact matches in the renamed column are touched; orphan values that
-	 *  were never an option, and options created fresh this session (orig ''),
-	 *  are left alone. */
+	/**
+	 * Migrates row cells from each original option value to its final value. Only exact matches in
+	 * the renamed column are touched; orphan values that were never an option, and options created
+	 * fresh this session (orig ''), are left alone.
+	 */
 	private applyOptionRenamesToRows(): void {
 		for (const [colId, m] of this.optionRenames) {
 			for (const [orig, final] of m) {
@@ -637,9 +636,7 @@ export class EditColumnsModal extends Modal {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // DefaultColumnsModal — for Settings
-// ─────────────────────────────────────────────────────────────────────────────
 
 export class DefaultColumnsModal extends Modal {
 	private plugin: WatchLogPlugin;
@@ -731,9 +728,7 @@ export class DefaultColumnsModal extends Modal {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NotesModal — edits a list's notes in a simple textarea modal
-// ─────────────────────────────────────────────────────────────────────────────
+// NotesModal — edits a list's notes in a textarea
 
 class NotesModal extends Modal {
 	private previewComponent = new Component();
@@ -751,12 +746,10 @@ class NotesModal extends Modal {
 		const { contentEl } = this;
 		contentEl.addClass('wl-notes-modal');
 
-		// ── Mode toggle bar ──
 		const modeBar = contentEl.createDiv({ cls: 'wl-notes-mode-bar' });
 		const editBtn = modeBar.createEl('button', { cls: 'wl-btn wl-btn-sm is-active', text: 'Edit' });
 		const previewBtn = modeBar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Preview' });
 
-		// ── Edit area ──
 		const editArea = contentEl.createDiv({ cls: 'wl-notes-edit-area' });
 		const textarea = editArea.createEl('textarea', {
 			cls: 'wl-modal-textarea wl-notes-textarea',
@@ -768,7 +761,6 @@ class NotesModal extends Modal {
 			textarea.setSelectionRange(textarea.value.length, textarea.value.length);
 		}, 0);
 
-		// ── Preview area ──
 		const previewArea = contentEl.createDiv({ cls: 'wl-notes-preview-area' });
 		previewArea.hide();
 
@@ -793,7 +785,7 @@ class NotesModal extends Modal {
 		editBtn.addEventListener('click', showEdit);
 		previewBtn.addEventListener('click', () => void showPreview());
 
-		// Ctrl+B / Ctrl+I shortcuts in textarea
+		// Ctrl+B / Ctrl+I shortcuts in the textarea
 		textarea.addEventListener('keydown', (e) => {
 			if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
 				e.preventDefault();
@@ -821,16 +813,14 @@ function wrapSelection(ta: HTMLTextAreaElement, before: string, after: string): 
 	const selected = ta.value.slice(start, end);
 	const replacement = before + selected + after;
 	ta.setRangeText(replacement, start, end, 'select');
-	// Place cursor inside the markers if nothing was selected
+	// place the cursor inside the markers when nothing was selected
 	if (start === end) {
 		ta.selectionStart = start + before.length;
 		ta.selectionEnd = start + before.length;
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // ListNameModal — text-input modal (window.prompt() is blocked in Electron)
-// ─────────────────────────────────────────────────────────────────────────────
 
 class ListNameModal extends Modal {
 	constructor(
@@ -878,9 +868,7 @@ class ListNameModal extends Modal {
 	onClose(): void { this.contentEl.empty(); }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CustomListsTab
-// ─────────────────────────────────────────────────────────────────────────────
 
 export class CustomListsTab {
 	private container: HTMLElement;
@@ -897,16 +885,16 @@ export class CustomListsTab {
 	private duplicatedRowIds: Set<string> = new Set();
 	private _escapeKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
-	// Cleanup functions for inline-editor document/visualViewport listeners
+	// cleanup for the inline editor's document / visualViewport listeners
 	private activeCleanups: Array<() => void> = [];
 
-	// Generation counter to guard against stale renders / race conditions
+	// generation counter guarding against stale renders
 	private renderGeneration = 0;
 
-	// Per-list save queue to prevent overlapping table + notes writes
+	// per-list save queue preventing overlapping table + notes writes
 	private saveQueues: Map<string, Promise<void>> = new Map();
 
-	// Kept for keyboard navigation (set at buildTable time)
+	// kept for keyboard navigation (set at buildTable time)
 	private _countEl: HTMLElement | null = null;
 	private _tableContainer: HTMLElement | null = null;
 
@@ -917,7 +905,7 @@ export class CustomListsTab {
 		this.manager = new CustomListManager(plugin.app, plugin);
 	}
 
-	/** Returns listNames merged with the persisted tab order (new lists appended at end). */
+	/** listNames merged with the persisted tab order (new lists appended at the end). */
 	private applyTabOrder(names: string[]): string[] {
 		const saved = this.plugin.settings.customListTabOrder ?? [];
 		const ordered = saved.filter(n => names.includes(n));
@@ -925,14 +913,21 @@ export class CustomListsTab {
 		return [...ordered, ...unordered];
 	}
 
-	/** Tear down active inline-editor listeners (called on rerender / view close). */
+	/** Tear down active inline-editor listeners (on rerender / view close). */
 	destroy(): void {
 		for (const fn of this.activeCleanups) {
 			try { fn(); } catch { /* ignore */ }
 		}
 		this.activeCleanups = [];
+		// belt-and-braces for the inline editor's Escape swallower: the cleanup above normally removes
+		// it, but the flag has to match the `capture: true` it was registered with (and both events),
+		// otherwise removeEventListener silently does nothing.
 		if (this._escapeKeyHandler) {
-			try { activeDocument.removeEventListener('keydown', this._escapeKeyHandler); } catch { /* ignore */ }
+			const handler = this._escapeKeyHandler;
+			try {
+				activeDocument.removeEventListener('keydown', handler, true);
+				activeDocument.removeEventListener('keyup', handler, true);
+			} catch { /* ignore */ }
 			this._escapeKeyHandler = null;
 		}
 	}
@@ -941,7 +936,7 @@ export class CustomListsTab {
 		this.activeCleanups.push(fn);
 	}
 
-	/** Serializes saves per-list so notes + table writes don't overlap. */
+	/** Serializes saves per list so notes + table writes don't overlap. */
 	saveSerialized(listName: string, saveFn: () => Promise<void>): Promise<void> {
 		const prev = this.saveQueues.get(listName) ?? Promise.resolve();
 		const next = prev.then(saveFn).catch((e) => console.error('[WL] custom-list save failed:', e));
@@ -1020,7 +1015,6 @@ export class CustomListsTab {
 				void this.render();
 			});
 
-			// Drag-and-drop reorder
 			tab.addEventListener('dragstart', (e) => {
 				dragFromName = name;
 				e.dataTransfer?.setData('text/plain', name);
@@ -1121,12 +1115,10 @@ export class CustomListsTab {
 	private buildListView(list: CustomList): void {
 		const view = this.container.createDiv({ cls: 'wl-cl-list-view' });
 
-		// Header
 		const header = view.createDiv({ cls: 'wl-cl-header' });
 		const countEl = header.createSpan({ cls: 'wl-results-count wl-cl-count' });
 		const toolbar = header.createDiv({ cls: 'wl-cl-toolbar' });
 
-		// Notes — opens NotesModal
 		const notesBtn = toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Notes' });
 		notesBtn.addEventListener('click', () => {
 			new NotesModal(
@@ -1140,7 +1132,6 @@ export class CustomListsTab {
 			).open();
 		});
 
-		// Sort
 		const sortBtn = toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Sort' });
 		let sortPanel: HTMLElement | null = null;
 		sortBtn.addEventListener('click', (e) => {
@@ -1150,15 +1141,12 @@ export class CustomListsTab {
 			activeDocument.addEventListener('click', () => { sortPanel?.remove(); sortPanel = null; }, { once: true });
 		});
 
-		// Export
 		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Export' })
 			.addEventListener('click', () => this.exportToClipboard(list));
 
-		// Import
 		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Import' })
 			.addEventListener('click', () => this.openImport(list));
 
-		// Table settings
 		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Table settings' })
 			.addEventListener('click', () => {
 				new EditColumnsModal(
@@ -1186,7 +1174,6 @@ export class CustomListsTab {
 				).open();
 			});
 
-		// Search
 		const searchWrap = view.createDiv({ cls: 'wl-search-wrap' });
 		const searchInput = searchWrap.createEl('input', {
 			cls: 'wl-search-input',
@@ -1212,7 +1199,6 @@ export class CustomListsTab {
 			});
 		}
 
-		// Table
 		const tableWrap = view.createDiv({ cls: 'wl-cl-table-wrap' });
 		this.buildTable(tableWrap, list, countEl);
 	}
@@ -1311,10 +1297,10 @@ export class CustomListsTab {
 		return rows;
 	}
 
-	// ── Table ──────────────────────────────────────────────────────────────────
+	// Table
 
 	private buildTable(container: HTMLElement, list: CustomList, countEl: HTMLElement): void {
-		// Store refs for keyboard navigation and search rebuild
+		// refs for keyboard navigation and the search rebuild
 		this._countEl = countEl;
 		this._tableContainer = container;
 
@@ -1325,17 +1311,16 @@ export class CustomListsTab {
 
 		const table = container.createDiv({ cls: 'wl-cl-table' });
 
-		// Header
 		const thead = table.createDiv({ cls: 'wl-cl-thead' });
 		const hRow = thead.createDiv({ cls: 'wl-cl-tr wl-cl-tr-header' });
-		// Tick column header: two-state select-all toggle over the visible rows.
+		// tick column header: a two-state select-all over the visible rows
 		const tickTh = hRow.createDiv({ cls: 'wl-cl-th wl-cl-th-tick' });
 		const allChecked = visibleRows.length > 0 && visibleRows.every(r => r.checked === true);
 		const selectAllBtn = tickTh.createDiv({ cls: `wl-cl-tick-btn${allChecked ? ' is-checked' : ''}` });
 		selectAllBtn.title = allChecked ? 'Uncheck all visible rows' : 'Check all visible rows';
 		selectAllBtn.textContent = allChecked ? '✓' : '○';
 		selectAllBtn.addEventListener('click', () => {
-			// Only affect currently visible (filtered/searched) rows.
+			// only affect currently visible (filtered/searched) rows
 			const visibleIds = new Set(visibleRows.map(r => r.id));
 			const next = !allChecked;
 			for (const r of list.rows) if (visibleIds.has(r.id)) r.checked = next;
@@ -1365,16 +1350,31 @@ export class CustomListsTab {
 		}
 		hRow.createDiv({ cls: 'wl-cl-th wl-cl-th-actions' });
 
-		// Body
 		const tbody = table.createDiv({ cls: 'wl-cl-tbody' });
 		let dragFromIndex = -1;
+
+		// one listener for every row's add button — the table rebuilds on each edit, so per-row
+		// listeners here would be re-bound N times per keystroke
+		tbody.addEventListener('click', (e) => {
+			const btn = (e.target as HTMLElement).closest('.wl-cl-add-btn');
+			if (!btn) return;
+			const rowId = btn.closest<HTMLElement>('[data-row-id]')?.dataset.rowId;
+			const target = list.rows.find((r) => r.id === rowId);
+			const name = target ? rowName(target) : '';
+			if (!name) return;
+			openAddForTitle({
+				plugin: this.plugin,
+				dataManager: this.dataManager,
+				title: name,
+				heading: 'Add title',
+			});
+		});
 
 		visibleRows.forEach((row, displayIdx) => {
 			const isChecked = row.checked === true;
 			const tr = tbody.createDiv({ cls: `wl-cl-tr wl-cl-tr-body${isChecked ? ' wl-cl-tr-checked' : ''}` });
 			tr.dataset.rowId = row.id;
 
-			// Tick button
 			const tickCell = tr.createDiv({ cls: 'wl-cl-td wl-cl-td-tick' });
 			const tickBtn = tickCell.createDiv({ cls: `wl-cl-tick-btn${isChecked ? ' is-checked' : ''}` });
 			tickBtn.title = isChecked ? 'Uncheck row' : 'Check row';
@@ -1398,11 +1398,16 @@ export class CustomListsTab {
 				this.renderCustomCell(td, row, col, list);
 			}
 
-			// Actions
 			const actCell = tr.createDiv({ cls: 'wl-cl-td wl-cl-td-actions' });
 
 			const dragHandle = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-drag-handle', text: '⠿' });
 			dragHandle.title = 'Drag to reorder';
+
+			// unnamed rows have nothing to send to a library
+			if (rowName(row)) {
+				const addBtn = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-add-btn', text: '+' });
+				addBtn.title = 'Add to Watchlist, Reading or Games';
+			}
 
 			const dupBtn = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-dup-btn', text: '⧉' });
 			dupBtn.title = 'Duplicate row';
@@ -1426,7 +1431,7 @@ export class CustomListsTab {
 				void this.manager.saveList(list).then(() => { container.empty(); this.buildTable(container, list, countEl); });
 			});
 
-			// Drag & drop (handle-initiated only)
+			// drag & drop (handle-initiated only)
 			tr.setAttribute('draggable', 'false');
 			dragHandle.addEventListener('mousedown', () => tr.setAttribute('draggable', 'true'));
 			tr.addEventListener('dragstart', (e) => {
@@ -1449,10 +1454,9 @@ export class CustomListsTab {
 			});
 		});
 
-		// Apply any persisted column widths (switches the table into resizable mode).
+		// apply persisted column widths — switches the table into resizable mode
 		this.applyColumnWidths(table, list);
 
-		// Add row
 		const addRowEl = container.createDiv({ cls: 'wl-cl-add-row' });
 		addRowEl.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-success', text: '+ add row' })
 			.addEventListener('click', () => {
@@ -1470,9 +1474,9 @@ export class CustomListsTab {
 			});
 	}
 
-	// ── Column resize (Excel-style) ─────────────────────────────────────────────
+	// Column resize (Excel-style)
 
-	/** True when the Name column or any custom column has an explicit width set. */
+	/** True when the Name column or any custom column has an explicit width. */
 	private isTableResizable(list: CustomList): boolean {
 		return list.nameWidth !== undefined || list.columns.some((c) => !c.locked && c.width !== undefined);
 	}
@@ -1489,11 +1493,10 @@ export class CustomListsTab {
 	}
 
 	/**
-	 * Applies persisted widths to every resizable column. Once any width exists the
-	 * table enters explicit-width mode (no flex redistribution, horizontal scroll);
-	 * resizable columns without a stored width fall back to a default fixed width so
-	 * they cannot compress to absorb a neighbour's resize. Lists never resized keep
-	 * the original flex layout untouched.
+	 * Applies persisted widths to every resizable column. Once any width exists the table enters
+	 * explicit-width mode (no flex redistribution, horizontal scroll); resizable columns without a
+	 * stored width fall back to a default fixed width, so they can't compress to absorb a
+	 * neighbour's resize. Lists never resized keep the flex layout untouched.
 	 */
 	private applyColumnWidths(table: HTMLElement, list: CustomList): void {
 		if (!this.isTableResizable(list)) {
@@ -1516,9 +1519,8 @@ export class CustomListsTab {
 	}
 
 	/**
-	 * Pins every resizable column to its current rendered width. Called the first
-	 * time a handle is grabbed so switching into explicit-width mode does not make
-	 * the columns jump.
+	 * Pins every resizable column to its current rendered width. Called the first time a handle is
+	 * grabbed, so switching into explicit-width mode doesn't make the columns jump.
 	 */
 	private pinCurrentWidths(table: HTMLElement, list: CustomList): void {
 		const measure = (key: string): number => {
@@ -1540,7 +1542,7 @@ export class CustomListsTab {
 		handle.addEventListener('mousedown', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
-			// Pin every column to its current width, then switch to explicit-width mode.
+			// pin every column to its current width, then switch to explicit-width mode
 			this.pinCurrentWidths(table, list);
 			this.applyColumnWidths(table, list);
 			const startX = e.clientX;
@@ -1556,7 +1558,7 @@ export class CustomListsTab {
 				activeDocument.removeEventListener('mousemove', onMove);
 				activeDocument.removeEventListener('mouseup', onUp);
 				activeDocument.body.removeClass('wl-cl-col-resizing');
-				// Persist only on drag end.
+				// persist only on drag end
 				void this.manager.saveList(list);
 			};
 			activeDocument.addEventListener('mousemove', onMove);
@@ -1565,7 +1567,7 @@ export class CustomListsTab {
 		});
 	}
 
-	// ── Cell rendering ─────────────────────────────────────────────────────────
+	// Cell rendering
 
 	private renderNameCell(
 		cell: HTMLElement,
@@ -1619,7 +1621,7 @@ export class CustomListsTab {
 			activeDocument.removeEventListener('keyup', escHandler, true);
 		});
 
-		// Mobile viewport: scroll active element into view when virtual keyboard shrinks viewport
+		// mobile: scroll the active element into view when the keyboard shrinks the viewport
 		const vpResizeHandler = (): void => {
 			const active = activeDocument.activeElement as HTMLElement | null;
 			if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1638,7 +1640,7 @@ export class CustomListsTab {
 		input.focus();
 		input.select();
 
-		// Autofill — rendered on document.body with position:fixed to escape table overflow:hidden
+		// autofill renders on document.body, position:fixed, to escape the table's overflow:hidden
 		let dropdown: HTMLElement | null = null;
 		let focusedSuggestionIdx = -1;
 		const clearDropdown = (): void => { dropdown?.remove(); dropdown = null; focusedSuggestionIdx = -1; };
@@ -1647,12 +1649,13 @@ export class CustomListsTab {
 			clearDropdown();
 			const q = input.value.toLowerCase();
 			if (!q) return;
-			// Suggestions come from both the Watchlist and the Reading list (Books + Manga).
+			// suggestions come from every library: Watchlist, Reading (Books + Manga) and Games
 			const reading = this.plugin.readingDataManager;
 			const suggestions: { title: string; meta: string }[] = [
 				...this.dataManager.getTitles().map(t => ({ title: t.title, meta: `${t.type} · ${t.status}` })),
 				...reading.getBooks().map(b => ({ title: b.title, meta: `Book · ${b.status}` })),
 				...reading.getMangaList().map(m => ({ title: m.title, meta: `Manga · ${m.status}` })),
+				...this.plugin.gameDataManager.getGames().map(g => ({ title: g.title, meta: `Game · ${g.status}` })),
 			]
 				.filter(s => s.title.toLowerCase().includes(q))
 				.slice(0, 10);
@@ -1696,7 +1699,6 @@ export class CustomListsTab {
 
 		input.addEventListener('blur', () => void doSave(false));
 		input.addEventListener('keydown', (e) => {
-			// Keyboard navigation in suggestion dropdown
 			if (dropdown) {
 				const items = Array.from(dropdown.querySelectorAll<HTMLElement>('.wl-result-item'));
 				if (e.key === 'ArrowDown') {
@@ -1755,7 +1757,7 @@ export class CustomListsTab {
 			if (strVal) {
 				const badge = cell.createSpan({ cls: 'wl-cl-select-badge', text: strVal });
 				const optColor = col.optionColors?.[strVal];
-				// No colour assigned → leave the badge exactly as the default CSS renders it.
+				// no colour assigned → leave the badge exactly as the default CSS renders it
 				if (optColor) {
 					badge.style.backgroundColor = deriveFillColor(optColor);
 					badge.style.borderColor = deriveBorderColor(optColor);
@@ -1775,17 +1777,18 @@ export class CustomListsTab {
 			}
 		}
 
-		// Select cells open the shared dropdown directly on a single click (the
-		// native <select> needed a second click to open). Other types enter the
-		// inline editor.
+		// select cells open the shared dropdown on a single click (the native <select> needed a second);
+		// other types enter the inline editor
 		cell.addEventListener('click', () => {
 			if (col.type === 'select') this.openSelectDropdown(cell, row, col, list);
 			else this.startCustomEdit(cell, row, col, list);
 		}, { once: true });
 	}
 
-	/** Opens the shared status-style dropdown for a select cell, colouring each
-	 *  option's dot from the column's per-option colours (unset → default dot). */
+	/**
+	 * Opens the shared status-style dropdown for a select cell, colouring each option's dot from the
+	 * column's per-option colours (unset → default dot).
+	 */
 	private openSelectDropdown(
 		cell: HTMLElement,
 		row: CustomListRow,
@@ -1810,7 +1813,7 @@ export class CustomListsTab {
 					this.renderCustomCell(cell, row, col, list);
 				}
 			},
-			// Re-render to re-attach the cell's (once-only) click handler.
+			// re-render to re-attach the cell's once-only click handler
 			onClose: () => this.renderCustomCell(cell, row, col, list),
 		});
 	}
@@ -1826,7 +1829,7 @@ export class CustomListsTab {
 		cell.empty();
 		cell.addClass('wl-cl-editing');
 
-		// Mobile viewport: scroll active element into view when virtual keyboard shrinks viewport
+		// mobile: scroll the active element into view when the keyboard shrinks the viewport
 		const vpResizeHandler = (): void => {
 			const active = activeDocument.activeElement as HTMLElement | null;
 			if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1860,8 +1863,7 @@ export class CustomListsTab {
 			if (!cancel && navDirection) this.navigateCell(cell, navDirection);
 		};
 
-		// Note: select cells never reach startCustomEdit — they open the shared
-		// dropdown directly (see openSelectDropdown).
+		// select cells never reach startCustomEdit — they open the shared dropdown (openSelectDropdown)
 		if (col.type === 'number') {
 			const input = cell.createEl('input', {
 				cls: 'wl-cl-cell-input',
@@ -1895,7 +1897,7 @@ export class CustomListsTab {
 		}
 	}
 
-	// ── Auto-populate time column ──────────────────────────────────────────────
+	// Auto-populate time column
 
 	private autoPopulateTimeColumn(list: CustomList, col: CustomListColumn): void {
 		const titles = this.dataManager.getTitles();
@@ -1912,9 +1914,9 @@ export class CustomListsTab {
 		}
 	}
 
-	// ── Keyboard navigation ─────────────────────────────────────────────────────
+	// Keyboard navigation
 
-	/** Returns editable cells (Name + custom) in a row, skipping # and actions. */
+	/** Editable cells (Name + custom) in a row, skipping # and actions. */
 	private getEditableCells(tr: Element): Element[] {
 		return Array.from(tr.querySelectorAll(':scope > .wl-cl-td'))
 			.filter(c => !c.classList.contains('wl-cl-td-num') && !c.classList.contains('wl-cl-td-actions'));
@@ -2000,11 +2002,9 @@ export class CustomListsTab {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ExportFormatModal — minimal chooser for the Custom Lists export format
-// ─────────────────────────────────────────────────────────────────────────────
+// ExportFormatModal — export format chooser
 
-export class ExportFormatModal extends Modal {
+class ExportFormatModal extends Modal {
 	private onChoose: (format: 'tsv' | 'md') => void;
 
 	constructor(app: App, onChoose: (format: 'tsv' | 'md') => void) {
@@ -2033,9 +2033,7 @@ export class ExportFormatModal extends Modal {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ImportListModal — paste TSV from a spreadsheet, preview, and append rows
-// ─────────────────────────────────────────────────────────────────────────────
+// ImportListModal — paste TSV from a spreadsheet, preview, append rows
 
 /** Result of analysing the pasted TSV against the list's current columns. */
 interface ImportAnalysis {
@@ -2044,9 +2042,9 @@ interface ImportAnalysis {
 	rowCount: number;
 	/** Max column count across every pasted line (header + data). */
 	totalCols: number;
-	/** How many existing data columns there are (Name + non-locked columns). */
+	/** How many existing data columns there are (Name + non-locked). */
 	existingCount: number;
-	/** New text columns that will be auto-created to match wider pasted data. */
+	/** New text columns auto-created to match wider pasted data. */
 	newColCount: number;
 	/** Per select column: distinct new option values that will be added. */
 	selectAdditions: { label: string; values: string[] }[];
@@ -2054,7 +2052,7 @@ interface ImportAnalysis {
 	numberConflicts: string[];
 }
 
-export class ImportListModal extends Modal {
+class ImportListModal extends Modal {
 	private list: CustomList;
 	private manager: CustomListManager;
 	private onApplied: () => Promise<void>;
@@ -2116,7 +2114,7 @@ export class ImportListModal extends Modal {
 		this.contentEl.empty();
 	}
 
-	/** Splits the pasted text into header + data rows (tab-delimited, newline-separated). */
+	/** Splits the pasted text into header + data rows (tab-delimited). */
 	private parse(): { header: string[]; dataRows: string[][] } | null {
 		const lines = this.textarea.value
 			.replace(/\r\n?/g, '\n')
@@ -2124,8 +2122,8 @@ export class ImportListModal extends Modal {
 			.filter(l => l.length > 0);
 		if (lines.length === 0) return null;
 		if (!this.firstRowIsHeader) {
-			// Every line is a data row; columns map purely positionally and no
-			// line is consumed as a header (lets a single lone row be imported).
+			// every line is a data row; columns map positionally and no line is consumed as a header, so a
+			// single lone row can be imported
 			return {
 				header: [],
 				dataRows: lines.map(l => l.split('\t').map(c => c.trim())),
@@ -2138,8 +2136,10 @@ export class ImportListModal extends Modal {
 		};
 	}
 
-	/** The positional data columns the import maps onto: Name first, then non-locked
-	 *  columns — the exact inverse of the export column set (minus the # column). */
+	/**
+	 * The positional data columns the import maps onto: Name first, then non-locked columns — the
+	 * exact inverse of the export set, minus #.
+	 */
 	private nonLockedColumns(): CustomListColumn[] {
 		return this.list.columns.filter(c => !c.locked);
 	}

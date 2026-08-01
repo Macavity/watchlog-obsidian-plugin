@@ -1,9 +1,10 @@
 import { App, TFile, normalizePath } from 'obsidian';
 import type WatchLogPlugin from './main';
-import type { WatchLogData, WatchLogTitle, WatchLogGroup, AirtimeEntry, MaybeTitle, SavedFilterPreset, WatchLogPluginSettings, Book, Manga } from './types';
+import type { WatchLogData, WatchLogTitle, WatchLogGroup, AirtimeEntry, MaybeTitle, RecommendedDaily, SavedFilterPreset, WatchLogPluginSettings, Book, Manga, Game } from './types';
 import type { HistoryManager } from './HistoryManager';
 import { formatHistoryDate } from './HistoryManager';
-import { getDisplayPoster, getDisplayTrailer, getDisplayCredits } from './types';
+import { getDisplayPoster, getDisplayTrailer, getTitleCredits, pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso } from './types';
+import type { CreditsField } from './types';
 
 function isValidWatchLogData(data: unknown): data is WatchLogData {
 	return (
@@ -19,23 +20,20 @@ export class DataManager {
 	private data: WatchLogData;
 	private changeListeners: Array<() => void> = [];
 	private historyManager: HistoryManager | null = null;
-	// Debounced save state for high-frequency edits (e.g. rapid episode clicks).
-	// In-memory mutations are applied immediately; the disk write coalesces.
+	// debounced save for high-frequency edits (rapid episode clicks): memory now, disk coalesced
 	private pendingSaveTimer: number | null = null;
 	private pendingMdTitleIds: Set<string> = new Set();
 	private readonly EPISODE_SAVE_DEBOUNCE_MS = 500;
-	// Timestamp of the last self-initiated saveOnly. The 'raw' file watcher uses
-	// this to ignore the echo of our own writes, which otherwise would re-load
-	// data.json and notify listeners on every debounced episode-click save.
+	// last self-initiated saveOnly — the 'raw' watcher uses it to ignore the echo of our own
+	// writes, which would otherwise reload data.json and notify on every debounced save
 	private lastSelfSaveTime = 0;
 	private readonly SELF_SAVE_ECHO_WINDOW_MS = 2000;
 
-	// Debounced batched save for poster URL updates. Updates land in memory
-	// immediately; the disk write coalesces to ~once every 5s.
+	// debounced batched poster saves: memory now, disk ~every 5s
 	private posterSaveTimer: number | null = null;
 	private readonly POSTER_SAVE_DEBOUNCE_MS = 5000;
 
-	// Generic queued-save debounce for cross-cutting saves (settings, drafts, lists)
+	// generic queued-save debounce for cross-cutting saves (settings, drafts, lists)
 	private queuedSaveTimer: number | null = null;
 	private readonly QUEUED_SAVE_DEBOUNCE_MS = 100;
 
@@ -112,6 +110,13 @@ export class DataManager {
 			if (title.communityVotes === undefined) { title.communityVotes = 0; changed = true; }
 			if (title.communitySource === undefined) { title.communitySource = ''; changed = true; }
 			if (title.communityRatingLastFetched === undefined) { title.communityRatingLastFetched = ''; changed = true; }
+			if (title.favorite === undefined) { title.favorite = false; changed = true; }
+			// every stored tmdbId predates tmdbMediaType and came from the Collections path,
+			// which only ever wrote movie ids
+			if (title.tmdbId && title.tmdbMediaType === undefined) {
+				title.tmdbMediaType = 'movie';
+				changed = true;
+			}
 		}
 
 		if (!this.data.posterRetryDone) {
@@ -123,13 +128,32 @@ export class DataManager {
 			this.data.posterRetryDone = true;
 			changed = true;
 		}
+
+		if (!this.data.recommendedDaily) {
+			this.data.recommendedDaily = { date: '', ids: [] };
+			changed = true;
+		}
 		return changed;
 	}
 
+	// Rows-view daily recommendations
+
+	getRecommendedDaily(): RecommendedDaily {
+		return this.data.recommendedDaily ?? { date: '', ids: [] };
+	}
+
 	/**
-	 * Silent poster URL update. Writes the value in memory and schedules a
-	 * debounced disk save (5s). Does NOT notify listeners — the card that
-	 * triggered the fetch updates its own <img> directly.
+	 * Silent daily-recommendation save — no listener notify; the Rows view that rolled the picks
+	 * renders them itself.
+	 */
+	setRecommendedDaily(rec: RecommendedDaily): void {
+		this.data.recommendedDaily = rec;
+		void this.saveOnly();
+	}
+
+	/**
+	 * Silent poster URL update: memory now, debounced disk save (5s). No notify — the card that
+	 * triggered the fetch updates its own <img>.
 	 */
 	updatePosterUrl(titleId: string, url: string): void {
 		const title = this.data.titles.find((t) => t.id === titleId);
@@ -139,11 +163,22 @@ export class DataManager {
 		}
 	}
 
-	/**
-	 * Silent community-rating update. Writes the values in memory and saves
-	 * to disk without notifying listeners — the caller is responsible for
-	 * any targeted UI refresh.
-	 */
+	/** Silent TMDB id + collection cache. tmdbId null = not a movie, keep the verdict only. */
+	updateTmdbIdentity(id: string, tmdbId: number | null, collectionId: number): void {
+		const title = this.data.titles.find((t) => t.id === id);
+		if (!title) return;
+		const nextTmdbId = tmdbId ?? title.tmdbId;
+		if (title.tmdbId === nextTmdbId && title.collectionId === collectionId) return;
+		// only ever a movie id here — the collections lookup rejects everything else
+		if (nextTmdbId !== undefined) {
+			title.tmdbId = nextTmdbId;
+			title.tmdbMediaType = 'movie';
+		}
+		title.collectionId = collectionId;
+		void this.saveOnly();
+	}
+
+	/** Silent community-rating update: memory + disk, no notify. The caller refreshes its own UI. */
 	updateCommunityRating(
 		id: string,
 		rating: number,
@@ -160,8 +195,8 @@ export class DataManager {
 	}
 
 	/**
-	 * Silent trailer URL update (manual refresh). Writes the value in memory and
-	 * saves to disk without notifying listeners — the caller re-renders its own row.
+	 * Silent trailer URL update (manual refresh): memory + disk, no notify — the caller re-renders
+	 * its own row.
 	 */
 	updateTrailerUrl(titleId: string, url: string): void {
 		const title = this.data.titles.find((t) => t.id === titleId);
@@ -171,18 +206,74 @@ export class DataManager {
 	}
 
 	/**
-	 * Persists a director/cast backfill through the normal update path: data.json
-	 * AND the title's markdown frontmatter are written in the same operation (NOT
-	 * the poster-style silent save, which skips the .md file). Deliberately does
-	 * not stamp dateModified — a background backfill is not a user edit and must
-	 * not reshuffle "recently modified" sorts.
+	 * Persists a director/cast backfill through the normal update path: data.json AND the note's
+	 * frontmatter (NOT the poster-style silent save, which skips the .md). Deliberately does not
+	 * stamp dateModified — a background backfill is not a user edit and must not reshuffle
+	 * "recently modified" sorts.
+	 *
+	 * Only the fetched fields are touched; user-added credits live in their own arrays. Manual
+	 * entries the fetch now returns are pruned, so no name is stored twice.
 	 */
 	async updateCredits(titleId: string, director: string[], cast: string[]): Promise<void> {
 		const title = this.getTitle(titleId);
 		if (!title) return;
 		title.director = director;
 		title.cast = cast;
+		title.manualDirector = pruneManualCredits(title.manualDirector ?? [], director);
+		title.manualCast = pruneManualCredits(title.manualCast ?? [], cast);
 		await this.save();
+		await this.updateMarkdownFile(title);
+	}
+
+	/** Studio backfill; same no-dateModified rules as updateCredits. Caches the TMDB id it resolved. */
+	async updateStudio(
+		titleId: string,
+		studio: string[],
+		tmdbId?: number,
+		tmdbMediaType?: 'movie' | 'tv',
+	): Promise<void> {
+		const title = this.getTitle(titleId);
+		if (!title) return;
+		title.studio = studio;
+		title.manualStudio = pruneManualCredits(title.manualStudio ?? [], studio);
+		if (tmdbId && tmdbMediaType) {
+			title.tmdbId = tmdbId;
+			title.tmdbMediaType = tmdbMediaType;
+		}
+		await this.save();
+		await this.updateMarkdownFile(title);
+	}
+
+	/**
+	 * Replaces one field's user-added credits (the add modal commits additions and removals in one
+	 * call). Uncapped by design — the API cap trims a fetched cast, not user input. Like
+	 * updateCredits: data.json + frontmatter, no dateModified stamp.
+	 */
+	async updateManualCredits(titleId: string, field: CreditsField, names: string[]): Promise<void> {
+		const title = this.getTitle(titleId);
+		if (!title) return;
+		const fetched =
+			(field === 'director' ? title.director : field === 'cast' ? title.cast : title.studio) ?? [];
+		const cleaned = pruneManualCredits(normalizeManualCredits(names), fetched);
+		if (field === 'director') title.manualDirector = cleaned;
+		else if (field === 'cast') title.manualCast = cleaned;
+		else title.manualStudio = cleaned;
+		await this.save();
+		await this.updateMarkdownFile(title);
+	}
+
+	/**
+	 * Silent favorite toggle: data.json + frontmatter, no notify — the detail modal updates its own
+	 * button and flags the change for the on-close refresh. No dateModified stamp.
+	 */
+	async setFavorite(id: string, favorite: boolean): Promise<void> {
+		const title = this.getTitle(id);
+		if (!title) return;
+		title.favorite = favorite;
+		// stamp drives the Favorites shelf order (newest first); cleared on unfavorite
+		if (favorite) title.dateFavorited = new Date().toISOString();
+		else delete title.dateFavorited;
+		await this.saveOnly();
 		await this.updateMarkdownFile(title);
 	}
 
@@ -251,19 +342,16 @@ export class DataManager {
 	}
 
 	/**
-	 * Persist the full in-memory data object to data.json. Reading and activity-log
-	 * data now live as keys (`reading` / `history`) inside this same object, so
-	 * ReadingDataManager and HistoryManager route their saves through here. Going
-	 * through saveOnly() also stamps lastSelfSaveTime, so the 'raw' watcher ignores
-	 * the echo of these writes (no spurious reload + re-render).
+	 * Persist the full in-memory data object to data.json. Reading and activity-log data live as
+	 * keys (`reading` / `history`) in this same object, so those managers route their saves through
+	 * here. saveOnly() stamps lastSelfSaveTime, so the 'raw' watcher ignores the echo.
 	 */
 	async persist(): Promise<void> {
 		await this.saveOnly();
 	}
 
 	async save(): Promise<void> {
-		// An immediate save supersedes any pending debounced one — the in-memory
-		// state already contains those changes.
+		// an immediate save supersedes any pending debounced one — memory already has those changes
 		if (this.pendingSaveTimer !== null) {
 			window.clearTimeout(this.pendingSaveTimer);
 			this.pendingSaveTimer = null;
@@ -274,9 +362,8 @@ export class DataManager {
 	}
 
 	/**
-	 * Schedule a debounced silent save (no listener notification, no full re-render).
-	 * Subsequent calls within the debounce window reset the timer. Callers are
-	 * responsible for any targeted DOM updates.
+	 * Schedule a debounced silent save (no notify, no re-render). Later calls reset the timer;
+	 * callers own any targeted DOM updates.
 	 */
 	scheduleEpisodeSave(titleIdForMd: string): void {
 		this.pendingMdTitleIds.add(titleIdForMd);
@@ -330,8 +417,8 @@ export class DataManager {
 	}
 
 	async addTitle(title: WatchLogTitle): Promise<void> {
-		// Ensure a freshly-added title carries an empty-string posterUrl (not undefined)
-		// so the Cards "needs-poster" gate enqueues an auto-fetch on first render.
+		// a fresh title needs posterUrl '' (not undefined) so the Cards needs-poster gate enqueues an
+		// auto-fetch on first render
 		if (title.posterUrl === undefined) title.posterUrl = '';
 		if (title.trailerUrl === undefined) title.trailerUrl = '';
 		if (title.manualTrailerUrl === undefined) title.manualTrailerUrl = '';
@@ -352,7 +439,7 @@ export class DataManager {
 		);
 	}
 
-	/** Add without triggering a UI re-render. Caller must call notifyChange() after the batch. */
+	/** Add without re-rendering. Caller must call notifyChange() after the batch. */
 	async addTitleSilent(title: WatchLogTitle): Promise<void> {
 		const autoUpcoming = this.canAutoAddToUpcoming(title);
 		if (autoUpcoming) {
@@ -433,7 +520,7 @@ export class DataManager {
 
 	canAutoAddToUpcoming(title: WatchLogTitle): boolean {
 		if (!title.releaseDate) return false;
-		// Only auto-add when we have a full YYYY-MM-DD date
+		// only auto-add with a full YYYY-MM-DD date
 		if (!/^\d{4}-\d{2}-\d{2}$/.test(title.releaseDate)) return false;
 		const release = new Date(title.releaseDate + 'T12:00:00');
 		const today = new Date();
@@ -443,7 +530,7 @@ export class DataManager {
 
 	async autoAddToUpcoming(title: WatchLogTitle): Promise<void> {
 		if (!this.data.airtime) this.data.airtime = [];
-		// Avoid duplicates
+		// avoid duplicates
 		if (this.data.airtime.some((e) => e.titleId === title.id)) return;
 		const entry: import('./types').AirtimeEntry = {
 			id: this.generateAirtimeId(title.id),
@@ -455,27 +542,68 @@ export class DataManager {
 			dateAdded: new Date().toISOString(),
 		};
 		this.data.airtime.push(entry);
-		// Persist airtime entry
 		await this.plugin.saveData(this.data);
 	}
 
-	/** Remove all Upcoming entries for a given title (e.g. when date goes past). */
+	/**
+	 * Reconciles everything a release-date edit ripples into: an existing 'once' Upcoming entry's
+	 * date, the auto "To be released" status, and whether the title belongs in Upcoming at all. A
+	 * future full date forces the status and adds the entry; a past or cleared date reverts a
+	 * "To be released" title to "Plan to watch" and drops its entry.
+	 *
+	 * Call after `releaseDate` has been written and persisted.
+	 */
+	async applyReleaseDateChange(title: WatchLogTitle): Promise<void> {
+		// keep a one-off Upcoming entry pointing at the new date
+		const existing = this.getAirtimeEntries().find((e) => e.titleId === title.id);
+		if (existing && existing.schedule.recurrence === 'once') {
+			const next = title.releaseDate ?? undefined;
+			if (existing.schedule.releaseDate !== next) {
+				existing.schedule.releaseDate = next;
+				await this.updateAirtimeEntry(existing);
+			}
+		}
+
+		const releaseDate = title.releaseDate;
+		const isFullDate = !!releaseDate && /^\d{4}-\d{2}-\d{2}$/.test(releaseDate);
+
+		if (isFullDate) {
+			if (isReleaseDateFuture(releaseDate)) {
+				if (title.status !== 'To be released') {
+					title.status = 'To be released';
+					await this.updateTitle(title);
+				}
+				if (!this.getAirtimeEntries().some((e) => e.titleId === title.id)) {
+					await this.autoAddToUpcoming(title);
+				}
+			} else if (title.status === 'To be released') {
+				// date is past/today — the auto status no longer applies
+				title.status = 'Plan to watch';
+				await this.updateTitle(title);
+				await this.removeAirtimeEntriesForTitle(title.id);
+			}
+		} else if (!releaseDate && title.status === 'To be released') {
+			title.status = 'Plan to watch';
+			await this.updateTitle(title);
+			await this.removeAirtimeEntriesForTitle(title.id);
+		}
+	}
+
+	/** Remove all Upcoming entries for a title (e.g. when the date goes past). */
 	async removeAirtimeEntriesForTitle(titleId: string): Promise<void> {
 		const before = (this.data.airtime ?? []).length;
-		this.data.airtime = (this.data.airtime ?? []).filter((e) => e.titleId !== titleId || e.source === 'reading');
+		this.data.airtime = (this.data.airtime ?? []).filter(
+			(e) => e.titleId !== titleId || (e.source !== undefined && e.source !== 'watchlist'),
+		);
 		if ((this.data.airtime ?? []).length !== before) {
 			await this.save();
 		}
 	}
 
-	// ── Reading → Upcoming bridge ──────────────────────────────────────────────────
-	// Reading items (Book/Manga) live under the data.reading key, but their Upcoming
-	// entries share the same airtime list as watch titles — mirroring autoAddToUpcoming.
+	// Reading → Upcoming bridge. Reading items live under data.reading, but their Upcoming entries
+	// share the airtime list with watch titles — mirroring autoAddToUpcoming.
 
-	/**
-	 * Auto-adds a reading item with a future release date to Upcoming, mirroring
-	 * the watchlist `autoAddToUpcoming`. No-op if an entry already exists.
-	 */
+	/** Auto-adds a reading item with a future release date to Upcoming. No-op if one exists. */
 	async autoAddReadingToUpcoming(item: Book | Manga, kind: 'book' | 'manga'): Promise<void> {
 		if (!this.data.airtime) this.data.airtime = [];
 		if (this.data.airtime.some((e) => e.source === 'reading' && e.titleId === item.id)) return;
@@ -494,7 +622,7 @@ export class DataManager {
 		await this.plugin.saveData(this.data);
 	}
 
-	/** Remove all Upcoming entries for a given reading item (book/manga id). */
+	/** Remove all Upcoming entries for a reading item (book/manga id). */
 	async removeReadingAirtimeEntries(itemId: string): Promise<void> {
 		const before = (this.data.airtime ?? []).length;
 		this.data.airtime = (this.data.airtime ?? []).filter(
@@ -507,6 +635,46 @@ export class DataManager {
 
 	generateReadingAirtimeId(itemId: string): string {
 		const base = `airtime-reading-${itemId}`;
+		const existing = (this.data.airtime ?? []).map((e) => e.id);
+		if (!existing.includes(base)) return base;
+		let counter = 2;
+		while (existing.includes(`${base}-${counter}`)) counter++;
+		return `${base}-${counter}`;
+	}
+
+	// Games → Upcoming bridge — the Reading-bridge pattern exactly.
+
+	/** Auto-adds a game with a future release date to Upcoming. No-op if one exists. */
+	async autoAddGameToUpcoming(game: Game): Promise<void> {
+		if (!this.data.airtime) this.data.airtime = [];
+		if (this.data.airtime.some((e) => e.source === 'game' && e.titleId === game.id)) return;
+		const entry: AirtimeEntry = {
+			id: this.generateGameAirtimeId(game.id),
+			titleId: game.id,
+			source: 'game',
+			schedule: {
+				recurrence: 'once',
+				releaseDate: game.releaseDate ?? undefined,
+			},
+			dateAdded: new Date().toISOString(),
+		};
+		this.data.airtime.push(entry);
+		await this.plugin.saveData(this.data);
+	}
+
+	/** Remove all Upcoming entries for a game id. */
+	async removeGameAirtimeEntries(gameId: string): Promise<void> {
+		const before = (this.data.airtime ?? []).length;
+		this.data.airtime = (this.data.airtime ?? []).filter(
+			(e) => !(e.source === 'game' && e.titleId === gameId),
+		);
+		if ((this.data.airtime ?? []).length !== before) {
+			await this.save();
+		}
+	}
+
+	generateGameAirtimeId(gameId: string): string {
+		const base = `airtime-game-${gameId}`;
 		const existing = (this.data.airtime ?? []).map((e) => e.id);
 		if (!existing.includes(base)) return base;
 		let counter = 2;
@@ -541,9 +709,10 @@ export class DataManager {
 		}
 	}
 
-	/** Update without saving or notifying listeners. Caller must call
-	 * save() (or saveOnly + notifyChange) once after the batch completes,
-	 * and is responsible for updating the markdown file per title if needed. */
+	/**
+	 * Update without saving or notifying. Caller must save() (or saveOnly + notifyChange) once after
+	 * the batch, and owns the per-title markdown update.
+	 */
 	updateTitleSilent(updated: WatchLogTitle): void {
 		updated.dateModified = new Date().toISOString();
 		if (updated.status === 'Completed') {
@@ -579,15 +748,12 @@ export class DataManager {
 			);
 		}
 		this.data.titles = this.data.titles.filter((t) => t.id !== id);
-		// Remove from any groups
 		for (const group of this.data.groups) {
 			group.titleIds = group.titleIds.filter((tid) => tid !== id);
 		}
-		// Remove airtime entries for this title
 		if (this.data.airtime) {
 			this.data.airtime = this.data.airtime.filter((e) => e.titleId !== id || e.source === 'reading');
 		}
-		// Remove collapsed seasons for this title
 		const d = this.data as unknown as Record<string, unknown>;
 		if (d['collapsedSeasons']) {
 			delete (d['collapsedSeasons'] as Record<string, number[]>)[id];
@@ -598,7 +764,7 @@ export class DataManager {
 		}
 	}
 
-	// ── Group CRUD ────────────────────────────────────────────────────────────────
+	// Group CRUD
 
 	getGroups(): WatchLogGroup[] {
 		return this.data.groups ?? [];
@@ -659,7 +825,7 @@ export class DataManager {
 		return `${id}-${counter}`;
 	}
 
-	// ── Pinned group ──────────────────────────────────────────────────────────────
+	// Pinned group
 
 	getPinnedGroupId(): string | null {
 		return this.data.pinnedGroupId ?? null;
@@ -670,7 +836,7 @@ export class DataManager {
 		await this.save();
 	}
 
-	// ── Saved filter preset ───────────────────────────────────────────────────────
+	// Saved filter preset
 
 	getSavedFilterPreset(): SavedFilterPreset | null {
 		return this.data.savedFilterPreset ?? null;
@@ -681,7 +847,7 @@ export class DataManager {
 		await this.save();
 	}
 
-	// ── Airtime CRUD ──────────────────────────────────────────────────────────────
+	// Airtime CRUD
 
 	getAirtimeEntries(): AirtimeEntry[] {
 		return this.data.airtime ?? [];
@@ -714,7 +880,7 @@ export class DataManager {
 		await this.save();
 	}
 
-	// ── Maybe CRUD ────────────────────────────────────────────────────────────────
+	// Maybe CRUD
 
 	getMaybeTitles(): MaybeTitle[] {
 		return this.data.maybe ?? [];
@@ -749,7 +915,7 @@ export class DataManager {
 		return `${base}-${counter}`;
 	}
 
-	// ── Time calculations ─────────────────────────────────────────────────────────
+	// Time calculations
 
 	calcTimeWatched(title: WatchLogTitle): number {
 		if (title.episodeDuration <= 0) return 0;
@@ -761,14 +927,13 @@ export class DataManager {
 		if (title.status === 'Completed') {
 			return this.getEffectiveTotal(title) * title.episodeDuration;
 		}
-		// Watching, Dropped, Plan to watch: only watched episodes
 		return title.watchedEpisodes.length * title.episodeDuration;
 	}
 
 	calcTimeRemaining(title: WatchLogTitle): number {
 		if (title.episodeDuration <= 0) return 0;
 		if (title.status === 'Dropped') return 0;
-		// "To be released" doesn't count toward time remaining (not yet available)
+		// "To be released" doesn't count toward time remaining — not yet available
 		if (title.status === 'To be released') return 0;
 		if (title.type === 'Movie') {
 			return title.watchedEpisodes.includes(1) ? 0 : title.episodeDuration;
@@ -780,7 +945,6 @@ export class DataManager {
 		if (title.status === 'Watching') {
 			return Math.max(0, effective - title.watchedEpisodes.length) * title.episodeDuration;
 		}
-		// Completed or other: 0
 		return 0;
 	}
 
@@ -800,7 +964,6 @@ export class DataManager {
 		if (title.status === 'Watching') {
 			return Math.max(0, effective - title.watchedEpisodes.length) * title.episodeDuration;
 		}
-		// Completed or other: 0
 		return 0;
 	}
 
@@ -812,31 +975,42 @@ export class DataManager {
 		return (this.data.titles ?? []).reduce((sum, t) => sum + this.calcTimeRemaining(t), 0);
 	}
 
-	// ── External change watcher ───────────────────────────────────────────────────
+	// External change watcher
+
+	/**
+	 * Vault-relative path of our own data.json, as the 'raw' event reports it. Derived from the
+	 * manifest rather than hardcoded: the plugin folder is only called `watchlog` on a Community
+	 * Plugins install — BRAT and manual installs can name it anything, and a hardcoded match would
+	 * silently disable external-change detection there.
+	 */
+	private dataFilePath(): string {
+		const dir = this.plugin.manifest.dir
+			?? `${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`;
+		return normalizePath(`${dir}/data.json`);
+	}
 
 	startWatchingExternalChanges(): void {
-		// 'raw' fires when Obsidian Sync writes a file directly to disk (not via vault API).
-		// It's a real runtime event but not declared in Obsidian's public type definitions.
+		const dataPath = this.dataFilePath();
+		// 'raw' fires when Obsidian Sync writes a file directly to disk (not via the vault API). A real
+		// runtime event, but not declared in Obsidian's public types.
 		const ref = (
 			this.app.vault as unknown as {
 				on(event: 'raw', cb: (path: string) => void): import('obsidian').EventRef;
 			}
 		).on('raw', (path: string) => {
-			if (path.endsWith('watchlog/data.json')) {
-				// Suppress the echo of our own saveOnly() — Obsidian fires 'raw' for
-				// any write to the plugin data file, including our debounced
-				// episode-click saves. Without this guard each click cascades into
-				// load() + notifyListeners(), forcing a full tab re-render.
+			if (normalizePath(path) === dataPath) {
+				// suppress the echo of our own saveOnly() — Obsidian fires 'raw' for any write to the data file,
+				// so without this guard each episode click cascades into load() + notifyListeners()
 				if (Date.now() - this.lastSelfSaveTime < this.SELF_SAVE_ECHO_WINDOW_MS) {
 					return;
 				}
 				void (async () => {
 					await this.load();
 					this.notifyListeners();
-					// Reading + activity-log data live inside data.json now, so a synced
-					// data.json carries them too. Re-bind those managers' in-memory views
-					// to the freshly-loaded object and refresh their UIs (Reading / Log tabs).
+					// reading + activity log live in data.json now, so a synced file carries them: re-bind those
+					// managers to the fresh object and refresh their UIs
 					await this.plugin.readingDataManager?.adoptExternalChange();
+					await this.plugin.gameDataManager?.adoptExternalChange();
 					this.plugin.historyManager?.adoptExternalChange();
 				})();
 			}
@@ -844,7 +1018,7 @@ export class DataManager {
 		this.plugin.registerEvent(ref);
 	}
 
-	// ── Listeners ─────────────────────────────────────────────────────────────────
+	// Listeners
 
 	onChange(listener: () => void): void {
 		this.changeListeners.push(listener);
@@ -866,7 +1040,7 @@ export class DataManager {
 		activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
 	}
 
-	// ── Season collapse persistence ──────────────────────────────────────────────
+	// Season collapse persistence
 
 	getCollapsedSeasonsForTitle(titleId: string): Set<number> {
 		const stored = (this.data as unknown as Record<string, unknown>)['collapsedSeasons'] as
@@ -882,7 +1056,7 @@ export class DataManager {
 		await this.save();
 	}
 
-	// ── Skip helpers ──────────────────────────────────────────────────────────────
+	// Skip helpers
 
 	getTotalSkippedCount(title: WatchLogTitle): number {
 		return title.seasons.reduce((sum, s) => sum + (s.skippedEpisodes?.length ?? 0), 0);
@@ -893,7 +1067,7 @@ export class DataManager {
 		return Math.max(0, title.totalEpisodes - this.getTotalSkippedCount(title));
 	}
 
-	/** Returns true if absoluteEpNum falls in any season's skippedEpisodes list. */
+	/** True when absoluteEpNum falls in any season's skippedEpisodes list. */
 	isEpisodeSkipped(title: WatchLogTitle, absoluteEpNum: number): boolean {
 		for (const season of title.seasons) {
 			const rel = absoluteEpNum - season.offset;
@@ -905,9 +1079,8 @@ export class DataManager {
 	}
 
 	/**
-	 * In-memory toggle of an episode's watched state plus auto-complete logic.
-	 * Schedules a debounced save and does NOT notify listeners — caller is
-	 * responsible for targeted DOM updates. Returns the (mutated) title.
+	 * In-memory toggle of an episode's watched state plus auto-complete. Schedules a debounced save
+	 * and does NOT notify — the caller owns targeted DOM updates. Returns the mutated title.
 	 */
 	applyEpisodeWatchedToggle(
 		id: string,
@@ -954,11 +1127,11 @@ export class DataManager {
 		) {
 			if (title.status !== 'Completed') {
 				title.status = 'Completed';
-				// Match updateTitle(): completed titles drop priority.
+				// match updateTitle(): completed titles drop priority
 				title.priority = '';
 			}
 			if (this.plugin.settings.setFinishDateAutomatically && !title.dateFinished) {
-				title.dateFinished = new Date().toISOString().split('T')[0] ?? null;
+				title.dateFinished = todayIso();
 			}
 		} else if (title.status === 'Completed' && title.watchedEpisodes.length < effectiveTotal) {
 			title.status = 'Watching';
@@ -966,7 +1139,7 @@ export class DataManager {
 		}
 	}
 
-	// ── Progress helpers ──────────────────────────────────────────────────────────
+	// Progress helpers
 
 	getProgress(title: WatchLogTitle): number {
 		const effective = this.getEffectiveTotal(title);
@@ -1015,7 +1188,7 @@ export class DataManager {
 		) {
 			title.status = 'Completed';
 			if (this.plugin.settings.setFinishDateAutomatically && !title.dateFinished) {
-				title.dateFinished = new Date().toISOString().split('T')[0] ?? null;
+				title.dateFinished = todayIso();
 			}
 		} else if (title.status === 'Completed' && title.watchedEpisodes.length < effectiveTotal) {
 			title.status = 'Watching';
@@ -1034,8 +1207,7 @@ export class DataManager {
 		const title = this.getTitle(id);
 		if (!title) return;
 
-		// Capture season-completion state BEFORE the tick, so we can detect a
-		// not-complete → complete transition and log a single summary event.
+		// capture season completion BEFORE the tick, to detect a not-complete → complete transition
 		const before = new Set(title.watchedEpisodes);
 		const wasComplete = episodeNumbers.length > 0 && episodeNumbers.every((ep) => before.has(ep));
 
@@ -1048,9 +1220,8 @@ export class DataManager {
 			title.watchedEpisodes = title.watchedEpisodes.filter((e) => !remove.has(e));
 		}
 
-		// "Tick entire season" summary event: emit ONE history entry (no per-episode
-		// events) only when this action makes the season newly complete. Skip if the
-		// season was already complete, if we're clearing, or if there's no season label.
+		// "tick entire season" emits ONE history entry, and only when the action makes the season newly
+		// complete — not when clearing, already complete, or without a season label
 		if (watched && seasonLabel) {
 			const after = new Set(title.watchedEpisodes);
 			const nowComplete = episodeNumbers.length > 0 && episodeNumbers.every((ep) => after.has(ep));
@@ -1071,7 +1242,7 @@ export class DataManager {
 		) {
 			title.status = 'Completed';
 			if (this.plugin.settings.setFinishDateAutomatically && !title.dateFinished) {
-				title.dateFinished = new Date().toISOString().split('T')[0] ?? null;
+				title.dateFinished = todayIso();
 			}
 		} else if (title.status === 'Completed' && title.watchedEpisodes.length < effectiveTotal) {
 			title.status = 'Watching';
@@ -1081,7 +1252,7 @@ export class DataManager {
 		await this.updateTitle(title);
 	}
 
-	// ── Folder management ─────────────────────────────────────────────────────────
+	// Folder management
 
 	async ensureFolders(): Promise<void> {
 		if (!this.plugin.settings.autoCreateFolders) return;
@@ -1105,7 +1276,7 @@ export class DataManager {
 
 	private lastMarkdownPathById: Map<string, string> = new Map();
 
-	/** Resolves the per-title `.md` note path — the same scheme used to create it. */
+	/** Resolves the per-title `.md` path — the same scheme used to create it. */
 	getNoteFilePath(title: WatchLogTitle): string {
 		const root = this.plugin.settings.rootFolder;
 		const safeTitle = title.title.replace(/[*"\\/<>:|?]/g, '-');
@@ -1120,8 +1291,7 @@ export class DataManager {
 		const progress = this.getProgress(title);
 		const content = this.buildMarkdownContent(title, progress);
 
-		// If a different path was previously written for this title (rename/type change),
-		// remove the stale file before writing the new one.
+		// remove the stale file first when the path changed (rename / type change)
 		const previousPath = this.lastMarkdownPathById.get(title.id);
 		if (previousPath && previousPath !== filePath) {
 			try {
@@ -1136,11 +1306,8 @@ export class DataManager {
 
 		const existing = this.app.vault.getAbstractFileByPath(filePath);
 		if (existing instanceof TFile) {
-			// Body-preserving update: swap the leading frontmatter block, then
-			// replace ONLY the `## Notes` section body with the title's notes.
-			// Everything else — frontmatter aside, other headings, any prose the
-			// user wrote outside `## Notes` — is kept verbatim (no append/dup).
-			// Mirrors how Reading rewrites frontmatter while preserving its body.
+			// body-preserving update: swap the leading frontmatter block, then replace ONLY the `## Notes`
+			// body. Everything else is kept verbatim — no append, no dupes (mirrors the Reading path).
 			const current = await this.app.vault.read(existing);
 			let updated = this.rebuildWithFrontmatter(current, this.buildFrontmatter(title, progress));
 			updated = this.replaceNotesSection(updated, title.notes);
@@ -1148,39 +1315,35 @@ export class DataManager {
 				await this.app.vault.modify(existing, updated);
 			}
 		} else {
-			// New file: write the full template (frontmatter + ## Notes from title.notes).
+			// new file: write the full template (frontmatter + ## Notes from title.notes)
 			await this.app.vault.create(filePath, content);
 		}
 		this.lastMarkdownPathById.set(title.id, filePath);
 	}
 
 	/**
-	 * Replaces only the leading `---…---` frontmatter block, preserving the body.
-	 * If the file has no frontmatter, the new block is prepended. Mirrors the
-	 * Reading note path (ReadingDataManager.rebuildWithFrontmatter).
+	 * Replaces only the leading `---…---` frontmatter block, preserving the body; prepends it when
+	 * the file has none. Mirrors ReadingDataManager.rebuildWithFrontmatter.
 	 */
 	private rebuildWithFrontmatter(existing: string, frontmatter: string): string {
 		const fmMatch = existing.match(/^---\n[\s\S]*?\n---\n?/);
 		if (fmMatch) {
 			return frontmatter + '\n' + existing.slice(fmMatch[0].length);
 		}
-		// No frontmatter found — prepend it.
+		// no frontmatter found — prepend it
 		return frontmatter + '\n\n' + existing;
 	}
 
 	/**
-	 * Reads back the `## Notes` section body from an existing title note file.
-	 * Returns null when the file or section is absent. Lets manual edits made
-	 * directly in the .md file flow back into the plugin (mirrors how Reading
-	 * reads its Quotes section from the file).
+	 * Reads the `## Notes` body back from a title note. null when the file or section is absent.
+	 * Lets manual .md edits flow back into the plugin.
 	 */
 	async readNotesFromFile(title: WatchLogTitle): Promise<string | null> {
 		const filePath = this.getNoteFilePath(title);
 		const file = this.app.vault.getAbstractFileByPath(filePath);
 		if (!(file instanceof TFile)) {
-			// Diagnostic: the resolved path didn't match a real file on disk — the
-			// likely culprit if read-back ever stops working (sanitization / folder
-			// / rename mismatch). Logged so it can be verified against the vault.
+			// diagnostic: the resolved path matched no real file — the likely culprit if read-back ever
+			// stops working (sanitization / folder / rename mismatch)
 			console.warn(
 				`[WatchLog] Notes read: no note file at resolved path "${filePath}" for title "${title.title}"`,
 			);
@@ -1189,17 +1352,14 @@ export class DataManager {
 		const content = await this.app.vault.read(file);
 		const match = content.match(/(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/);
 		if (!match) return null;
-		// Strip the leading blank line the template inserts and any trailing whitespace,
-		// but keep the user's internal line breaks intact.
+		// strip the template's leading blank line and trailing whitespace, keep internal breaks
 		return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
 	}
 
 	/**
-	 * Replaces the body of the `## Notes` section with `notesBody`, preserving the
-	 * heading, every other section, the frontmatter, and any prose outside it. When
-	 * no `## Notes` heading exists, one is appended at the end (never duplicated).
-	 * The section boundary matches `readNotesFromFile` (next `## ` / `# ` heading or
-	 * EOF) so a read-then-write round-trips cleanly.
+	 * Replaces the `## Notes` body, preserving the heading, every other section, the frontmatter and
+	 * any prose outside it. Appends the heading when missing (never duplicated). The boundary matches
+	 * readNotesFromFile, so read-then-write round-trips cleanly.
 	 */
 	private replaceNotesSection(existing: string, notesBody: string): string {
 		const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
@@ -1232,10 +1392,8 @@ export class DataManager {
 	}
 
 	/**
-	 * Rewrites ONLY the frontmatter block of an existing title note, preserving the
-	 * entire body verbatim (`## Notes` and anything else). Does NOT create the file
-	 * when missing — returns false in that case. Powers the bulk "Rewrite all
-	 * frontmatter" action that applies newer frontmatter fields to old notes.
+	 * Rewrites ONLY the frontmatter of an existing title note, body verbatim. Does NOT create the
+	 * file — returns false then. Powers the bulk "Rewrite all frontmatter" action.
 	 */
 	async rewriteFrontmatterIfExists(title: WatchLogTitle): Promise<boolean> {
 		const filePath = this.getNoteFilePath(title);
@@ -1251,9 +1409,8 @@ export class DataManager {
 	}
 
 	/**
-	 * YAML-quotes a string value (escaping backslashes and double quotes) so a
-	 * title or URL containing `:` can't break the frontmatter. Same helper Reading
-	 * uses; empty strings become `""`.
+	 * YAML-quotes a value (escaping backslashes and double quotes) so a `:` in a title or URL can't
+	 * break the frontmatter. Empty → `""`.
 	 */
 	private yamlEscape(value: string): string {
 		if (value === '') return '""';
@@ -1264,8 +1421,8 @@ export class DataManager {
 	private buildFrontmatter(title: WatchLogTitle, progress: number): string {
 		const esc = (v: string): string => this.yamlEscape(v);
 		const lines: string[] = ['---'];
-		// Text values are routed through yamlEscape; numbers/booleans/dates emit
-		// unquoted. Optional fields are omitted when absent to avoid noise.
+		// text values go through yamlEscape; numbers/booleans/dates emit unquoted. absent optional fields
+		// are omitted
 		lines.push(`title: ${esc(title.title)}`);
 		lines.push(`type: ${esc(title.type)}`);
 		lines.push(`status: ${esc(title.status)}`);
@@ -1285,24 +1442,28 @@ export class DataManager {
 		if (title.communityRating !== undefined) lines.push(`communityRating: ${title.communityRating}`);
 		if (title.communityVotes !== undefined) lines.push(`communityVotes: ${title.communityVotes}`);
 		if (title.communitySource) lines.push(`communitySource: ${esc(title.communitySource)}`);
-		// Inline YAML arrays; unfetched and 'none' credits are both omitted.
-		const director = getDisplayCredits(title.director);
+		// inline YAML arrays of the merged view — fetched names plus user-added, uncapped. unfetched and
+		// 'none' are both omitted
+		const director = getTitleCredits(title, 'director');
 		if (director.length > 0) lines.push(`director: [${director.map(esc).join(', ')}]`);
-		const cast = getDisplayCredits(title.cast);
+		const cast = getTitleCredits(title, 'cast');
 		if (cast.length > 0) lines.push(`cast: [${cast.map(esc).join(', ')}]`);
-		// Single resolved poster (manual override if set, else auto-fetched).
+		const studio = getTitleCredits(title, 'studio');
+		if (studio.length > 0) lines.push(`studio: [${studio.map(esc).join(', ')}]`);
+		// single resolved poster (manual override if set, else auto-fetched)
 		const poster = getDisplayPoster(title);
 		if (poster && poster !== 'none') lines.push(`poster: ${esc(poster)}`);
-		// Single resolved trailer (manual override if set, else auto-fetched).
+		// single resolved trailer (manual override if set, else auto-fetched)
 		const trailer = getDisplayTrailer(title);
 		if (trailer) lines.push(`trailer: ${esc(trailer)}`);
 		if (title.externalLink) lines.push(`externalLink: ${esc(title.externalLink)}`);
 		if (title.pinned) lines.push(`pinned: true`);
+		if (title.favorite) lines.push(`favorite: true`);
 		lines.push('---');
 		return lines.join('\n');
 	}
 
-	/** Full note template (frontmatter + ## Notes body). Used only when creating a new file. */
+	/** Full note template (frontmatter + ## Notes body). Only used when creating a file. */
 	private buildMarkdownContent(title: WatchLogTitle, progress: number): string {
 		return `${this.buildFrontmatter(title, progress)}
 
@@ -1320,7 +1481,7 @@ ${title.notes}
 		}
 	}
 
-	// ── Dashboard helpers ─────────────────────────────────────────────────────────
+	// Dashboard helpers
 
 	getRecentlyWatched(count: number): WatchLogTitle[] {
 		return [...(this.data.titles ?? [])]
@@ -1349,7 +1510,7 @@ ${title.notes}
 		return (this.data.titles ?? []).filter((t) => t.status === 'Completed').length;
 	}
 
-	// ── ID generation ─────────────────────────────────────────────────────────────
+	// ID generation
 
 	generateId(title: string): string {
 		let id = title

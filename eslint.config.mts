@@ -35,10 +35,10 @@ export default tseslint.config(
 				ignoreWords: [
 					// Plugin / feature names
 					'WatchLog', 'Watchlist', 'Upcoming', 'Reading', 'Cards',
-					'Drafts', 'Custom', 'Lists', 'Books', 'Manga',
+					'Drafts', 'Custom', 'Lists', 'Books', 'Manga', 'Games',
 					'Notes', 'Quotes', 'Regenerate', 'Settings', 'Add', 'Last',
 					// External services / acronyms not in the rule defaults
-					'Google', 'MAL', 'TSV', 'URLs', 'APIs',
+					'Google', 'MAL', 'TSV', 'URLs', 'APIs', 'Steam',
 				],
 				ignoreRegex: [
 					'^DD/MM/YYYY$',            // date format mask

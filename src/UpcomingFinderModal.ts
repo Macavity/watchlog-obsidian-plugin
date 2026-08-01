@@ -1,8 +1,8 @@
 import { App, FuzzySuggestModal } from 'obsidian';
 
-/** A unified finder entry spanning watchlist titles and reading items. */
+/** A unified finder entry spanning watchlist titles, reading items and games. */
 export interface UpcomingFinderItem {
-	source: 'watchlist' | 'reading';
+	source: 'watchlist' | 'reading' | 'game';
 	kind?: 'book' | 'manga';
 	id: string;
 	title: string;
@@ -11,9 +11,8 @@ export interface UpcomingFinderItem {
 }
 
 /**
- * The shared "+ add" finder for the Upcoming tab. Extends the watchlist finder to
- * also surface Reading items, so a reading title can be added to Upcoming through
- * the exact same pathway — never a separate add flow.
+ * The shared "+ add" finder for the Upcoming tab. Extends the watchlist finder to also surface
+ * Reading items and Games, so any tracked title is added through the same pathway.
  */
 export class UpcomingFinderModal extends FuzzySuggestModal<UpcomingFinderItem> {
 	private items: UpcomingFinderItem[];

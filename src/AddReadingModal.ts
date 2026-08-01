@@ -3,14 +3,17 @@ import type WatchLogPlugin from './main';
 import type { ReadingDataManager } from './ReadingDataManager';
 import type { BookSearchResult, MangaSearchResult } from './ApiService';
 import { googleBooksErrorMessage } from './ApiService';
-import { renderSearchThumbnail } from './SearchThumbnail';
+import { renderSearchResultRow } from './SearchThumbnail';
+import { LibraryIndex, bookResultIdKeys, mangaResultIdKeys } from './LibraryIndex';
+import { renderStarRating } from './StarRating';
+import { createDatePicker } from './DatePicker';
+import { renderSegmentedToggle } from './StatusDropdown';
 import {
 	Book,
+	BookProgressUnit,
 	Manga,
 	ReadingStatus,
 	SELECTABLE_READING_STATUSES,
-	formatDateDisplay,
-	parseDateInput,
 } from './types';
 
 export type ReadingMode = 'book' | 'manga';
@@ -20,8 +23,11 @@ interface ReadingFormState {
 	author: string;
 	status: ReadingStatus;
 	rating: number;
+	progressUnit: BookProgressUnit;
 	pagesRead: number;
 	totalPages: number;
+	wordsRead: number;
+	totalWords: number;
 	chaptersRead: number;
 	totalChapters: number;
 	volumesRead: number;
@@ -41,8 +47,11 @@ function emptyFormState(): ReadingFormState {
 		author: '',
 		status: 'Plan to Read',
 		rating: 0,
+		progressUnit: 'pages',
 		pagesRead: 0,
 		totalPages: 0,
+		wordsRead: 0,
+		totalWords: 0,
 		chaptersRead: 0,
 		totalChapters: 0,
 		volumesRead: 0,
@@ -54,50 +63,6 @@ function emptyFormState(): ReadingFormState {
 		dateStarted: null,
 		dateFinished: null,
 		releaseDate: null,
-	};
-}
-
-export function bookToFormState(book: Book): ReadingFormState {
-	return {
-		title: book.title,
-		author: book.author,
-		status: book.status,
-		rating: book.rating,
-		pagesRead: book.pagesRead,
-		totalPages: book.totalPages,
-		chaptersRead: book.chaptersRead,
-		totalChapters: book.totalChapters,
-		volumesRead: 0,
-		totalVolumes: 0,
-		coverUrl: book.coverUrl,
-		googleBooksId: book.googleBooksId,
-		malId: '',
-		vaultPage: book.vaultPage,
-		dateStarted: book.dateStarted,
-		dateFinished: book.dateFinished,
-		releaseDate: book.releaseDate,
-	};
-}
-
-export function mangaToFormState(manga: Manga): ReadingFormState {
-	return {
-		title: manga.title,
-		author: manga.author,
-		status: manga.status,
-		rating: manga.rating,
-		pagesRead: 0,
-		totalPages: 0,
-		chaptersRead: manga.chaptersRead,
-		totalChapters: manga.totalChapters,
-		volumesRead: manga.volumesRead,
-		totalVolumes: manga.totalVolumes,
-		coverUrl: manga.coverUrl,
-		googleBooksId: '',
-		malId: manga.malId,
-		vaultPage: manga.vaultPage,
-		dateStarted: manga.dateStarted,
-		dateFinished: manga.dateFinished,
-		releaseDate: manga.releaseDate,
 	};
 }
 
@@ -138,6 +103,9 @@ export class AddReadingModal extends Modal {
 	private lookupSearchGen = 0;
 	private selectGen = 0;
 	private prefillSearch: string;
+	private searchDebounce: number | null = null;
+	// built on first lookup, reused for the modal's life
+	private libIndex: LibraryIndex | null = null;
 
 	constructor(
 		app: App,
@@ -174,6 +142,7 @@ export class AddReadingModal extends Modal {
 	}
 
 	onClose(): void {
+		if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
 		this.contentEl.empty();
 	}
 
@@ -209,8 +178,7 @@ export class AddReadingModal extends Modal {
 		});
 
 		const actions = row.createDiv({ cls: 'wl-reading-modal-header-actions' });
-		// "Link" button intentionally omitted from the Add modal — vault-page linking
-		// lives in the detail/edit modal (ReadingDetailModal).
+		// no "Link" button here on purpose — vault-page linking lives in ReadingDetailModal
 		this.openVaultBtn = actions.createEl('button', {
 			cls: 'wl-btn wl-btn-sm',
 			text: 'Open',
@@ -258,13 +226,9 @@ export class AddReadingModal extends Modal {
 		});
 		const fetchBtn = lookup.createEl('button', {
 			cls: 'wl-btn wl-reading-lookup-btn',
-			text: 'Fetch',
+			text: 'Search',
 		});
-		this.lookupResultsEl = parent.createDiv({ cls: 'wl-reading-lookup-results' });
-
-		// Prefill the search box (e.g. from a Drafts entry) without auto-fetching,
-		// mirroring the Watchlist Add modal's prefill behavior.
-		if (this.prefillSearch) input.value = this.prefillSearch;
+		this.lookupResultsEl = parent.createDiv({ cls: 'wl-modal-results wl-results-grid' });
 
 		const runFetch = (): void => {
 			const q = input.value.trim();
@@ -275,6 +239,15 @@ export class AddReadingModal extends Modal {
 			void this.performLookup(q);
 		};
 
+		// auto-search as you type (debounced), matching the Watchlist/Games add flows; the button and Enter
+		// stay as manual triggers
+		input.addEventListener('input', () => {
+			if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
+			const q = input.value.trim();
+			if (!q) return;
+			this.searchDebounce = window.setTimeout(() => void this.performLookup(q), 600);
+		});
+
 		fetchBtn.addEventListener('click', runFetch);
 		input.addEventListener('keydown', (e) => {
 			if (e.key === 'Enter') {
@@ -282,13 +255,19 @@ export class AddReadingModal extends Modal {
 				runFetch();
 			}
 		});
+
+		// a prefilled search (e.g. from Drafts) fires immediately — the results are the point
+		if (this.prefillSearch) {
+			input.value = this.prefillSearch;
+			void this.performLookup(this.prefillSearch);
+		}
 	}
 
 	private async performLookup(query: string): Promise<void> {
 		const gen = ++this.lookupSearchGen;
 		if (!this.lookupResultsEl) return;
 		this.lookupResultsEl.empty();
-		this.lookupResultsEl.createDiv({ cls: 'wl-reading-lookup-loading', text: 'Searching...' });
+		this.lookupResultsEl.createDiv({ cls: 'wl-modal-loading', text: 'Searching...' });
 
 		try {
 			if (this.mode === 'book') {
@@ -296,14 +275,14 @@ export class AddReadingModal extends Modal {
 					if (gen !== this.lookupSearchGen) return;
 					this.lookupResultsEl.empty();
 					this.lookupResultsEl.createDiv({
-						cls: 'wl-reading-lookup-empty',
+						cls: 'wl-modal-loading',
 						text: 'Google Books API key required — add one in Settings → API → Books.',
 					});
 					return;
 				}
 				const results = await this.plugin.apiService.searchGoogleBooks(query);
 				if (gen !== this.lookupSearchGen) return;
-				this.renderBookLookupResults(results);
+				this.renderLookupResults(results, '📖', (r) => this.applyBookResult(r), bookResultIdKeys);
 			} else {
 				const isNumeric = /^\d+$/.test(query);
 				let results: MangaSearchResult[];
@@ -315,69 +294,53 @@ export class AddReadingModal extends Modal {
 					results = await this.plugin.apiService.searchManga(query);
 					if (gen !== this.lookupSearchGen) return;
 				}
-				this.renderMangaLookupResults(results);
+				this.renderLookupResults(results, '📓', (r) => this.applyMangaResult(r), mangaResultIdKeys);
 			}
 		} catch (err) {
 			if (gen !== this.lookupSearchGen) return;
 			this.lookupResultsEl.empty();
 			const msg = this.mode === 'book' ? googleBooksErrorMessage(err) : 'Lookup failed. Check your connection.';
-			this.lookupResultsEl.createDiv({ cls: 'wl-reading-lookup-empty', text: msg });
+			this.lookupResultsEl.createDiv({ cls: 'wl-modal-loading', text: msg });
 		}
 	}
 
-	private renderBookLookupResults(results: BookSearchResult[]): void {
+	/**
+	 * Shared renderer for book and manga lookup results (they differ only by fallback icon and apply
+	 * handler). Rows use the shared add-flow markup.
+	 */
+	private renderLookupResults<T extends { title: string; author: string; year: number; coverUrl: string }>(
+		results: T[],
+		fallbackIcon: string,
+		onPick: (r: T) => void,
+		idKeys: (r: T) => string[],
+	): void {
 		if (!this.lookupResultsEl) return;
 		this.lookupResultsEl.empty();
 		if (results.length === 0) {
-			this.lookupResultsEl.createDiv({ cls: 'wl-reading-lookup-empty', text: 'No matches.' });
+			this.lookupResultsEl.createDiv({ cls: 'wl-modal-loading', text: 'No matches.' });
 			return;
 		}
+		// books check Books, manga check Manga — the two libraries stay separate
+		if (!this.libIndex) {
+			this.libIndex = LibraryIndex.build(this.plugin, [this.mode === 'book' ? 'books' : 'manga']);
+		}
+		const libIndex = this.libIndex;
 		for (const r of results) {
-			const item = this.lookupResultsEl.createDiv({ cls: 'wl-reading-lookup-item' });
-			renderSearchThumbnail(item, r.coverUrl, r.title, '📖');
-			const text = item.createDiv({ cls: 'wl-reading-lookup-item-text' });
-			this.renderLookupItemTitle(text, r.title, r.url);
 			const meta = [r.author || 'Unknown author', r.year ? String(r.year) : ''].filter(Boolean).join(' · ');
-			text.createDiv({ cls: 'wl-reading-lookup-item-meta', text: meta });
-			item.addEventListener('click', () => this.applyBookResult(r));
-		}
-	}
-
-	/** Title row with a globe web-link to the right (same pattern as the Watchlist). */
-	private renderLookupItemTitle(item: HTMLElement, title: string, url: string): void {
-		const titleRow = item.createDiv({ cls: 'wl-reading-lookup-item-title-row' });
-		titleRow.createDiv({ cls: 'wl-reading-lookup-item-title', text: title || '(untitled)' });
-		if (url) {
-			const linkIcon = titleRow.createEl('a', { cls: 'wl-acc-link-icon', text: '🌐' });
-			linkIcon.href = url;
-			linkIcon.title = 'Open external link';
-			linkIcon.target = '_blank';
-			linkIcon.rel = 'noopener noreferrer';
-			linkIcon.addEventListener('click', (e) => e.stopPropagation());
-		}
-	}
-
-	private renderMangaLookupResults(results: MangaSearchResult[]): void {
-		if (!this.lookupResultsEl) return;
-		this.lookupResultsEl.empty();
-		if (results.length === 0) {
-			this.lookupResultsEl.createDiv({ cls: 'wl-reading-lookup-empty', text: 'No matches.' });
-			return;
-		}
-		for (const r of results) {
-			const item = this.lookupResultsEl.createDiv({ cls: 'wl-reading-lookup-item' });
-			renderSearchThumbnail(item, r.coverUrl, r.title, '📓');
-			const text = item.createDiv({ cls: 'wl-reading-lookup-item-text' });
-			this.renderLookupItemTitle(text, r.title, r.url);
-			const meta = [r.author || 'Unknown author', r.year ? String(r.year) : ''].filter(Boolean).join(' · ');
-			text.createDiv({ cls: 'wl-reading-lookup-item-meta', text: meta });
-			item.addEventListener('click', () => this.applyMangaResult(r));
+			renderSearchResultRow(this.lookupResultsEl, {
+				thumbUrl: r.coverUrl,
+				fallbackIcon,
+				title: r.title || '(untitled)',
+				meta,
+				inLibrary: libIndex.lookup(idKeys(r), r.title),
+				onClick: () => onPick(r),
+			});
 		}
 	}
 
 	private applyBookResult(r: BookSearchResult): void {
-		// Always overwrite the auto-populated fields so re-selecting a different
-		// result fully replaces the previous selection's data.
+		// always overwrite the auto-populated fields, so re-selecting a different result fully replaces the
+		// previous selection
 		const gen = ++this.selectGen;
 		this.state.title = r.title;
 		this.state.author = r.author;
@@ -386,9 +349,9 @@ export class AddReadingModal extends Modal {
 		this.state.googleBooksId = r.googleBooksId;
 		this.state.releaseDate = r.releaseDate ?? '';
 		this.refreshForm();
-		// Keep the results list open so another result can be picked.
-		// Search results sometimes omit page counts and only return thumbnail covers —
-		// fetch the full volume for the selected book to upgrade both.
+		// keep the results list open so another result can be picked.
+		// search results sometimes omit page counts and only return thumbnails — fetch the full volume for
+		// the selected book to upgrade both.
 		if (r.googleBooksId) {
 			void (async () => {
 				try {
@@ -398,15 +361,15 @@ export class AddReadingModal extends Modal {
 					if (detail.coverUrl) this.state.coverUrl = detail.coverUrl;
 					this.refreshForm();
 				} catch {
-					// Best-effort enrichment; the book is already applied from search results.
+					// best-effort enrichment; the book is already applied from the search results
 				}
 			})();
 		}
 	}
 
 	private applyMangaResult(r: MangaSearchResult): void {
-		// Always overwrite the auto-populated fields so re-selecting a different
-		// result fully replaces the previous selection's data.
+		// always overwrite the auto-populated fields, so re-selecting a different result fully replaces the
+		// previous selection
 		const gen = ++this.selectGen;
 		this.state.title = r.title;
 		this.state.author = r.author;
@@ -416,9 +379,8 @@ export class AddReadingModal extends Modal {
 		this.state.malId = r.malId > 0 ? String(r.malId) : '';
 		this.state.releaseDate = r.releaseDate ?? '';
 		this.refreshForm();
-		// Keep the results list open so another result can be picked.
-		// Search returns null chapters/volumes for ongoing titles — fetch detail only
-		// for the selected manga to populate the totals.
+		// keep the results list open so another result can be picked.
+		// search returns null chapters/volumes for ongoing titles — fetch detail only for the selected manga.
 		if (r.malId > 0) {
 			void (async () => {
 				const detail = await this.plugin.apiService.getMangaByMalId(r.malId);
@@ -439,20 +401,16 @@ export class AddReadingModal extends Modal {
 	private renderForm(parent: HTMLElement): void {
 		const form = parent.createDiv({ cls: 'wl-reading-form' });
 
-		// Title (required)
 		this.renderTextField(form, 'Title', 'Book title', this.state.title, (v) => {
 			this.state.title = v;
 		});
 
-		// Author
 		this.renderTextField(form, 'Author', 'Author name', this.state.author, (v) => {
 			this.state.author = v;
 		});
 
-		// Status + Rating row (compact, inline)
 		this.renderStatusRatingRow(form);
 
-		// PROGRESS + OPTIONAL side-by-side grid
 		this.renderProgressOptionalGrid(form);
 	}
 
@@ -460,16 +418,39 @@ export class AddReadingModal extends Modal {
 		const grid = parent.createDiv({ cls: 'wl-reading-form-grid' });
 
 		const progressCol = grid.createDiv({ cls: 'wl-reading-form-grid-col' });
-		progressCol.createDiv({ cls: 'wl-reading-section-label', text: 'Progress' });
+		const progressLabel = progressCol.createDiv({ cls: 'wl-reading-section-label' });
+		progressLabel.createSpan({ text: 'Progress' });
 		if (this.mode === 'book') {
+			progressLabel.addClass('wl-reading-section-label-row');
+			// Pages/Words switch: swaps which counter pair the form collects. The other unit's numbers stay in
+			// state, so flipping back is lossless.
+			renderSegmentedToggle<BookProgressUnit>({
+				parent: progressLabel,
+				options: [
+					{ value: 'pages', label: 'Pages', title: 'Track progress in pages' },
+					{ value: 'words', label: 'Words', title: 'Track progress in words' },
+				],
+				value: this.state.progressUnit,
+				onPick: (unit) => {
+					this.state.progressUnit = unit;
+					this.refreshForm();
+				},
+			});
+		}
+		if (this.mode === 'book') {
+			const inWords = this.state.progressUnit === 'words';
 			this.renderTwoNumberRow(
 				progressCol,
-				{ label: 'Pages read', value: this.state.pagesRead, onChange: (n) => { this.state.pagesRead = n; } },
+				inWords
+					? { label: 'Words read', value: this.state.wordsRead, onChange: (n) => { this.state.wordsRead = n; } }
+					: { label: 'Pages read', value: this.state.pagesRead, onChange: (n) => { this.state.pagesRead = n; } },
 				{ label: 'Chapters read', value: this.state.chaptersRead, onChange: (n) => { this.state.chaptersRead = n; } },
 			);
 			this.renderTwoNumberRow(
 				progressCol,
-				{ label: 'Total pages', value: this.state.totalPages, onChange: (n) => { this.state.totalPages = n; } },
+				inWords
+					? { label: 'Total words', value: this.state.totalWords, onChange: (n) => { this.state.totalWords = n; } }
+					: { label: 'Total pages', value: this.state.totalPages, onChange: (n) => { this.state.totalPages = n; } },
 				{ label: 'Total chapters', value: this.state.totalChapters, onChange: (n) => { this.state.totalChapters = n; } },
 			);
 		} else {
@@ -518,7 +499,6 @@ export class AddReadingModal extends Modal {
 	private renderStatusRatingRow(parent: HTMLElement): void {
 		const row = parent.createDiv({ cls: 'wl-reading-status-rating-row' });
 
-		// Status (compact — only as wide as needed)
 		const statusGroup = row.createDiv({ cls: 'wl-reading-inline-group' });
 		statusGroup.createSpan({ cls: 'wl-reading-label', text: 'Status' });
 		const select = statusGroup.createEl('select', { cls: 'wl-select wl-reading-status-select' });
@@ -530,7 +510,6 @@ export class AddReadingModal extends Modal {
 			this.state.status = select.value as ReadingStatus;
 		});
 
-		// Rating (inline next to status)
 		const ratingGroup = row.createDiv({ cls: 'wl-reading-inline-group' });
 		ratingGroup.createSpan({ cls: 'wl-reading-label', text: 'Rating' });
 		this.starsWrap = ratingGroup.createDiv({ cls: 'wl-stars wl-reading-stars' });
@@ -539,17 +518,15 @@ export class AddReadingModal extends Modal {
 
 	private renderStars(): void {
 		if (!this.starsWrap) return;
-		this.starsWrap.empty();
-		for (let i = 1; i <= 5; i++) {
-			const star = this.starsWrap.createSpan({
-				cls: `wl-star${this.state.rating >= i ? ' is-active' : ''}`,
-				text: '★',
-			});
-			star.addEventListener('click', () => {
-				this.state.rating = this.state.rating === i ? 0 : i;
+		renderStarRating(this.starsWrap, this.state.rating, {
+			allowHalf: this.plugin.settings.halfStarRatings ?? false,
+			tiers: this.plugin.settings.ratingSystem,
+			showLabel: true,
+			onChange: (value) => {
+				this.state.rating = value;
 				this.renderStars();
-			});
-		}
+			},
+		});
 	}
 
 	private renderTwoNumberRow(
@@ -587,25 +564,11 @@ export class AddReadingModal extends Modal {
 	): void {
 		const row = parent.createDiv({ cls: 'wl-reading-row' });
 		row.createSpan({ cls: 'wl-reading-label', text: label });
-		const input = row.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'DD/MM/YYYY', maxlength: '10' },
-		});
-		input.value = value ? formatDateDisplay(value) : '';
-		input.addEventListener('change', () => {
-			const raw = input.value.trim();
-			if (!raw) {
-				input.removeClass('wl-input-error');
-				onParsed(null);
-				return;
-			}
-			const parsed = parseDateInput(raw);
-			if (parsed) {
-				input.removeClass('wl-input-error');
-				onParsed(parsed);
-			} else {
-				input.addClass('wl-input-error');
-			}
+		createDatePicker({
+			parent: row,
+			inputCls: 'wl-modal-input',
+			value,
+			onChange: onParsed,
 		});
 	}
 
@@ -655,8 +618,11 @@ export class AddReadingModal extends Modal {
 				author: this.state.author.trim(),
 				status: this.state.status,
 				rating: this.state.rating,
+				progressUnit: this.state.progressUnit,
 				pagesRead: this.state.pagesRead,
 				totalPages: this.state.totalPages,
+				wordsRead: this.state.wordsRead,
+				totalWords: this.state.totalWords,
 				chaptersRead: this.state.chaptersRead,
 				totalChapters: this.state.totalChapters,
 				coverUrl: this.state.coverUrl.trim(),
@@ -675,8 +641,11 @@ export class AddReadingModal extends Modal {
 				author: this.state.author.trim(),
 				status: this.state.status,
 				rating: this.state.rating,
+				progressUnit: this.state.progressUnit,
 				pagesRead: this.state.pagesRead,
 				totalPages: this.state.totalPages,
+				wordsRead: this.state.wordsRead,
+				totalWords: this.state.totalWords,
 				chaptersRead: this.state.chaptersRead,
 				totalChapters: this.state.totalChapters,
 				coverUrl: this.state.coverUrl.trim(),

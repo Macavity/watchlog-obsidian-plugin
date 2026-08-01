@@ -1,9 +1,11 @@
 import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, normalizePath, setIcon } from 'obsidian';
-import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, AirtimeSchedule } from './types';
-import type { ReadingData } from './types';
+import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, AirtimeSchedule, normalizeRowsLayout, setActiveDateFormat } from './types';
+import { cardSizeToMinWidth } from './VirtualGrid';
+import type { ReadingData, CardStyleTab } from './types';
 import type { HistoryEntry } from './HistoryManager';
 import { DataManager } from './DataManager';
 import { ReadingDataManager } from './ReadingDataManager';
+import { GameDataManager } from './GameDataManager';
 import { ApiService } from './ApiService';
 import { HistoryManager } from './HistoryManager';
 import { PosterService } from './PosterService';
@@ -18,40 +20,56 @@ export default class WatchLogPlugin extends Plugin {
 	settings: WatchLogPluginSettings = DEFAULT_SETTINGS;
 	dataManager: DataManager = new DataManager(this);
 	readingDataManager: ReadingDataManager = new ReadingDataManager(this);
+	gameDataManager: GameDataManager = new GameDataManager(this);
 	apiService: ApiService = new ApiService('', '');
 	historyManager: HistoryManager = new HistoryManager(this);
 	posterService!: PosterService;
 	widgetRenderer?: WidgetRenderer;
 
-	// Runtime import progress state (not persisted)
+	// runtime import progress state (not persisted)
 	importProgress: { current: number; total: number; cancel: () => void } | null = null;
 
-	// Track which entry+day combos have already fired a notification
+	// which entry+day combos have already fired a notification
 	private notifiedEntries: Set<string> = new Set();
 
-	// Status-bar Upcoming "due" counter (desktop only; null on mobile)
+	// status-bar Upcoming "due" counter (desktop only; null on mobile)
 	private statusBarEl: HTMLElement | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		// the card-size CSS var must be live before any view or modal renders a grid
+		this.applyCardSizeCssVar();
+		this.register(() => activeDocument.body.style.removeProperty('--wl-card-min-width'));
 		this.dataManager = new DataManager(this);
 		await this.dataManager.load();
 
-		// One-time migration: pull legacy reading.json / history.json into data.json so
-		// Obsidian Sync replicates them. Must run after data.json is loaded and before the
-		// reading/history managers bind to it. Idempotent — gated by a flag in data.json.
+		// one-time migration: pull legacy reading.json / history.json into data.json so Sync replicates
+		// them. After data.json loads, before the reading/history managers bind. Idempotent — gated by a
+		// flag in data.json.
 		await this.migrateReadingHistory();
 
 		this.dataManager.startWatchingExternalChanges();
 
-		this.apiService = new ApiService(this.settings.omdbApiKey, this.settings.tmdbApiKey, this.settings.googleBooksApiKey);
+		this.apiService = new ApiService(
+			this.settings.omdbApiKey,
+			this.settings.tmdbApiKey,
+			this.settings.googleBooksApiKey,
+			this.settings.rawgApiKey,
+			this.settings.igdbClientId,
+			this.settings.igdbClientSecret,
+			this.settings.steamApiKey,
+			this.settings.steamId,
+		);
 		this.readingDataManager = new ReadingDataManager(this);
+		this.gameDataManager = new GameDataManager(this);
 		this.historyManager = new HistoryManager(this);
 		this.dataManager.setHistoryManager(this.historyManager);
 		this.readingDataManager.setHistoryManager(this.historyManager);
-		// History binds first so any reading-load logging has a live target.
+		this.gameDataManager.setHistoryManager(this.historyManager);
+		// history binds first so any reading-load logging has a live target
 		await this.historyManager.load();
 		await this.readingDataManager.load();
+		await this.gameDataManager.load();
 
 		this.posterService = new PosterService(
 			this.dataManager,
@@ -67,19 +85,16 @@ export default class WatchLogPlugin extends Plugin {
 
 		this.widgetRenderer = new WidgetRenderer(this, this.dataManager);
 
-		// Ribbon icon
 		this.addRibbonIcon('tv', 'Watchlog', () => {
 			void this.activateView();
 		});
 
-		// Command: Open panel
 		this.addCommand({
 			id: 'open-panel',
 			name: 'Open panel',
 			callback: () => void this.activateView(),
 		});
 
-		// Command: Add title
 		this.addCommand({
 			id: 'add-title',
 			name: 'Add title',
@@ -90,7 +105,6 @@ export default class WatchLogPlugin extends Plugin {
 			},
 		});
 
-		// Command: Insert widget
 		this.addCommand({
 			id: 'insert-widget',
 			name: 'Insert widget',
@@ -99,7 +113,6 @@ export default class WatchLogPlugin extends Plugin {
 			},
 		});
 
-		// Command: Search title
 		this.addCommand({
 			id: 'search-title',
 			name: 'Search title',
@@ -113,25 +126,23 @@ export default class WatchLogPlugin extends Plugin {
 			},
 		});
 
-		// Settings tab
 		this.addSettingTab(new WatchLogSettingsTab(this.app, this));
 
-		// Status-bar Upcoming "due" counter
 		this.setupStatusBar();
-		// Keep the status bar in sync with data edits (no new timer — the 60s
-		// airtime interval drives the time-based refresh). 'watchlog-data-changed'
-		// is a custom event, so register the listener directly (like WidgetRenderer).
+		// keep the status bar in sync with data edits (no new timer — the 60s airtime interval drives the
+		// time-based refresh). 'watchlog-data-changed' is a custom event, so register the listener directly.
 		const statusBarListener = (): void => this.updateStatusBar();
 		activeDocument.addEventListener('watchlog-data-changed', statusBarListener);
 		this.register(() => activeDocument.removeEventListener('watchlog-data-changed', statusBarListener));
 	}
 
 	onunload(): void {
-		// Synchronously flush any pending debounced saves so no in-memory edits are lost.
+		// synchronously flush pending debounced saves so no in-memory edits are lost
 		this.dataManager.flushPendingSaveSync();
 		this.dataManager.flushPosterSaveSync();
 		this.dataManager.flushQueuedSaveSync();
 		this.readingDataManager?.flushCoverSave();
+		this.gameDataManager?.flushCoverSave();
 		this.posterService?.destroy();
 		this.widgetRenderer?.cleanup();
 
@@ -144,7 +155,7 @@ export default class WatchLogPlugin extends Plugin {
 		}, 60000));
 	}
 
-	/** Allow AirtimeTab to prevent the scheduler from double-firing after a manual tick. */
+	/** Lets AirtimeTab prevent the scheduler from double-firing after a manual tick. */
 	markAirtimeHandled(key: string): void {
 		this.notifiedEntries.add(key);
 	}
@@ -158,22 +169,27 @@ export default class WatchLogPlugin extends Plugin {
 
 		const entries = this.dataManager.getAirtimeEntries();
 		for (const entry of entries) {
-			// Only fire when the entry has a specific time set and it matches now
+			// only fire when the entry has a specific time set and it matches now
 			if (!entry.schedule.releaseTime) continue;
 			if (entry.schedule.releaseTime !== currentHHMM) continue;
 
-			// Use direct day-of-week / date check to avoid the getAirtimeCountdown rollover bug
+			// direct day-of-week / date check, avoiding the getAirtimeCountdown rollover bug
 			if (!this.isScheduledForToday(entry.schedule)) continue;
 
-			// Deduplicate: only fire once per entry per day
+			// deduplicate: only fire once per entry per day
 			const notifKey = `${entry.id}-${today}`;
 			if (this.notifiedEntries.has(notifKey)) continue;
 			this.notifiedEntries.add(notifKey);
 
-			// Resolve the entry's subject — a watch title or a reading item.
+			// resolve the entry's subject — a watch title, a reading item, or a game
 			let name: string;
 			let maxUnits: number;
-			if (entry.source === 'reading') {
+			if (entry.source === 'game') {
+				const game = this.gameDataManager.getGame(entry.titleId);
+				if (!game) continue;
+				name = game.title;
+				maxUnits = 0; // games are single releases — nothing to auto-increment
+			} else if (entry.source === 'reading') {
 				const kind = entry.readingKind ?? 'book';
 				const item = kind === 'book'
 					? this.readingDataManager.getBook(entry.titleId)
@@ -189,24 +205,24 @@ export default class WatchLogPlugin extends Plugin {
 			}
 			new Notice(name, 8000);
 
-			// Auto-increment the unit (episode/chapter) for multi-part titles
-			if (maxUnits > 1 && entry.currentEpisode !== undefined) {
+			// auto-increment the unit for recurring schedules — a single release ('once') has no next unit
+			if (entry.schedule.recurrence !== 'once' && maxUnits > 1 && entry.currentEpisode !== undefined) {
 				const nextEp = entry.currentEpisode + 1;
 				if (nextEp <= maxUnits) {
 					entry.currentEpisode = nextEp;
 					void this.dataManager.updateAirtimeEntry(entry);
 				}
-				// If final unit: leave in Upcoming, you handle via tick button
+				// final unit: leave in Upcoming, handled via the tick button
 			}
 		}
 
-		// The due count is time-based, so refresh the status bar on every tick.
+		// the due count is time-based, so refresh the status bar on every tick
 		this.updateStatusBar();
 	}
 
-	// ── Status bar: Upcoming "due" counter ──────────────────────────────────────
+	// Status bar: Upcoming "due" counter
 	private setupStatusBar(): void {
-		// The status bar doesn't exist on mobile — skip entirely there.
+		// the status bar doesn't exist on mobile — skip entirely there
 		if (Platform.isMobile) return;
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.addClass('wl-statusbar-upcoming');
@@ -224,7 +240,7 @@ export default class WatchLogPlugin extends Plugin {
 			return;
 		}
 		const count =
-			AirtimeTab.getAiredDueCount(this.dataManager, this.readingDataManager) +
+			AirtimeTab.getAiredDueCount(this.dataManager, this.readingDataManager, this.gameDataManager) +
 			AirtimeTab.getMaybeDueCount(this.dataManager);
 		if (count <= 0) {
 			el.hide();
@@ -232,15 +248,15 @@ export default class WatchLogPlugin extends Plugin {
 		}
 		el.empty();
 		el.show();
-		// Orange icon + "N due" (colour comes from .wl-statusbar-upcoming) — reuse the ribbon's 'tv' icon.
+		// orange icon + "N due" (colour from .wl-statusbar-upcoming), reusing the ribbon's 'tv' icon
 		const icon = el.createSpan({ cls: 'wl-statusbar-icon' });
 		setIcon(icon, 'tv');
 		el.createSpan({ cls: 'wl-statusbar-text', text: `${count} due` });
 	}
 
 	/**
-	 * Returns true if today is a day when the given schedule fires.
-	 * Avoids the rollover issue in getAirtimeNextDate/getAirtimeCountdown.
+	 * True when today is a day the given schedule fires. Avoids the rollover in
+	 * getAirtimeNextDate/getAirtimeCountdown.
 	 */
 	private isScheduledForToday(schedule: AirtimeSchedule): boolean {
 		const now = new Date();
@@ -265,6 +281,32 @@ export default class WatchLogPlugin extends Plugin {
 		return false;
 	}
 
+	/**
+	 * Minimum card width (px) for every poster/cover grid and shelf, from the card-size step for this
+	 * device class (desktop vs mobile).
+	 */
+	getCardMinWidth(): number {
+		return cardSizeToMinWidth(
+			Platform.isMobile ? this.settings.cardSizeMobile : this.settings.cardSize,
+		);
+	}
+
+	/**
+	 * Whether a tab's poster cards show their text under the poster (the per-tab cardTextStyles
+	 * setting; 'under' is the default for data saved before it existed).
+	 */
+	isCardTextUnder(tab: CardStyleTab): boolean {
+		return this.settings.cardTextStyles?.[tab] !== 'inside';
+	}
+
+	/**
+	 * Publish the resolved card size as a body-level CSS var, so the plain-CSS grids (detail-modal
+	 * member grids, non-virtual fallbacks) track the setting too. Called on load and on every change.
+	 */
+	applyCardSizeCssVar(): void {
+		activeDocument.body.style.setProperty('--wl-card-min-width', `${this.getCardMinWidth()}px`);
+	}
+
 	async loadSettings(): Promise<void> {
 		const saved = (await this.loadData()) as {
 			settings?: Partial<WatchLogPluginSettings>;
@@ -277,45 +319,74 @@ export default class WatchLogPlugin extends Plugin {
 				saved.settings.listFilters,
 			);
 		}
+		// per-tab merge so a partially saved record keeps defaults for the rest
+		this.settings.cardTextStyles = Object.assign(
+			{},
+			DEFAULT_SETTINGS.cardTextStyles,
+			saved?.settings?.cardTextStyles ?? {},
+		);
 		if (this.settings.animeApiSource === undefined) {
 			this.settings.animeApiSource = 'jikan';
 		}
+		// date display format. Existing installs saw DD/MM/YYYY everywhere, so 'european' is both the
+		// default and the migration target for a missing or hand-edited value. Storage is unaffected.
+		if (
+			this.settings.dateFormat !== 'european' &&
+			this.settings.dateFormat !== 'american' &&
+			this.settings.dateFormat !== 'iso'
+		) {
+			this.settings.dateFormat = 'european';
+		}
+		// mirror into types.ts so the pure formatters render in the chosen order without a settings ref
+		setActiveDateFormat(this.settings.dateFormat);
 		if (this.settings.typeApiMapping === undefined) {
 			this.settings.typeApiMapping = {};
 		}
-		// Reading type badge colors (Manga / Book) — backfill defaults for old installs.
+		// reading type badge colors (Manga / Book) — backfill defaults for old installs
 		if (!this.settings.readingTypeColors) {
 			this.settings.readingTypeColors = { manga: '#D4537E', book: '#D85A30' };
 		} else {
 			if (!this.settings.readingTypeColors.manga) this.settings.readingTypeColors.manga = '#D4537E';
 			if (!this.settings.readingTypeColors.book) this.settings.readingTypeColors.book = '#D85A30';
 		}
-		// Default for the defaultWatchlistView setting (Cards)
-		if (this.settings.defaultWatchlistView !== 'list' && this.settings.defaultWatchlistView !== 'cards') {
-			this.settings.defaultWatchlistView = 'cards';
+		// watchlist view: 'rows' is the default, and the removed 'cards' view migrates to 'rows'
+		if (this.settings.defaultWatchlistView !== 'list' && this.settings.defaultWatchlistView !== 'rows') {
+			this.settings.defaultWatchlistView = 'rows';
 		}
-		// Backfill the status-bar Upcoming counter toggle for existing installs (default ON).
+		// backfill the status-bar Upcoming counter toggle for existing installs (default ON)
 		if (this.settings.showUpcomingStatusBar === undefined) {
 			this.settings.showUpcomingStatusBar = true;
 		}
-		// Backfill the default Add type setting for existing installs.
+		// normalize the stored rows layout (drops unknown ids, appends shelves missing from an older
+		// layout) and always take a fresh array so later in-place edits can't mutate DEFAULT_SETTINGS
+		this.settings.rowsLayout = normalizeRowsLayout(this.settings.rowsLayout);
+		// backfill the default Add type setting for existing installs
 		if (this.settings.defaultAddType === undefined) {
 			this.settings.defaultAddType = LAST_USED_TYPE_SENTINEL;
 		}
 		if (this.settings.lastAddedType === undefined) {
 			this.settings.lastAddedType = '';
 		}
-		// Ensure array fields are never undefined after a partial merge
+		// array fields are never undefined after a partial merge
 		if (!this.settings.types?.length) this.settings.types = DEFAULT_SETTINGS.types;
 		if (!this.settings.statuses?.length) this.settings.statuses = DEFAULT_SETTINGS.statuses;
 		if (!this.settings.reviews?.length) this.settings.reviews = DEFAULT_SETTINGS.reviews;
 		if (!this.settings.priorities?.length) this.settings.priorities = DEFAULT_SETTINGS.priorities;
 		if (!this.settings.seasonPalette?.length) this.settings.seasonPalette = DEFAULT_SETTINGS.seasonPalette;
-		// Migrate Plan to watch color from old grey to new teal
+		// the rating system must always be exactly five well-formed tiers; a missing or malformed value
+		// (older or hand-edited data) resets to defaults
+		if (
+			!Array.isArray(this.settings.ratingSystem) ||
+			this.settings.ratingSystem.length !== 5 ||
+			this.settings.ratingSystem.some((t) => !t || typeof t.label !== 'string' || typeof t.color !== 'string')
+		) {
+			this.settings.ratingSystem = DEFAULT_SETTINGS.ratingSystem.map((t) => ({ ...t }));
+		}
+		// migrate the Plan to watch colour from old grey to new teal
 		const ptw = this.settings.statuses.find((s) => s.name === 'Plan to watch');
 		if (ptw && ptw.color === '#888780') ptw.color = '#00A9A5';
 
-		// Ensure "To be released" status exists (migration for existing users)
+		// ensure the "To be released" status exists (migration for existing users)
 		if (!this.settings.statuses.find((s) => s.name === 'To be released')) {
 			const completedIdx = this.settings.statuses.findIndex((s) => s.name === 'Completed');
 			const insertAt = completedIdx >= 0 ? completedIdx + 1 : this.settings.statuses.length;
@@ -324,16 +395,15 @@ export default class WatchLogPlugin extends Plugin {
 	}
 
 	async saveSettings(): Promise<void> {
+		// keep the date formatters in step with the setting on every save
+		setActiveDateFormat(this.settings.dateFormat);
 		await this.dataManager.saveSettings(this.settings);
 	}
 
 	/**
-	 * Resolves the type slug the Add modal should preselect. Precedence:
-	 * 1. If `defaultAddType` is the sentinel → the last added type if it still
-	 *    exists, otherwise the first available type.
-	 * 2. If `defaultAddType` is a real, still-existing type → that type.
-	 * 3. Otherwise (stored type was deleted/renamed) → the first available type.
-	 * Never returns a non-existent type as long as at least one type exists.
+	 * Type slug the Add modal preselects. The sentinel → the last added type if it still exists, else
+	 * the first available; a real, still-existing type → itself; otherwise the first available. Never
+	 * returns a non-existent type while at least one exists.
 	 */
 	resolveDefaultAddType(): string {
 		const types = this.settings.types ?? [];
@@ -349,16 +419,13 @@ export default class WatchLogPlugin extends Plugin {
 	/**
 	 * One-time migration of legacy `reading.json` / `history.json` into `data.json`.
 	 *
-	 * Obsidian Sync replicates data.json (the saveData channel) but NOT the raw
-	 * adapter-written reading.json / history.json. This copies their contents into
-	 * the single saveData object so Sync carries reading + activity-log data too.
+	 * Obsidian Sync replicates data.json (the saveData channel) but NOT the raw adapter-written files,
+	 * so their contents are copied into the single saveData object.
 	 *
-	 * Gated by `data.migratedReadingHistory`. The flag and the migrated data are
-	 * written together in ONE atomic saveData(), so an interrupted load simply
-	 * re-runs the (idempotent) migration next time. The flag is only set when both
-	 * legacy reads succeeded (a valid empty/absent file counts as success); a
-	 * parse failure leaves the flag unset to preserve a recovery chance. Legacy
-	 * files are left on disk untouched as a backup.
+	 * Gated by `data.migratedReadingHistory`. Flag and migrated data are written together in ONE atomic
+	 * saveData(), so an interrupted load simply re-runs the idempotent migration. The flag is only set
+	 * when both legacy reads succeeded (an absent file counts as success); a parse failure leaves it
+	 * unset to preserve a recovery chance. Legacy files are left on disk as a backup.
 	 */
 	private async migrateReadingHistory(): Promise<void> {
 		const master = this.dataManager.getData();
@@ -371,7 +438,7 @@ export default class WatchLogPlugin extends Plugin {
 		const readingPath = normalizePath(`${dir}/reading.json`);
 		const historyPath = normalizePath(`${dir}/history.json`);
 
-		// ── Read legacy reading.json ──────────────────────────────────────────────
+		// read legacy reading.json
 		let readingOk = false;
 		let readingData: ReadingData | null = null;
 		try {
@@ -387,7 +454,7 @@ export default class WatchLogPlugin extends Plugin {
 			console.warn('[WL] reading.json read/parse failed — migration will retry next load:', e);
 		}
 
-		// ── Read legacy history.json ──────────────────────────────────────────────
+		// read legacy history.json
 		let historyOk = false;
 		let historyEntries: HistoryEntry[] | null = null;
 		try {
@@ -404,7 +471,7 @@ export default class WatchLogPlugin extends Plugin {
 			console.warn('[WL] history.json read/parse failed — migration will retry next load:', e);
 		}
 
-		// ── Copy into the saveData object (with the don't-overwrite-with-empty belt) ──
+		// copy into the saveData object (with the don't-overwrite-with-empty belt)
 		if (readingOk && readingData) {
 			const legacyHasReading =
 				(readingData.books?.length ?? 0) > 0 || (readingData.manga?.length ?? 0) > 0 ||
@@ -423,12 +490,12 @@ export default class WatchLogPlugin extends Plugin {
 			}
 		}
 
-		// Only mark migrated when both reads succeeded; otherwise retry next load.
+		// only mark migrated when both reads succeeded; otherwise retry next load
 		if (readingOk && historyOk) {
 			master.migratedReadingHistory = true;
 		}
 
-		// Single atomic write: migrated data AND flag together.
+		// single atomic write: migrated data AND flag together
 		await this.dataManager.persist();
 	}
 
@@ -496,7 +563,7 @@ export default class WatchLogPlugin extends Plugin {
 	}
 }
 
-// ── Widget selection modal ────────────────────────────────────────────────────
+// Widget selection modal
 
 interface WidgetItem { name: string; id: string; }
 
