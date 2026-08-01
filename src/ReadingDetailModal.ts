@@ -713,37 +713,33 @@ export class ReadingDetailModal extends Modal {
 		const cy = svgSize / 2;
 
 		const svgWrap = col.createDiv({ cls: 'wl-reading-arc-svg-wrap' });
-		const svg = activeDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		const svg = svgWrap.createSvg('svg');
 		svg.setAttribute('viewBox', `0 0 ${svgSize} ${svgSize}`);
 		svg.setAttribute('class', 'wl-reading-arc-svg');
-		svgWrap.appendChild(svg);
 
 		const arcLength = Math.PI * radius;
 
-		const bgArc = activeDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+		const bgArc = svg.createSvg('path');
 		const arcPath = `M ${cx - radius} ${cy} A ${radius} ${radius} 0 1 1 ${cx + radius} ${cy}`;
 		bgArc.setAttribute('d', arcPath);
 		bgArc.setAttribute('fill', 'none');
 		bgArc.setAttribute('stroke', '#2a2a2a');
 		bgArc.setAttribute('stroke-width', String(strokeWidth));
 		bgArc.setAttribute('stroke-linecap', 'round');
-		svg.appendChild(bgArc);
 
-		const fgArc = activeDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+		const fgArc = svg.createSvg('path');
 		fgArc.setAttribute('d', arcPath);
 		fgArc.setAttribute('fill', 'none');
 		fgArc.setAttribute('stroke', color);
 		fgArc.setAttribute('stroke-width', String(strokeWidth));
 		fgArc.setAttribute('stroke-linecap', 'round');
 		fgArc.setAttribute('stroke-dasharray', String(arcLength));
-		svg.appendChild(fgArc);
 
-		const pctText = activeDocument.createElementNS('http://www.w3.org/2000/svg', 'text');
+		const pctText = svg.createSvg('text');
 		pctText.setAttribute('x', String(cx));
 		pctText.setAttribute('y', String(cy + 4));
 		pctText.setAttribute('text-anchor', 'middle');
 		pctText.setAttribute('class', 'wl-reading-arc-pct');
-		svg.appendChild(pctText);
 
 		const clamp = (n: number): number => {
 			const total = getTotal();

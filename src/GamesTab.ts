@@ -771,7 +771,7 @@ export class GamesTab {
 				buildItem: (i, w, h) => {
 					const game = bucketGames[i];
 					if (!game) return null;
-					const tmp = activeDocument.createElement('div');
+					const tmp = createDiv();
 					this.renderGameCard(tmp, game, w, h);
 					return tmp.firstElementChild as HTMLElement | null;
 				},
@@ -815,7 +815,7 @@ export class GamesTab {
 			buildItem: (i, w, h) => {
 				const item = items[i];
 				if (!item) return null;
-				const tmp = activeDocument.createElement('div');
+				const tmp = createDiv();
 				if (item.kind === 'game') {
 					this.renderGameCard(tmp, item.data, w, h);
 				} else {

@@ -1613,7 +1613,7 @@ export class ApiService {
 		const [detail, stores] = await Promise.all([
 			this.fetchWithTimeout(`${RAWG_BASE}/games/${id}?key=${key}`) as Promise<RawgGameDetail>,
 			(this.fetchWithTimeout(`${RAWG_BASE}/games/${id}/stores?key=${key}`) as Promise<RawgStoresResponse>)
-				.catch(() => ({ results: [] }) as RawgStoresResponse),
+				.catch((): RawgStoresResponse => ({ results: [] })),
 		]);
 		if (typeof detail.id !== 'number' || !detail.name) return null;
 

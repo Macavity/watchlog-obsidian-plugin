@@ -193,7 +193,7 @@ export class VirtualGrid {
 
 		if (!hasOverlap) {
 			this.removeAllCards();
-			const fragment = this.grid.ownerDocument.createDocumentFragment();
+			const fragment = createFragment();
 			for (let i = firstIndex; i <= lastIndex; i++) {
 				const card = this.cb.buildItem(i, cardWidth, cardHeight);
 				if (card) fragment.appendChild(card);
@@ -221,7 +221,7 @@ export class VirtualGrid {
 		}
 		if (firstIndex < oldFirst) {
 			const addEnd = Math.min(oldFirst - 1, lastIndex);
-			const fragment = this.grid.ownerDocument.createDocumentFragment();
+			const fragment = createFragment();
 			for (let i = firstIndex; i <= addEnd; i++) {
 				const card = this.cb.buildItem(i, cardWidth, cardHeight);
 				if (card) fragment.appendChild(card);
@@ -230,7 +230,7 @@ export class VirtualGrid {
 		}
 		if (lastIndex > oldLast) {
 			const addStart = Math.max(oldLast + 1, firstIndex);
-			const fragment = this.grid.ownerDocument.createDocumentFragment();
+			const fragment = createFragment();
 			for (let i = addStart; i <= lastIndex; i++) {
 				const card = this.cb.buildItem(i, cardWidth, cardHeight);
 				if (card) fragment.appendChild(card);

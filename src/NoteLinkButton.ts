@@ -15,7 +15,7 @@ export function appendNoteLinkButton(
 	onOpen?: () => void,
 ): HTMLElement {
 	// sizing/alignment come from .wl-acc-link-icon (matches the globe)
-	const noteIcon = parent.createEl('span', { cls: 'wl-acc-link-icon' });
+	const noteIcon = parent.createSpan({ cls: 'wl-acc-link-icon' });
 	setIcon(noteIcon, 'file-text');
 	noteIcon.setAttr('aria-label', 'Open note');
 	noteIcon.title = 'Open note';

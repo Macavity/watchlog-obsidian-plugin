@@ -300,10 +300,8 @@ export class LogTab {
 
 			let el: HTMLElement;
 			if (row.type === 'header') {
-				el = activeDocument.createElement('div');
-				el.className = 'wl-log-day-header';
+				el = createDiv({ cls: 'wl-log-day-header', text: formatDayHeader(row.date!) });
 				el.setCssProps({ height: `${HEADER_HEIGHT}px` });
-				el.textContent = formatDayHeader(row.date!);
 			} else {
 				el = this.buildEntryRow(row);
 			}
@@ -323,62 +321,31 @@ export class LogTab {
 		const source = inferHistorySource(entry);
 		const dotColor = SOURCE_COLORS[source] ?? '#888780';
 
-		const el = activeDocument.createElement('div');
-		el.className = 'wl-log-entry';
+		const el = createDiv({ cls: 'wl-log-entry' });
 		el.setCssProps({ height: `${ROW_HEIGHT}px` });
 
-		const dotCol = activeDocument.createElement('div');
-		dotCol.className = 'wl-log-dot-col';
-		const dot = activeDocument.createElement('div');
-		dot.className = 'wl-log-dot';
+		const dotCol = el.createDiv({ cls: 'wl-log-dot-col' });
+		const dot = dotCol.createDiv({ cls: 'wl-log-dot' });
 		dot.style.backgroundColor = dotColor;
-		dotCol.appendChild(dot);
-		if (!row.isLastInGroup) {
-			const connector = activeDocument.createElement('div');
-			connector.className = 'wl-log-connector';
-			dotCol.appendChild(connector);
-		}
-		el.appendChild(dotCol);
+		if (!row.isLastInGroup) dotCol.createDiv({ cls: 'wl-log-connector' });
 
-		const content = activeDocument.createElement('div');
-		content.className = 'wl-log-content';
-		const srcSpan = activeDocument.createElement('span');
-		srcSpan.className = 'wl-log-source';
-		srcSpan.textContent = source;
-		content.appendChild(srcSpan);
-		const sep1 = activeDocument.createElement('span');
-		sep1.className = 'wl-log-sep';
-		sep1.textContent = ' · ';
-		content.appendChild(sep1);
-		const titleSpan = activeDocument.createElement('span');
-		titleSpan.className = 'wl-log-title';
-		titleSpan.textContent = titleFromEntry(entry);
-		content.appendChild(titleSpan);
-		const sep2 = activeDocument.createElement('span');
-		sep2.className = 'wl-log-sep';
-		sep2.textContent = ' — ';
-		content.appendChild(sep2);
-		const actionSpan = activeDocument.createElement('span');
-		actionSpan.className = 'wl-log-action';
-		actionSpan.textContent = actionLabel(entry);
+		const content = el.createDiv({ cls: 'wl-log-content' });
+		content.createSpan({ cls: 'wl-log-source', text: source });
+		content.createSpan({ cls: 'wl-log-sep', text: ' · ' });
+		content.createSpan({ cls: 'wl-log-title', text: titleFromEntry(entry) });
+		content.createSpan({ cls: 'wl-log-sep', text: ' — ' });
+		const actionSpan = content.createSpan({ cls: 'wl-log-action', text: actionLabel(entry) });
 		actionSpan.style.color = color;
-		content.appendChild(actionSpan);
-		el.appendChild(content);
 
-		const timeEl = activeDocument.createElement('div');
-		timeEl.className = 'wl-log-time';
-		timeEl.textContent = formatTime(entry.timestamp);
-		el.appendChild(timeEl);
+		el.createDiv({ cls: 'wl-log-time', text: formatTime(entry.timestamp) });
 
-		const delBtn = activeDocument.createElement('button');
-		delBtn.className = 'wl-log-del';
+		const delBtn = el.createEl('button', { cls: 'wl-log-del' });
 		delBtn.setAttribute('aria-label', 'Delete event');
 		setIcon(delBtn, 'x');
 		delBtn.addEventListener('click', (ev) => {
 			ev.stopPropagation();
 			this.confirmDelete(entry);
 		});
-		el.appendChild(delBtn);
 
 		return el;
 	}
