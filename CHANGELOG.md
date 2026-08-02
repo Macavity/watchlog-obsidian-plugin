@@ -21,6 +21,7 @@ All notable changes to WatchLog are documented here.
 * Fixed the thumbnail not showing inside the "Add" modal when using the OMDb API
 * Fixed the title type below the cards showing "1 eps" instead of "movie" when using the OMDb API
 * Fixed a visual bug in dropdown fields showing excessive arrows due to certain themes or CSS snippets
+* Fixed playtime over 999 hours saved as a single-digit value. Large playtimes now display and re-parse correctly, and grouped input (1,000 / 1.000) is understood.
 
 
 ## [3.0.0] - 2026-08-01
