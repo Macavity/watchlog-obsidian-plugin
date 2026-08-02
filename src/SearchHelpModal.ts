@@ -13,7 +13,7 @@ interface HelpExample {
 const EXAMPLES: HelpExample[] = [
 	{
 		parts: [['v', 'red'], ['p', ' '], ['v', 'blue']],
-		says: 'Both must match. They can match different fields — one in cast, one in studio.',
+		says: 'Both must match. They can match different fields; one in cast, one in studio.',
 	},
 	{
 		parts: [['o', '"'], ['v', 'red blue'], ['o', '"']],

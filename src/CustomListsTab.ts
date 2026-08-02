@@ -507,7 +507,7 @@ class EditColumnsModal extends Modal {
 
 	onOpen(): void {
 		this.modalEl.addClass('wl-editcol-modal');
-		this.titleEl.setText(`Table settings — ${this.list.name}`);
+		this.titleEl.setText(`Table settings: ${this.list.name}`);
 		this.contentEl.addClass('wl-editcols-modal');
 		this.renderBody();
 	}
@@ -742,7 +742,7 @@ class NotesModal extends Modal {
 
 	onOpen(): void {
 		this.previewComponent.load();
-		this.titleEl.setText(`Notes — ${this.listName}`);
+		this.titleEl.setText(`Notes: ${this.listName}`);
 		const { contentEl } = this;
 		contentEl.addClass('wl-notes-modal');
 
@@ -2075,7 +2075,7 @@ class ImportListModal extends Modal {
 
 		this.contentEl.createDiv({
 			cls: 'wl-settings-info',
-			text: 'Paste tab-separated values copied from a spreadsheet (Google Sheets / Excel). Rows are appended to the end of the list. Do not include an index/# column — rows are numbered automatically.',
+			text: 'Paste tab-separated values copied from a spreadsheet (Google Sheets / Excel). Rows are appended to the end of the list. Do not include an index/# column; rows are numbered automatically.',
 		});
 
 		this.textarea = this.contentEl.createEl('textarea', {
@@ -2223,7 +2223,7 @@ class ImportListModal extends Modal {
 		if (a.totalCols < a.existingCount) {
 			this.previewEl.createDiv({
 				cls: 'wl-import-banner',
-				text: '⚠ Fewer columns than the list — missing trailing cells will be left empty.',
+				text: '⚠ Fewer columns than the list; missing trailing cells will be left empty.',
 			});
 		}
 

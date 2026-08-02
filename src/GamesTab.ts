@@ -4,6 +4,7 @@ import type { GameDataManager } from './GameDataManager';
 import {
 	Game, GameGroup, GamesSavedFilterPreset, GAME_AUTO_STATUS, GAME_FINISHED_STATUS,
 	normalizeRowsLayout, GAMES_ROWS_SHELVES, ROWS_EXCLUSIVE_SHELVES, sortByFavorited,
+	priorityFilterOpts, formatPriorityOpt, migratePriorityExclude,
 } from './types';
 import { searchItems, yearOf, type SearchFieldSpec } from './SearchQuery';
 import { renderSearchHelpButton } from './SearchHelpModal';
@@ -13,7 +14,7 @@ import { VirtualScroller } from './VirtualScroller';
 import { LazyCardObserver } from './LazyCardObserver';
 import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderGroupCollage } from './CollageUtil';
-import { renderShelf, renderShelfTitle } from './RowsView';
+import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { rawgResizedCover, type GameSearchResult } from './ApiService';
 import { toggleFilterPanel, FilterSection } from './FilterPanel';
@@ -70,7 +71,6 @@ export class GamesTab {
 	private filterPlatformExclude = new Set<string>();
 	private filterGroupExclude = new Set<string>();
 	private filterRatingEmptyOnly = false;
-	private filterPriorityEmptyOnly = false;
 	private filterRecentlyArrivedOnly = false;
 	private filterFavoritesOnly = false;
 	private filterWishlistOnly = false;
@@ -86,6 +86,8 @@ export class GamesTab {
 
 	private selectionMode = false;
 	private selectedIds = new Set<string>();
+	// header select-all boxes of the current Rows render; re-synced on every selection change
+	private shelfSelectRefreshers: (() => void)[] = [];
 
 	// mobile toolbar toggle (shared crossfade slot) + isolated button rebuilds
 	private toolbarExpanded = false;
@@ -105,7 +107,11 @@ export class GamesTab {
 			this.filterGenreExclude    = new Set(saved.genreExclude    ?? []);
 			this.filterStatusExclude   = new Set(saved.statusExclude   ?? []);
 			this.filterRatingExclude   = new Set(saved.ratingExclude   ?? []);
-			this.filterPriorityExclude = new Set(saved.priorityExclude ?? []);
+			this.filterPriorityExclude = migratePriorityExclude(
+				saved.priorityExclude,
+				saved.priorityEmptyOnly,
+				plugin.settings.priorities,
+			);
 			this.filterPlatformExclude = new Set(saved.platformExclude ?? []);
 			this.filterGroupExclude    = new Set(saved.groupExclude    ?? []);
 			this.filterSort          = saved.sort ?? 'dateAdded';
@@ -113,7 +119,6 @@ export class GamesTab {
 			this.filterSecondSort    = saved.secondSort ?? 'none';
 			this.filterSecondSortDir = saved.secondSortDir ?? 'asc';
 			this.filterRatingEmptyOnly     = saved.ratingEmptyOnly     ?? false;
-			this.filterPriorityEmptyOnly   = saved.priorityEmptyOnly   ?? false;
 			this.filterRecentlyArrivedOnly = saved.recentlyArrivedOnly ?? false;
 			this.filterFavoritesOnly       = saved.favoritesOnly       ?? false;
 			this.filterWishlistOnly        = saved.wishlistOnly        ?? false;
@@ -129,11 +134,17 @@ export class GamesTab {
 				setsMatch(this.filterGenreExclude, savedPreset.genreExclude) &&
 				setsMatch(this.filterStatusExclude, savedPreset.statusExclude) &&
 				setsMatch(this.filterRatingExclude, savedPreset.ratingExclude) &&
-				setsMatch(this.filterPriorityExclude, savedPreset.priorityExclude) &&
+				setsMatch(
+					this.filterPriorityExclude,
+					Array.from(migratePriorityExclude(
+						savedPreset.priorityExclude,
+						savedPreset.priorityEmptyOnly,
+						plugin.settings.priorities,
+					)),
+				) &&
 				setsMatch(this.filterPlatformExclude, savedPreset.platformExclude) &&
 				setsMatch(this.filterGroupExclude, savedPreset.groupExclude ?? []) &&
 				(this.filterRatingEmptyOnly === (savedPreset.ratingEmptyOnly ?? false)) &&
-				(this.filterPriorityEmptyOnly === (savedPreset.priorityEmptyOnly ?? false)) &&
 				(this.filterRecentlyArrivedOnly === (savedPreset.recentlyArrivedOnly ?? false)) &&
 				(this.filterFavoritesOnly === (savedPreset.favoritesOnly ?? false)) &&
 				(this.filterWishlistOnly === (savedPreset.wishlistOnly ?? false)) &&
@@ -166,7 +177,6 @@ export class GamesTab {
 			secondSort:    this.filterSecondSort,
 			secondSortDir: this.filterSecondSortDir,
 			ratingEmptyOnly:     this.filterRatingEmptyOnly,
-			priorityEmptyOnly:   this.filterPriorityEmptyOnly,
 			recentlyArrivedOnly: this.filterRecentlyArrivedOnly,
 			favoritesOnly:       this.filterFavoritesOnly,
 			wishlistOnly:        this.filterWishlistOnly,
@@ -183,7 +193,6 @@ export class GamesTab {
 			this.filterPlatformExclude.size > 0 ||
 			this.filterGroupExclude.size > 0 ||
 			this.filterRatingEmptyOnly ||
-			this.filterPriorityEmptyOnly ||
 			this.filterRecentlyArrivedOnly ||
 			this.filterFavoritesOnly ||
 			this.filterWishlistOnly ||
@@ -198,7 +207,6 @@ export class GamesTab {
 		this.filterPlatformExclude.clear();
 		this.filterGroupExclude.clear();
 		this.filterRatingEmptyOnly     = false;
-		this.filterPriorityEmptyOnly   = false;
 		this.filterRecentlyArrivedOnly = false;
 		this.filterFavoritesOnly       = false;
 		this.filterWishlistOnly        = false;
@@ -209,11 +217,14 @@ export class GamesTab {
 		this.filterGenreExclude    = new Set(preset.genreExclude);
 		this.filterStatusExclude   = new Set(preset.statusExclude);
 		this.filterRatingExclude   = new Set(preset.ratingExclude);
-		this.filterPriorityExclude = new Set(preset.priorityExclude);
+		this.filterPriorityExclude = migratePriorityExclude(
+			preset.priorityExclude,
+			preset.priorityEmptyOnly,
+			this.plugin.settings.priorities,
+		);
 		this.filterPlatformExclude = new Set(preset.platformExclude);
 		this.filterGroupExclude    = new Set(preset.groupExclude ?? []);
 		this.filterRatingEmptyOnly     = preset.ratingEmptyOnly     ?? false;
-		this.filterPriorityEmptyOnly   = preset.priorityEmptyOnly   ?? false;
 		this.filterRecentlyArrivedOnly = preset.recentlyArrivedOnly ?? false;
 		this.filterFavoritesOnly       = preset.favoritesOnly       ?? false;
 		this.filterWishlistOnly        = preset.wishlistOnly        ?? false;
@@ -242,9 +253,8 @@ export class GamesTab {
 		} else if (this.filterRatingExclude.size > 0 && (g.rating === 0 || this.filterRatingExclude.has(`${g.rating}★`))) {
 			return false;
 		}
-		if (this.filterPriorityEmptyOnly) {
-			if (g.priority) return false;
-		} else if (this.filterPriorityExclude.size > 0 && this.filterPriorityExclude.has(g.priority)) {
+		// '' is a real option here — no-priority games are excludable like any other
+		if (this.filterPriorityExclude.size > 0 && this.filterPriorityExclude.has(g.priority)) {
 			return false;
 		}
 		// a game hides only when EVERY one of its platforms is excluded; games with none set are
@@ -554,7 +564,7 @@ export class GamesTab {
 		if (allGames.length === 0 && this.gameData.getGroups().length === 0) {
 			const empty = content.createDiv({ cls: 'wl-cards-empty' });
 			empty.createSpan({ cls: 'wl-cards-empty-icon', text: '🎮' });
-			empty.createEl('p', { cls: 'wl-cards-empty-msg', text: 'No games yet — click + Add to track your first game.' });
+			empty.createEl('p', { cls: 'wl-cards-empty-msg', text: 'No games yet; click + Add to track your first game.' });
 			return;
 		}
 
@@ -587,7 +597,7 @@ export class GamesTab {
 				// data manager (quiet: onChanged re-renders this tab itself)
 				persist: () => this.gameData.persistQuiet(),
 				onChanged: () => this.renderContent(),
-				hint: 'Reorder the sections or switch them off. "By genre" and "By status" are the grouped grid sections — only one can be on at a time, and with both off the games show as one flat grid.',
+				hint: 'Reorder the sections or switch them off. "By genre" and "By status" are the grouped grid sections; only one can be on at a time, and with both off the games show as one flat grid.',
 				exclusiveGroups: ROWS_EXCLUSIVE_SHELVES,
 			}).open();
 		});
@@ -621,6 +631,9 @@ export class GamesTab {
 		this.scroller = scroller;
 		const gameCard = (strip: HTMLElement, g: Game): void =>
 			this.renderGameCard(strip, g, cardW);
+		this.shelfSelectRefreshers = [];
+		const sel = (items: { id: string }[]): ShelfSelect | undefined =>
+			this.shelfSelect(items.map((i) => i.id));
 
 		// section builders keyed by rowsLayout id — each computes its own list (so a disabled section
 		// costs nothing), then hides non-matching games: Recently Added stays the 10 newest overall, not
@@ -628,18 +641,19 @@ export class GamesTab {
 		const shelfRenderers: Record<string, () => void> = {
 			favorites: () => {
 				// newest favorite first — this shelf ignores the tab sort
+				const favorites = sortByFavorited(allGames.filter((g) => g.favorite && gameVisible(g)));
 				renderShelf(
-					scroll, 'Favorites',
-					sortByFavorited(allGames.filter((g) => g.favorite && gameVisible(g))),
-					'No favorites yet — use a card\'s ⋮ menu to favorite a game.',
-					filtering, gameCard,
+					scroll, 'Favorites', favorites,
+					'No favorites yet; use a card\'s ⋮ menu to favorite a game.',
+					filtering, gameCard, sel(favorites),
 				);
 			},
 			recommended: () => {
+				const recommended = this.getRecommendedGames(allGames).filter(gameVisible);
 				renderShelf(
-					scroll, 'Recommended', this.getRecommendedGames(allGames).filter(gameVisible),
-					'Nothing to recommend — add games you plan to play.',
-					filtering, gameCard,
+					scroll, 'Recommended', recommended,
+					'Nothing to recommend; add games you plan to play.',
+					filtering, gameCard, sel(recommended),
 				);
 			},
 			recentlyAdded: () => {
@@ -649,15 +663,16 @@ export class GamesTab {
 					.filter(gameVisible);
 				renderShelf(
 					scroll, 'Recently Added', recentlyAdded,
-					'Nothing here yet — added games will show up in this row.',
-					filtering, gameCard,
+					'Nothing here yet; added games will show up in this row.',
+					filtering, gameCard, sel(recentlyAdded),
 				);
 			},
 			recentlyPlayed: () => {
+				const recentlyPlayed = this.getRecentlyPlayedGames(allGames).filter(gameVisible);
 				renderShelf(
-					scroll, 'Recently Played', this.getRecentlyPlayedGames(allGames).filter(gameVisible),
-					'Nothing played yet — games you progress or finish show up here.',
-					filtering, gameCard,
+					scroll, 'Recently Played', recentlyPlayed,
+					'Nothing played yet; games you progress or finish show up here.',
+					filtering, gameCard, sel(recentlyPlayed),
 				);
 			},
 			groups: () => {
@@ -679,8 +694,8 @@ export class GamesTab {
 					.filter(gameVisible);
 				renderShelf(
 					scroll, 'Recently Released', recentlyReleased,
-					'No released games yet — games with a past release date show up here.',
-					filtering, gameCard,
+					'No released games yet; games with a past release date show up here.',
+					filtering, gameCard, sel(recentlyReleased),
 				);
 			},
 			// the grouped grids are mutually exclusive (normalizeRowsLayout guarantees it)
@@ -723,11 +738,11 @@ export class GamesTab {
 	): void {
 		if (filtering && groups.length === 0) return;
 		const shelf = parent.createDiv({ cls: 'wl-rows-shelf' });
-		renderShelfTitle(shelf, 'Groups', groups.length);
+		renderShelfTitle(shelf, 'Groups', groups.length, this.shelfSelect(groups.map((g) => g.data.id)));
 		if (groups.length === 0) {
 			shelf.createDiv({
 				cls: 'wl-rows-shelf-empty',
-				text: 'No groups yet — group related games to see their covers here.',
+				text: 'No groups yet; group related games to see their covers here.',
 			});
 			return;
 		}
@@ -764,7 +779,7 @@ export class GamesTab {
 			);
 			if (bucketGames.length === 0) continue;
 			rendered++;
-			renderShelfTitle(section, def.name, bucketGames.length);
+			renderShelfTitle(section, def.name, bucketGames.length, this.shelfSelect(bucketGames.map((g) => g.id)));
 			const spacer = section.createDiv({ cls: 'wl-rows-bytype-spacer' });
 			const grid = spacer.createDiv({ cls: 'wl-cards-grid wl-cards-grid-virtual' });
 			const vgrid = new VirtualGrid(spacer, grid, bucketGames.length, {
@@ -786,7 +801,7 @@ export class GamesTab {
 			}
 			section.createDiv({
 				cls: 'wl-rows-shelf-empty',
-				text: `No games yet — added games are grouped by ${byType ? 'genre' : 'status'} here.`,
+				text: `No games yet; added games are grouped by ${byType ? 'genre' : 'status'} here.`,
 			});
 		}
 	}
@@ -808,7 +823,7 @@ export class GamesTab {
 			return;
 		}
 		const section = parent.createDiv({ cls: 'wl-rows-bytype' });
-		if (titled) renderShelfTitle(section, 'All games', items.length);
+		if (titled) renderShelfTitle(section, 'All games', items.length, this.shelfSelect(items.map((i) => i.data.id)));
 		const spacer = section.createDiv({ cls: 'wl-rows-bytype-spacer' });
 		const grid = spacer.createDiv({ cls: 'wl-cards-grid wl-cards-grid-virtual' });
 		const vgrid = new VirtualGrid(spacer, grid, items.length, {
@@ -1052,7 +1067,7 @@ export class GamesTab {
 			}
 			const formatRatingOpt = (opt: string): string =>
 				opt.replace(/^(\d+)\.5/, (_m, whole: string) => (whole === '0' ? '½' : `${whole}½`));
-			const priorityOpts = this.plugin.settings.priorities.map((p) => p.name);
+			const priorityOpts = priorityFilterOpts(this.plugin.settings.priorities);
 			const platformOpts = settings.platforms.map((p) => p.name);
 			const groupOpts = this.gameData.getGroups().map((g) => g.name);
 
@@ -1065,7 +1080,6 @@ export class GamesTab {
 				platformExclude: new Set(this.filterPlatformExclude),
 				groupExclude:    new Set(this.filterGroupExclude),
 				filterRatingEmptyOnly:     this.filterRatingEmptyOnly,
-				filterPriorityEmptyOnly:   this.filterPriorityEmptyOnly,
 				filterRecentlyArrivedOnly: this.filterRecentlyArrivedOnly,
 				filterFavoritesOnly:       this.filterFavoritesOnly,
 				filterWishlistOnly:        this.filterWishlistOnly,
@@ -1097,12 +1111,7 @@ export class GamesTab {
 				},
 				{
 					label: 'Priority', opts: priorityOpts, excludeSet: draft.priorityExclude,
-					specials: [{
-						text: 'Empty',
-						get: () => draft.filterPriorityEmptyOnly,
-						set: (v) => { draft.filterPriorityEmptyOnly = v; },
-						mode: 'exclusive',
-					}],
+					formatOpt: formatPriorityOpt,
 				},
 			];
 			if (platformOpts.length > 0) {
@@ -1147,7 +1156,6 @@ export class GamesTab {
 						platformExclude: Array.from(draft.platformExclude),
 						groupExclude:    Array.from(draft.groupExclude),
 						ratingEmptyOnly:     draft.filterRatingEmptyOnly,
-						priorityEmptyOnly:   draft.filterPriorityEmptyOnly,
 						recentlyArrivedOnly: draft.filterRecentlyArrivedOnly,
 						favoritesOnly:       draft.filterFavoritesOnly,
 						wishlistOnly:        draft.filterWishlistOnly,
@@ -1167,7 +1175,6 @@ export class GamesTab {
 					this.filterPlatformExclude = draft.platformExclude;
 					this.filterGroupExclude    = draft.groupExclude;
 					this.filterRatingEmptyOnly     = draft.filterRatingEmptyOnly;
-					this.filterPriorityEmptyOnly   = draft.filterPriorityEmptyOnly;
 					this.filterRecentlyArrivedOnly = draft.filterRecentlyArrivedOnly;
 					this.filterFavoritesOnly       = draft.filterFavoritesOnly;
 					this.filterWishlistOnly        = draft.filterWishlistOnly;
@@ -1222,8 +1229,33 @@ export class GamesTab {
 	private setSelectionMode(on: boolean): void {
 		this.selectionMode = on;
 		this.selectedIds.clear();
-		this.refreshToolbarActions();
-		this.syncCardSelectionClasses();
+		// full rebuild: the section headers gain/lose their select-all box
+		this.render();
+	}
+
+	/**
+	 * Select-all spec for one Rows section. undefined outside selection mode, which is what keeps
+	 * the box out of the header. Ids, not DOM: the grid sections are virtualised.
+	 */
+	private shelfSelect(ids: string[]): ShelfSelect | undefined {
+		if (!this.selectionMode) return undefined;
+		return {
+			ids,
+			selected: this.selectedIds,
+			onToggle: (sectionIds, selectAll) => {
+				for (const id of sectionIds) {
+					if (selectAll) { this.selectedIds.add(id); } else { this.selectedIds.delete(id); }
+				}
+				this.syncCardSelectionClasses();
+				this.refreshToolbarActions();
+			},
+			register: (refresh) => this.shelfSelectRefreshers.push(refresh),
+		};
+	}
+
+	/** A game can sit in several sections, so every header box re-reads the set. */
+	private refreshShelfSelects(): void {
+		for (const refresh of this.shelfSelectRefreshers) refresh();
 	}
 
 	/** Applies/removes wl-card-selected on every currently rendered card. */
@@ -1232,6 +1264,7 @@ export class GamesTab {
 			const id = card.dataset.gameId ?? card.dataset.groupId;
 			card.classList.toggle('wl-card-selected', !!id && this.selectedIds.has(id));
 		});
+		this.refreshShelfSelects();
 	}
 
 	/**
@@ -1249,6 +1282,7 @@ export class GamesTab {
 		this.container
 			.querySelectorAll<HTMLElement>(`.wl-card[data-game-id="${esc}"], .wl-card[data-group-id="${esc}"]`)
 			.forEach((el) => el.classList.toggle('wl-card-selected', selected));
+		this.refreshShelfSelects();
 		this.refreshToolbarActions();
 	}
 
@@ -1318,7 +1352,7 @@ export class GamesTab {
 		const moveSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
 		if (hasGroupSelected) {
 			moveSelect.disabled = true;
-			moveSelect.title = 'A group is selected — cannot move groups into other groups';
+			moveSelect.title = 'A group is selected; cannot move groups into other groups';
 		}
 		moveSelect.createEl('option', { text: 'Group…', value: '' });
 		for (const g of allGroups) {
@@ -1520,7 +1554,7 @@ export class GamesTab {
 	private async refreshCover(game: Game): Promise<void> {
 		const res = await this.resolveCover(game);
 		if (!res.url) {
-			new Notice('Could not fetch a cover — check the game\'s title and your Settings → API → Games setup.');
+			new Notice('Could not fetch a cover; check the game\'s title and your Settings → API → Games setup.');
 			return;
 		}
 		const fresh = this.gameData.getGame(game.id);

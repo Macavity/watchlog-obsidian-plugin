@@ -350,37 +350,246 @@ interface JikanMangaItem {
 	url?: string | null;
 }
 
-/** Why a Google Books request failed — drives accurate, non-misleading UI messages. */
-export type GoogleBooksErrorReason = 'no-key' | 'rate-limited' | 'http' | 'parse' | 'network';
+/** Which service a failed request went to. */
+export type ApiSource = 'tmdb' | 'omdb' | 'jikan' | 'anilist' | 'googleBooks' | 'rawg' | 'igdb' | 'twitch' | 'unknown';
 
-export class GoogleBooksError extends Error {
-	reason: GoogleBooksErrorReason;
+/** Why it failed. 'no-key' = none set; 'auth' = the credential was rejected. */
+export type ApiErrorReason =
+	| 'no-key' | 'auth' | 'not-enabled' | 'rate-limited' | 'not-found' | 'server' | 'http' | 'parse' | 'network';
+
+export class ApiError extends Error {
+	source: ApiSource;
+	reason: ApiErrorReason;
 	status?: number;
-	constructor(reason: GoogleBooksErrorReason, message: string, status?: number) {
+	/** raw response body, for reasons that need it (OMDb packs its cause in a JSON field) */
+	detail?: string;
+	/** the service's own wording, when it sent one worth showing verbatim */
+	providerMessage?: string;
+	constructor(
+		source: ApiSource,
+		reason: ApiErrorReason,
+		message: string,
+		status?: number,
+		detail?: string,
+		providerMessage?: string,
+	) {
 		super(message);
-		this.name = 'GoogleBooksError';
+		this.name = 'ApiError';
+		this.source = source;
 		this.reason = reason;
 		this.status = status;
+		this.detail = detail;
+		this.providerMessage = providerMessage;
 	}
 }
 
-/** Maps any error from a Google Books call to a short, user-facing explanation. */
-export function googleBooksErrorMessage(err: unknown): string {
-	if (err instanceof GoogleBooksError) {
-		switch (err.reason) {
-			case 'no-key':
-				return 'Google Books API key required — add one in Settings → API → Books.';
-			case 'rate-limited':
-				return 'Google Books rate limit reached — your API key is missing or over quota.';
-			case 'http':
-				return `Google Books request failed (HTTP ${err.status ?? '?'}).`;
-			case 'parse':
-				return 'Google Books returned an unreadable response.';
-			default:
-				return 'Google Books request failed — check your connection.';
-		}
+/** Sources that take no credential, so "rejected your credentials" can never be the cause. */
+const KEYLESS_SOURCES: ReadonlySet<ApiSource> = new Set<ApiSource>(['jikan', 'anilist']);
+
+const API_LABELS: Record<ApiSource, string> = {
+	tmdb: 'TMDB',
+	omdb: 'OMDb',
+	jikan: 'MyAnimeList (Jikan)',
+	anilist: 'AniList',
+	googleBooks: 'Google Books',
+	rawg: 'RAWG',
+	igdb: 'IGDB',
+	twitch: 'Twitch',
+	unknown: 'The API',
+};
+
+/** Source from the request URL — every base is a distinct host, so no call site has to say. */
+export function apiSourceFromUrl(url: string): ApiSource {
+	if (url.startsWith(TMDB_BASE)) return 'tmdb';
+	if (url.startsWith(OMDB_BASE)) return 'omdb';
+	if (url.startsWith(JIKAN_BASE)) return 'jikan';
+	if (url.startsWith(ANILIST_ENDPOINT)) return 'anilist';
+	if (url.startsWith(GOOGLE_BOOKS_BASE)) return 'googleBooks';
+	if (url.startsWith(RAWG_BASE)) return 'rawg';
+	if (url.startsWith(IGDB_BASE)) return 'igdb';
+	if (url.startsWith(TWITCH_TOKEN_URL)) return 'twitch';
+	return 'unknown';
+}
+
+/**
+ * HTTP status → reason. Two services need the body as well: OMDb answers 401 for both a bad key
+ * and an exhausted quota, and Google's 403 covers quota, a disabled API and a bad key alike.
+ */
+function classifyHttp(source: ApiSource, status: number, body: string): ApiErrorReason {
+	// keyless service: a 403 is the service refusing to serve, never a bad credential.
+	// AniList answers 403 with "the API has been temporarily disabled" during their outages.
+	if (KEYLESS_SOURCES.has(source) && (status === 401 || status === 403)) return 'server';
+	if (source === 'omdb' && (status === 401 || status === 403)) {
+		return /limit/i.test(body) ? 'rate-limited' : 'auth';
 	}
-	return 'Google Books request failed — check your connection.';
+	if (source === 'googleBooks' && status === 403) {
+		if (/accessNotConfigured/i.test(body)) return 'not-enabled';
+		if (/rateLimitExceeded|dailyLimitExceeded|userRateLimitExceeded/i.test(body)) return 'rate-limited';
+		return 'auth';
+	}
+	if (status === 401 || status === 403) return 'auth';
+	if (status === 429) return 'rate-limited';
+	if (status === 404) return 'not-found';
+	if (status >= 500) return 'server';
+	return 'http';
+}
+
+/**
+ * The service's own explanation, when the body carries one: GraphQL `errors[0].message` (AniList,
+ * on failed and 200 responses alike) or a top-level `message` (Jikan says which upstream broke).
+ * '' when there is none.
+ */
+function providerMessageFrom(body: string): string {
+	try {
+		const data = JSON.parse(body) as { errors?: Array<{ message?: string }>; message?: unknown } | null;
+		const gql = Array.isArray(data?.errors) ? (data.errors[0]?.message ?? '').trim() : '';
+		if (gql) return gql;
+		return typeof data?.message === 'string' ? data.message.trim() : '';
+	} catch {
+		return '';
+	}
+}
+
+/** Maps any error from an API call to a short, user-facing explanation. */
+export function apiErrorMessage(err: unknown): string {
+	if (!(err instanceof ApiError)) return 'Request failed; check your connection.';
+	const label = API_LABELS[err.source];
+
+	// the service explained itself, and we have nothing better than a status code to offer.
+	// only for the generic reasons: our own auth / quota / no-key wording names the actual fix,
+	// which beats a terse provider string like Twitch's "invalid client".
+	if (err.providerMessage && (err.reason === 'server' || err.reason === 'http')) {
+		const text = err.providerMessage;
+		return `${label}: ${/[.!?]$/.test(text) ? text : `${text}.`}`;
+	}
+
+	switch (err.reason) {
+		case 'no-key':
+			return err.source === 'tmdb'
+				? 'TMDB token required; add one in Settings → API.'
+				: `${label} API key required; add one in Settings → API.`;
+
+		case 'auth':
+			switch (err.source) {
+				case 'tmdb':
+					// the v3 key and the v4 token sit side by side on TMDB's own settings page
+					return 'TMDB rejected this credential. Settings → API needs the API Read Access Token (v4), a long string starting "eyJ", not the 32-character v3 API key.';
+				case 'omdb':
+					return 'OMDb rejected the key. If it is new, click the activation link OMDb emailed you; keys do not work until activated.';
+				case 'googleBooks':
+					return 'Google rejected this key; check it was copied in full.';
+				case 'rawg':
+					return 'RAWG rejected the key; it may be invalid, or suspended for exceeding the monthly quota.';
+				case 'twitch':
+					return 'Twitch rejected the Client ID or Secret; re-check both in Settings → API → Games.';
+				case 'igdb':
+					return 'IGDB rejected the request; the credentials work, the query did not.';
+				default:
+					return `${label} rejected your credentials.`;
+			}
+
+		case 'not-enabled':
+			return 'The Books API is not enabled for this key. Enable "Books API" in your Google Cloud project, then try again.';
+
+		case 'rate-limited':
+			switch (err.source) {
+				case 'omdb':
+					return 'OMDb daily request limit reached (1,000 per day on the free tier). It resets at midnight UTC.';
+				case 'jikan':
+					return 'MyAnimeList (Jikan) is rate-limiting requests; wait a few seconds and search again.';
+				case 'anilist':
+					return 'AniList is rate-limiting requests; wait a moment and search again.';
+				case 'googleBooks':
+					return 'Google Books quota exceeded for this key; it resets daily.';
+				default:
+					return `${label} is rate-limiting requests; wait a moment and try again.`;
+			}
+
+		case 'server':
+			return KEYLESS_SOURCES.has(err.source)
+				? `${label} is temporarily unavailable (HTTP ${err.status ?? '?'}). Try again shortly.`
+				: `${label} is temporarily unavailable (HTTP ${err.status ?? '?'}). This is not your key; try again shortly.`;
+
+		case 'not-found':
+			return `${label} had no match for that request.`;
+
+		case 'parse':
+			return `${label} returned an unreadable response.`;
+
+		case 'network':
+			return `${label} is unreachable; check your connection.`;
+
+		default:
+			return `${label} request failed (HTTP ${err.status ?? '?'}).`;
+	}
+}
+
+/** Chip-sized label for the same error — the full sentence goes in a detail line. */
+export function apiErrorShort(err: unknown): string {
+	if (!(err instanceof ApiError)) return 'Failed';
+	switch (err.reason) {
+		case 'no-key': return 'No key set';
+		case 'auth': return 'Credential rejected';
+		case 'not-enabled': return 'API not enabled';
+		case 'rate-limited': return 'Rate limited';
+		case 'server': return 'Service unavailable';
+		case 'not-found': return 'Not found';
+		case 'parse': return 'Unreadable response';
+		case 'network': return 'Unreachable';
+		default: return `Failed (HTTP ${err.status ?? '?'})`;
+	}
+}
+
+/** True when the failure is a rejected credential — the one cause that must never read as "not found". */
+export function isAuthFailure(err: unknown): boolean {
+	return err instanceof ApiError && (err.reason === 'auth' || err.reason === 'not-enabled');
+}
+
+/** Status check + JSON parse for a throw:false response. Throws ApiError on either failure. */
+export function readApiResponse(source: ApiSource, r: { status: number; text: string; json: unknown }): unknown {
+	if (r.status < 200 || r.status >= 300) {
+		throw new ApiError(
+			source,
+			classifyHttp(source, r.status, r.text),
+			`${API_LABELS[source]} returned ${r.status}`,
+			r.status,
+			r.text,
+			providerMessageFrom(r.text),
+		);
+	}
+	try {
+		return r.json;
+	} catch {
+		throw new ApiError(source, 'parse', `${API_LABELS[source]} returned a non-JSON body`);
+	}
+}
+
+/**
+ * OMDb can answer 200 with `{"Response":"False","Error":"Invalid API key!"}`. Only key and quota
+ * problems are real errors here — "Movie not found!" is an ordinary empty result.
+ */
+function assertOmdbOk(data: { Response?: string; Error?: string }): void {
+	if (data.Response !== 'False') return;
+	const err = data.Error ?? '';
+	if (/limit/i.test(err)) throw new ApiError('omdb', 'rate-limited', err, undefined, err);
+	if (/key/i.test(err)) throw new ApiError('omdb', 'auth', err, undefined, err);
+}
+
+/**
+ * Detail lookups keep their "null = not found" contract, but a rejected credential must never be
+ * reported as a missing title — that is the failure users misdiagnose. Re-throw only those.
+ */
+function rethrowAuth(err: unknown): void {
+	if (isAuthFailure(err)) throw err;
+}
+
+/** GraphQL reports failures in a 200 body — AniList rate limits arrive this way. */
+function assertNoGraphqlErrors(source: ApiSource, data: unknown): void {
+	const errors = (data as { errors?: Array<{ message?: string }> } | null)?.errors;
+	if (!Array.isArray(errors) || errors.length === 0) return;
+	const message = errors[0]?.message ?? 'Request rejected';
+	const reason: ApiErrorReason = /rate limit|too many/i.test(message) ? 'rate-limited' : 'http';
+	throw new ApiError(source, reason, message, undefined, undefined, message);
 }
 
 export class ApiService {
@@ -477,14 +686,22 @@ export class ApiService {
 		return { 'Authorization': `Bearer ${this.tmdbApiKey}` };
 	}
 
+	/**
+	 * throw:false so the status survives — requestUrl's default collapses every 4xx into one
+	 * opaque Error, which is why a rejected key used to look identical to "no results".
+	 */
 	private async fetchWithTimeout(url: string, headers?: Record<string, string>): Promise<unknown> {
+		const source = apiSourceFromUrl(url);
 		let timer: number | null = null;
 		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new Error('Request timed out')), API_TIMEOUT_MS);
+			timer = window.setTimeout(() => reject(new ApiError(source, 'network', 'Request timed out')), API_TIMEOUT_MS);
 		});
 		try {
-			const fetchPromise = requestUrl({ url, headers }).then((r) => r.json as unknown);
+			const fetchPromise = requestUrl({ url, headers, throw: false }).then((r) => readApiResponse(source, r));
 			return await Promise.race([fetchPromise, timeoutPromise]);
+		} catch (err) {
+			if (err instanceof ApiError) throw err;
+			throw new ApiError(source, 'network', (err as Error)?.message ?? 'Network error');
 		} finally {
 			if (timer !== null) window.clearTimeout(timer);
 		}
@@ -495,9 +712,10 @@ export class ApiService {
 		body: unknown,
 		headers?: Record<string, string>,
 	): Promise<unknown> {
+		const source = apiSourceFromUrl(url);
 		let timer: number | null = null;
 		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new Error('Request timed out')), API_TIMEOUT_MS);
+			timer = window.setTimeout(() => reject(new ApiError(source, 'network', 'Request timed out')), API_TIMEOUT_MS);
 		});
 		try {
 			const fetchPromise = requestUrl({
@@ -505,8 +723,16 @@ export class ApiService {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
 				body: JSON.stringify(body),
-			}).then((r) => r.json as unknown);
+				throw: false,
+			}).then((r) => {
+				const data = readApiResponse(source, r);
+				assertNoGraphqlErrors(source, data);
+				return data;
+			});
 			return await Promise.race([fetchPromise, timeoutPromise]);
+		} catch (err) {
+			if (err instanceof ApiError) throw err;
+			throw new ApiError(source, 'network', (err as Error)?.message ?? 'Network error');
 		} finally {
 			if (timer !== null) window.clearTimeout(timer);
 		}
@@ -601,16 +827,13 @@ export class ApiService {
 				}
 			}
 		`;
-		try {
-			const res = await this.throttleAniList(() =>
-				this.postJsonWithTimeout(ANILIST_ENDPOINT, { query: gql, variables: { search: query } }),
-			);
-			const data = res as AniListSearchResponse;
-			const media = data.data?.Page?.media ?? [];
-			return media.map((m) => this.mapAniListMedia(m));
-		} catch {
-			return [];
-		}
+		// throws ApiError — the caller renders the reason instead of an empty result list
+		const res = await this.throttleAniList(() =>
+			this.postJsonWithTimeout(ANILIST_ENDPOINT, { query: gql, variables: { search: query } }),
+		);
+		const data = res as AniListSearchResponse;
+		const media = data.data?.Page?.media ?? [];
+		return media.map((m) => this.mapAniListMedia(m));
 	}
 
 	async getAniListById(anilistId: number): Promise<AniListMedia | null> {
@@ -648,14 +871,11 @@ export class ApiService {
 
 	// Jikan / MAL
 
+	/** throws ApiError */
 	async searchAnime(query: string): Promise<AnimeSearchResult[]> {
 		const url = `${JIKAN_BASE}/anime?q=${encodeURIComponent(query)}&limit=10&sfw=false`;
-		try {
-			const data = (await this.fetchWithTimeout(url)) as { data?: JikanAnime[] };
-			return (data.data ?? []).map((a) => this.mapJikanAnime(a));
-		} catch {
-			return [];
-		}
+		const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanAnime[] };
+		return (data.data ?? []).map((a) => this.mapJikanAnime(a));
 	}
 
 	/** Resolves a Jikan `trailer` object to a YouTube URL, or 'none' when absent. */
@@ -690,24 +910,32 @@ export class ApiService {
 
 	// OMDb
 
+	/** throws ApiError */
 	async searchOmdb(query: string, type: 'movie' | 'series'): Promise<MediaSearchResult[]> {
-		if (!this.omdbApiKey) return [];
+		if (!this.omdbApiKey) throw new ApiError('omdb', 'no-key', 'OMDb API key not set');
 		const url = `${OMDB_BASE}/?s=${encodeURIComponent(query)}&type=${type}&apikey=${encodeURIComponent(this.omdbApiKey)}`;
-		try {
+		{
 			const data = (await this.fetchWithTimeout(url)) as OmdbSearchResponse;
+			assertOmdbOk(data);
 			if (data.Response === 'False') return [];
-			return (data.Search ?? []).slice(0, 10).map((item) => ({
-				imdbId: item.imdbID,
-				title: item.Title,
-				mediaType: type === 'movie' ? ('movie' as const) : ('tv' as const),
-				episodes: type === 'movie' ? 1 : 0,
-				episodeDuration: 0,
-				releaseDate: item.Year ? `${item.Year}-01-01` : '',
-				url: `https://www.imdb.com/title/${item.imdbID}`,
-				seasons: [],
-			}));
-		} catch {
-			return [];
+			return (data.Search ?? []).slice(0, 10).map((item) => {
+				// series Year is a range ("2008–2013", "2025–") — keep the start year only
+				const year = item.Year?.match(/^(\d{4})/)?.[1];
+				// year only. OMDb search has no day/month; a faked 01-01 reads like a real date
+				return {
+					imdbId: item.imdbID,
+					title: item.Title,
+					mediaType: type === 'movie' ? ('movie' as const) : ('tv' as const),
+					// 0 like TMDB — the result card prints the media type instead of "1 eps".
+					// The real count comes from the detail call on select.
+					episodes: 0,
+					episodeDuration: 0,
+					releaseDate: year ?? '',
+					url: `https://www.imdb.com/title/${item.imdbID}`,
+					seasons: [],
+					posterUrl: item.Poster && item.Poster !== 'N/A' ? item.Poster : undefined,
+				};
+			});
 		}
 	}
 
@@ -716,6 +944,7 @@ export class ApiService {
 		const url = `${OMDB_BASE}/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(this.omdbApiKey)}`;
 		try {
 			const data = (await this.fetchWithTimeout(url)) as OmdbDetailResponse;
+			assertOmdbOk(data);
 			if (data.Response === 'False' || !data.imdbID) return null;
 			const runtimeMin = data.Runtime ? parseInt(data.Runtime.replace(/[^0-9]/g, ''), 10) : 120;
 			return {
@@ -731,7 +960,8 @@ export class ApiService {
 				director: omdbNamesToCredits(data.Director),
 				cast: omdbNamesToCredits(data.Actors),
 			};
-		} catch {
+		} catch (e) {
+			rethrowAuth(e);
 			return null;
 		}
 	}
@@ -741,6 +971,7 @@ export class ApiService {
 		const url = `${OMDB_BASE}/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(this.omdbApiKey)}`;
 		try {
 			const data = (await this.fetchWithTimeout(url)) as OmdbDetailResponse;
+			assertOmdbOk(data);
 			if (data.Response === 'False' || !data.imdbID) return null;
 
 			const totalSeasons = parseInt(data.totalSeasons ?? '1', 10) || 1;
@@ -768,7 +999,8 @@ export class ApiService {
 				director: omdbSeriesDirectorCredits(data),
 				cast: omdbNamesToCredits(data.Actors),
 			};
-		} catch {
+		} catch (e) {
+			rethrowAuth(e);
 			return null;
 		}
 	}
@@ -843,36 +1075,35 @@ export class ApiService {
 		const url = `${OMDB_BASE}/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(this.omdbApiKey)}`;
 		try {
 			const data = (await this.fetchWithTimeout(url)) as OmdbDetailResponse;
+			assertOmdbOk(data);
 			if (data.Response === 'False' || !data.imdbID) return null;
 			if (data.Type === 'movie') return this.getOmdbMovieDetails(imdbId);
 			return this.getOmdbTvDetails(imdbId);
-		} catch {
+		} catch (e) {
+			rethrowAuth(e);
 			return null;
 		}
 	}
 
 	// TMDB
 
+	/** throws ApiError */
 	async searchTmdb(query: string, type: 'movie' | 'series'): Promise<MediaSearchResult[]> {
-		if (!this.tmdbApiKey) return [];
+		if (!this.tmdbApiKey) throw new ApiError('tmdb', 'no-key', 'TMDB token not set');
 		const endpoint = type === 'movie' ? 'movie' : 'tv';
 		const url = `${TMDB_BASE}/search/${endpoint}?query=${encodeURIComponent(query)}&page=1`;
-		try {
-			const data = (await this.fetchWithTimeout(url, this.tmdbHeaders())) as TmdbSearchResponse;
-			return (data.results ?? []).slice(0, 10).map((item) => ({
-				imdbId: String(item.id),
-				title: item.title ?? item.name ?? '',
-				mediaType: type === 'movie' ? ('movie' as const) : ('tv' as const),
-				episodes: 0,
-				episodeDuration: 0,
-				releaseDate: item.release_date ?? item.first_air_date ?? '',
-				url: '',
-				seasons: [],
-				posterUrl: item.poster_path ? `https://image.tmdb.org/t/p/w342${item.poster_path}` : undefined,
-			}));
-		} catch {
-			return [];
-		}
+		const data = (await this.fetchWithTimeout(url, this.tmdbHeaders())) as TmdbSearchResponse;
+		return (data.results ?? []).slice(0, 10).map((item) => ({
+			imdbId: String(item.id),
+			title: item.title ?? item.name ?? '',
+			mediaType: type === 'movie' ? ('movie' as const) : ('tv' as const),
+			episodes: 0,
+			episodeDuration: 0,
+			releaseDate: item.release_date ?? item.first_air_date ?? '',
+			url: '',
+			seasons: [],
+			posterUrl: item.poster_path ? `https://image.tmdb.org/t/p/w342${item.poster_path}` : undefined,
+		}));
 	}
 
 	/**
@@ -913,7 +1144,8 @@ export class ApiService {
 				studio: tmdbCompanyNames(detail.production_companies),
 				...tmdbCreditsToStored(detail.credits),
 			};
-		} catch {
+		} catch (e) {
+			rethrowAuth(e);
 			return null;
 		}
 	}
@@ -953,7 +1185,8 @@ export class ApiService {
 				director: tmdbSeriesDirectorCredits(detail),
 				cast: tmdbCreditsToStored(detail.credits).cast,
 			};
-		} catch {
+		} catch (e) {
+			rethrowAuth(e);
 			return null;
 		}
 	}
@@ -1447,40 +1680,27 @@ export class ApiService {
 
 	/**
 	 * Google Books requests must always carry the user's API key — the anonymous endpoint
-	 * shares a global quota and returns 429. Throws a typed GoogleBooksError (no-key /
-	 * rate-limited / http / parse / network) so callers can show an accurate message. `path`
-	 * is everything after the base, e.g. `/volumes?q=...`; `key` is appended here.
+	 * shares a global quota and returns 429. Throws ApiError so callers can show an accurate
+	 * message. `path` is everything after the base, e.g. `/volumes?q=...`; `key` is appended here.
 	 */
 	private async googleBooksFetch(path: string): Promise<unknown> {
 		const key = this.googleBooksApiKey.trim();
 		if (!key) {
-			throw new GoogleBooksError('no-key', 'Google Books API key not set');
+			throw new ApiError('googleBooks', 'no-key', 'Google Books API key not set');
 		}
 		const sep = path.includes('?') ? '&' : '?';
 		const url = `${GOOGLE_BOOKS_BASE}${path}${sep}key=${encodeURIComponent(key)}`;
 		let timer: number | null = null;
 		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new GoogleBooksError('network', 'Request timed out')), API_TIMEOUT_MS);
+			timer = window.setTimeout(() => reject(new ApiError('googleBooks', 'network', 'Request timed out')), API_TIMEOUT_MS);
 		});
 		try {
-			const reqPromise = requestUrl({ url, throw: false }).then((r) => {
-				// 429 (rate limit) and 403 (quota/keyInvalid) both point at the key, not the network.
-				if (r.status === 429 || r.status === 403) {
-					throw new GoogleBooksError('rate-limited', `Google Books returned ${r.status}`, r.status);
-				}
-				if (r.status < 200 || r.status >= 300) {
-					throw new GoogleBooksError('http', `Google Books returned ${r.status}`, r.status);
-				}
-				try {
-					return r.json as unknown;
-				} catch {
-					throw new GoogleBooksError('parse', 'Failed to parse Google Books response');
-				}
-			});
+			// classifyHttp splits Google's overloaded 403 (quota vs disabled API vs bad key) on the body
+			const reqPromise = requestUrl({ url, throw: false }).then((r) => readApiResponse('googleBooks', r));
 			return await Promise.race([reqPromise, timeoutPromise]);
 		} catch (err) {
-			if (err instanceof GoogleBooksError) throw err;
-			throw new GoogleBooksError('network', (err as Error)?.message ?? 'Network error');
+			if (err instanceof ApiError) throw err;
+			throw new ApiError('googleBooks', 'network', (err as Error)?.message ?? 'Network error');
 		} finally {
 			if (timer !== null) window.clearTimeout(timer);
 		}
@@ -1518,14 +1738,11 @@ export class ApiService {
 		};
 	}
 
+	/** throws ApiError */
 	async searchManga(query: string): Promise<MangaSearchResult[]> {
 		const url = `${JIKAN_BASE}/manga?q=${encodeURIComponent(query)}&limit=10`;
-		try {
-			const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanMangaItem[] };
-			return (data.data ?? []).map((m) => this.mapJikanManga(m));
-		} catch {
-			return [];
-		}
+		const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanMangaItem[] };
+		return (data.data ?? []).map((m) => this.mapJikanManga(m));
 	}
 
 	/**
@@ -1556,27 +1773,22 @@ export class ApiService {
 		return this.mapGoogleVolume(item);
 	}
 
+	/** Resolves on success, throws ApiError so the test can report the real cause. */
 	async checkTmdbConnection(): Promise<boolean> {
-		if (!this.tmdbApiKey) return false;
-		try {
-			const url = `${TMDB_BASE}/movie/550`;
-			const data = (await this.fetchWithTimeout(url, this.tmdbHeaders())) as { id?: number };
-			return data.id !== undefined;
-		} catch {
-			return false;
-		}
+		if (!this.tmdbApiKey) throw new ApiError('tmdb', 'no-key', 'TMDB token not set');
+		const url = `${TMDB_BASE}/movie/550`;
+		const data = (await this.fetchWithTimeout(url, this.tmdbHeaders())) as { id?: number };
+		return data.id !== undefined;
 	}
 
+	/** Resolves on success, throws ApiError so the test can report the real cause. */
 	async checkOmdbConnection(): Promise<boolean> {
-		if (!this.omdbApiKey) return false;
-		try {
-			// a known IMDb ID (The Shawshank Redemption) as a connectivity test
-			const url = `${OMDB_BASE}/?i=tt0111161&apikey=${encodeURIComponent(this.omdbApiKey)}`;
-			const data = (await this.fetchWithTimeout(url)) as OmdbDetailResponse;
-			return data.Response === 'True';
-		} catch {
-			return false;
-		}
+		if (!this.omdbApiKey) throw new ApiError('omdb', 'no-key', 'OMDb API key not set');
+		// a known IMDb ID (The Shawshank Redemption) as a connectivity test
+		const url = `${OMDB_BASE}/?i=tt0111161&apikey=${encodeURIComponent(this.omdbApiKey)}`;
+		const data = (await this.fetchWithTimeout(url)) as OmdbDetailResponse;
+		assertOmdbOk(data);
+		return data.Response === 'True';
 	}
 
 	// Games — RAWG
@@ -1595,7 +1807,9 @@ export class ApiService {
 		};
 	}
 
+	/** throws ApiError */
 	async searchRawgGames(query: string): Promise<GameSearchResult[]> {
+		if (!this.hasRawgKey()) throw new ApiError('rawg', 'no-key', 'RAWG API key not set');
 		const url = `${RAWG_BASE}/games?key=${encodeURIComponent(this.rawgApiKey)}&search=${encodeURIComponent(query)}&page_size=10`;
 		const data = (await this.fetchWithTimeout(url)) as RawgSearchResponse;
 		return (data.results ?? [])
@@ -1643,15 +1857,12 @@ export class ApiService {
 		};
 	}
 
+	/** Resolves on success, throws ApiError so the test can report the real cause. */
 	async checkRawgConnection(): Promise<boolean> {
-		if (!this.hasRawgKey()) return false;
-		try {
-			const url = `${RAWG_BASE}/games?key=${encodeURIComponent(this.rawgApiKey)}&page_size=1`;
-			const data = (await this.fetchWithTimeout(url)) as RawgSearchResponse;
-			return Array.isArray(data.results);
-		} catch {
-			return false;
-		}
+		if (!this.hasRawgKey()) throw new ApiError('rawg', 'no-key', 'RAWG API key not set');
+		const url = `${RAWG_BASE}/games?key=${encodeURIComponent(this.rawgApiKey)}&page_size=1`;
+		const data = (await this.fetchWithTimeout(url)) as RawgSearchResponse;
+		return Array.isArray(data.results);
 	}
 
 	// Games — IGDB (via Twitch OAuth)
@@ -1662,7 +1873,7 @@ export class ApiService {
 	 * Throws when credentials are missing or rejected.
 	 */
 	private async getIgdbToken(): Promise<string> {
-		if (!this.hasIgdbCredentials()) throw new Error('IGDB credentials not set');
+		if (!this.hasIgdbCredentials()) throw new ApiError('twitch', 'no-key', 'IGDB credentials not set');
 		if (this.igdbToken && Date.now() < this.igdbTokenExpiry) return this.igdbToken;
 
 		const url =
@@ -1671,15 +1882,21 @@ export class ApiService {
 			`&grant_type=client_credentials`;
 		let timer: number | null = null;
 		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new Error('Request timed out')), API_TIMEOUT_MS);
+			timer = window.setTimeout(() => reject(new ApiError('twitch', 'network', 'Request timed out')), API_TIMEOUT_MS);
 		});
 		try {
-			const fetchPromise = requestUrl({ url, method: 'POST' }).then((r) => r.json as TwitchTokenResponse);
+			// source 'twitch', not 'igdb' — a rejected Client ID/Secret is a different fix from a
+			// rejected query, and the two used to give the same message
+			const fetchPromise = requestUrl({ url, method: 'POST', throw: false })
+				.then((r) => readApiResponse('twitch', r) as TwitchTokenResponse);
 			const data = await Promise.race([fetchPromise, timeoutPromise]);
-			if (!data.access_token) throw new Error('Twitch token request failed');
+			if (!data.access_token) throw new ApiError('twitch', 'auth', 'Twitch returned no access token');
 			this.igdbToken = data.access_token;
 			this.igdbTokenExpiry = Date.now() + Math.max(0, (data.expires_in ?? 0) - 60) * 1000;
 			return this.igdbToken;
+		} catch (err) {
+			if (err instanceof ApiError) throw err;
+			throw new ApiError('twitch', 'network', (err as Error)?.message ?? 'Network error');
 		} finally {
 			if (timer !== null) window.clearTimeout(timer);
 		}
@@ -1690,7 +1907,7 @@ export class ApiService {
 		const token = await this.getIgdbToken();
 		let timer: number | null = null;
 		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new Error('Request timed out')), API_TIMEOUT_MS);
+			timer = window.setTimeout(() => reject(new ApiError('igdb', 'network', 'Request timed out')), API_TIMEOUT_MS);
 		});
 		try {
 			const fetchPromise = requestUrl({
@@ -1701,13 +1918,15 @@ export class ApiService {
 					'Authorization': `Bearer ${token}`,
 				},
 				body: query,
-			}).then((r) => r.json as unknown);
+				throw: false,
+			}).then((r) => readApiResponse('igdb', r));
 			return await Promise.race([fetchPromise, timeoutPromise]);
 		} catch (e) {
 			// a rejected token (revoked / expired early) must not poison the cache
 			this.igdbToken = '';
 			this.igdbTokenExpiry = 0;
-			throw e;
+			if (e instanceof ApiError) throw e;
+			throw new ApiError('igdb', 'network', (e as Error)?.message ?? 'Network error');
 		} finally {
 			if (timer !== null) window.clearTimeout(timer);
 		}
@@ -1780,14 +1999,11 @@ export class ApiService {
 		};
 	}
 
+	/** Resolves on success, throws ApiError so the test can report the real cause. */
 	async checkIgdbConnection(): Promise<boolean> {
-		if (!this.hasIgdbCredentials()) return false;
-		try {
-			const data = await this.igdbPost('games', 'fields id; limit 1;');
-			return Array.isArray(data);
-		} catch {
-			return false;
-		}
+		if (!this.hasIgdbCredentials()) throw new ApiError('twitch', 'no-key', 'IGDB credentials not set');
+		const data = await this.igdbPost('games', 'fields id; limit 1;');
+		return Array.isArray(data);
 	}
 
 	// Games — Steam (Web API + Storefront). Not a search source: the Storefront API has no

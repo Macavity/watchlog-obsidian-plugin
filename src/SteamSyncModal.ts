@@ -139,7 +139,7 @@ export class SteamSyncModal extends Modal {
 		const achCount = this.matches.length + this.selectedNew.size;
 		const achNote = achRow.createSpan({
 			cls: 'wl-steam-option-note',
-			text: `one request per game — about ${achCount} extra`,
+			text: `one request per game, about ${achCount} extra`,
 		});
 		const setAchievements = (on: boolean): void => {
 			achBox.checked = on;
@@ -170,7 +170,7 @@ export class SteamSyncModal extends Modal {
 		const countEl = head.createSpan({ cls: 'wl-steam-picked' });
 		const paintCount = (): void => {
 			countEl.textContent = `${this.selectedNew.size} selected`;
-			achNote.textContent = `one request per game — about ${this.matches.length + this.selectedNew.size} extra`;
+			achNote.textContent = `one request per game, about ${this.matches.length + this.selectedNew.size} extra`;
 		};
 
 		const actions = head.createDiv({ cls: 'wl-steam-section-actions' });
@@ -418,7 +418,7 @@ function failureMessage(reason: SteamFailureReason): string {
 		case 'badKey':
 			return 'Steam rejected the API key. Check it under Settings → API → Games.';
 		case 'private':
-			return 'Steam returned no library. Your profile\'s "Game details" privacy setting must be Public — Steam hides owned games otherwise, even from your own API key.';
+			return 'Steam returned no library. Your profile\'s "Game details" privacy setting must be Public; Steam hides owned games otherwise, even from your own API key.';
 		case 'empty':
 			return 'Steam reports no games on this account. Check the Steam ID is the right one.';
 		default:

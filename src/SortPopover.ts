@@ -79,8 +79,8 @@ export function toggleSortPopover(cfg: SortPopoverConfig): void {
 			text: current.dir === 'asc' ? '↑' : '↓',
 		});
 		dirBtn.title = current.dir === 'asc'
-			? 'Ascending — click to switch to descending'
-			: 'Descending — click to switch to ascending';
+			? 'Ascending; click to switch to descending'
+			: 'Descending; click to switch to ascending';
 
 		sel.addEventListener('change', () => {
 			const newKey = sel.value === 'none' ? 'none' : cfg.labelToKey(sel.value);

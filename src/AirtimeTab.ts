@@ -1127,7 +1127,7 @@ export class AirtimeTab {
 				cls: 'wl-airtime-action-btn wl-airtime-action-btn-tick',
 				text: '✓',
 			});
-			tickBtn.title = isMovie ? 'Mark as released' : (isFinalEpisode ? `Final ${r.unitNoun} — mark done` : `Mark ${r.unitNoun} as aired`);
+			tickBtn.title = isMovie ? 'Mark as released' : (isFinalEpisode ? `Final ${r.unitNoun}: mark done` : `Mark ${r.unitNoun} as aired`);
 			tickBtn.addEventListener('click', (e) => {
 				e.stopPropagation();
 				this.confirmTick(entry, r);
@@ -1464,7 +1464,7 @@ export class AirtimeTab {
 		// green tick overlay (same due/aired gate as the List tick button)
 		if (showTick) {
 			const tickBtn = card.createEl('button', { cls: 'wl-tracker-tick-btn', text: '✓' });
-			tickBtn.title = isMovie ? 'Mark as released' : (isFinalEpisode ? `Final ${r.unitNoun} — mark done` : `Mark ${r.unitNoun} as aired`);
+			tickBtn.title = isMovie ? 'Mark as released' : (isFinalEpisode ? `Final ${r.unitNoun}: mark done` : `Mark ${r.unitNoun} as aired`);
 			tickBtn.addEventListener('click', (e) => {
 				e.stopPropagation();
 				this.confirmTick(entry, r);

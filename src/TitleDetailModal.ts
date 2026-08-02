@@ -1083,7 +1083,7 @@ export class TitleDetailModal extends Modal {
 		if (Platform.isMobile) {
 			host.closest<HTMLElement>('.wl-detail-footer')?.addClass('wl-footer-heart-left');
 		}
-		const label = `${collection.name} — ${missing > 0 ? `${missing} not in your library` : 'all in your library'}`;
+		const label = `${collection.name}: ${missing > 0 ? `${missing} not in your library` : 'all in your library'}`;
 		btn.title = label;
 		btn.setAttr('aria-label', label);
 

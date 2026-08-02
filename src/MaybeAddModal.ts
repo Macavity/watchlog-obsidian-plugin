@@ -4,6 +4,7 @@ import type { DataManager } from './DataManager';
 import type { MaybeTitle, AnimeSearchResult, MediaSearchResult } from './types';
 import { formatDateDisplay, getApiGroupForType } from './types';
 import { createDatePicker } from './DatePicker';
+import { apiErrorMessage } from './ApiService';
 
 type SearchResult = AnimeSearchResult | MediaSearchResult;
 
@@ -21,6 +22,7 @@ export class MaybeAddModal extends Modal {
 	private searchResults: SearchResult[] = [];
 	private isSearching = false;
 	private searchGeneration = 0;
+	private searchError = '';
 
 	private fieldTitle = '';
 	private fieldEpisodes = 0;
@@ -117,10 +119,11 @@ export class MaybeAddModal extends Modal {
 				results = await api.searchOmdb(this.searchQuery, isMovie ? 'movie' : 'series');
 			}
 			if (gen !== this.searchGeneration) return; // stale
+			this.searchError = '';
 			this.searchResults = results;
-		} catch {
+		} catch (err) {
 			if (gen !== this.searchGeneration) return;
-			new Notice('Search failed. Check your connection and API settings.');
+			this.searchError = apiErrorMessage(err);
 			this.searchResults = [];
 		} finally {
 			if (gen === this.searchGeneration) {
@@ -134,6 +137,12 @@ export class MaybeAddModal extends Modal {
 		if (!this.resultsEl) return;
 		this.resultsEl.empty();
 		if (this.isSearching) { this.resultsEl.createDiv({ cls: 'wl-modal-loading', text: 'Searching...' }); return; }
+		if (this.searchError) {
+			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api wl-modal-api-error' });
+			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: '⚠' });
+			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.searchError });
+			return;
+		}
 		if (!this.searchResults.length) return;
 		this.searchResults.forEach((result, idx) => {
 			const item = this.resultsEl!.createDiv({ cls: 'wl-result-item' });

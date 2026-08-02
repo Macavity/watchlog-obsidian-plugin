@@ -9,7 +9,7 @@ import {
 } from './types';
 import { createDatePicker } from './DatePicker';
 import { deriveFillColor, deriveBorderColor } from './ColorPicker';
-import { googleBooksErrorMessage } from './ApiService';
+import { apiErrorMessage } from './ApiService';
 import { appendNoteLinkButton } from './NoteLinkButton';
 import { ConfirmModal } from './ConfirmModal';
 import { renderStarRating } from './StarRating';
@@ -980,12 +980,12 @@ export class ReadingDetailModal extends Modal {
 		try {
 			if (this.mode === 'book') {
 				if (!this.plugin.apiService.hasGoogleBooksKey()) {
-					new Notice('Google Books API key required — add one in Settings → API → Books.');
+					new Notice('Google Books API key required; add one in Settings → API → Books.');
 					return;
 				}
 				const result = await this.plugin.apiService.getGoogleBookById(newId);
 				if (!result || !result.coverUrl) {
-					new Notice("This volume doesn't have a cover — try a different edition's ID.");
+					new Notice("This volume doesn't have a cover; try a different edition's ID.");
 					return;
 				}
 				const fresh = this.getItem();
@@ -994,7 +994,7 @@ export class ReadingDetailModal extends Modal {
 			} else {
 				const result = await this.plugin.apiService.getMangaByMalId(Number(newId));
 				if (!result || !result.coverUrl) {
-					new Notice("This manga doesn't have a cover — try a different ID.");
+					new Notice("This manga doesn't have a cover; try a different ID.");
 					return;
 				}
 				const fresh = this.getItem();
@@ -1003,7 +1003,7 @@ export class ReadingDetailModal extends Modal {
 			}
 			this.onChanged();
 		} catch (err) {
-			new Notice(this.mode === 'book' ? googleBooksErrorMessage(err) : 'Failed to fetch cover.');
+			new Notice(apiErrorMessage(err));
 		}
 	}
 
@@ -1176,7 +1176,7 @@ export class ReadingDetailModal extends Modal {
 		const cols = this.getColumns();
 		if (cols.length === 0) {
 			const empty = section.createDiv({ cls: 'wl-reading-detail-custom-empty' });
-			empty.createSpan({ text: 'No custom fields — add some via ' });
+			empty.createSpan({ text: 'No custom fields; add some via ' });
 			const link = empty.createEl('a', {
 				cls: 'wl-reading-detail-custom-manage',
 				text: 'Manage',

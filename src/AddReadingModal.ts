@@ -2,7 +2,7 @@ import { App, FuzzySuggestModal, Modal, Notice, TFile } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { ReadingDataManager } from './ReadingDataManager';
 import type { BookSearchResult, MangaSearchResult } from './ApiService';
-import { googleBooksErrorMessage } from './ApiService';
+import { apiErrorMessage } from './ApiService';
 import { renderSearchResultRow } from './SearchThumbnail';
 import { LibraryIndex, bookResultIdKeys, mangaResultIdKeys } from './LibraryIndex';
 import { renderStarRating } from './StarRating';
@@ -276,7 +276,7 @@ export class AddReadingModal extends Modal {
 					this.lookupResultsEl.empty();
 					this.lookupResultsEl.createDiv({
 						cls: 'wl-modal-loading',
-						text: 'Google Books API key required — add one in Settings → API → Books.',
+						text: 'Google Books API key required; add one in Settings → API → Books.',
 					});
 					return;
 				}
@@ -299,8 +299,7 @@ export class AddReadingModal extends Modal {
 		} catch (err) {
 			if (gen !== this.lookupSearchGen) return;
 			this.lookupResultsEl.empty();
-			const msg = this.mode === 'book' ? googleBooksErrorMessage(err) : 'Lookup failed. Check your connection.';
-			this.lookupResultsEl.createDiv({ cls: 'wl-modal-loading', text: msg });
+			this.lookupResultsEl.createDiv({ cls: 'wl-modal-error', text: apiErrorMessage(err) });
 		}
 	}
 

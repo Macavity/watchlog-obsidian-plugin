@@ -1,15 +1,20 @@
 import { App, Modal } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
+import type { MediaSearchResult } from './types';
+import { apiErrorMessage } from './ApiService';
 import { AddTitleModal } from './AddTitleModal';
+
+/** themoviedb.org/movie/27205-inception, /tv/1396, with or without slug and query */
+const TMDB_URL_RE = /themoviedb\.org\/(movie|tv)\/(\d+)/i;
 
 export class AddFromUrlModal extends Modal {
 	private plugin: WatchLogPlugin;
 	private dataManager: DataManager;
 	private onAdded: () => void;
-	private urlInput: HTMLInputElement | null = null;
+	private imdbInput: HTMLInputElement | null = null;
+	private tmdbInput: HTMLInputElement | null = null;
 	private errorEl: HTMLElement | null = null;
-	private addBtn: HTMLButtonElement | null = null;
 
 	constructor(app: App, plugin: WatchLogPlugin, dataManager: DataManager, onAdded: () => void) {
 		super(app);
@@ -25,53 +30,97 @@ export class AddFromUrlModal extends Modal {
 
 		content.createDiv({
 			cls: 'wl-modal-info',
-			text: 'Please enter an IMDb URL (e.g. https://www.imdb.com/title/tt1375666/)',
+			text: 'Please enter an IMDb or TMDB URL (e.g. https://www.imdb.com/title/tt1375666/ or https://www.themoviedb.org/movie/27205)',
 		});
 
-		const inputRow = content.createDiv({ cls: 'wl-modal-row' });
-		this.urlInput = inputRow.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'url', placeholder: 'https://www.imdb.com/title/ttXXXXXXX/' },
-		});
-		this.urlInput.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter') void this.handleAdd();
-		});
+		this.imdbInput = this.buildRow(
+			content,
+			'IMDb',
+			'https://www.imdb.com/title/ttXXXXXXX/',
+			() => this.lookupImdb(),
+		);
+		this.tmdbInput = this.buildRow(
+			content,
+			'TMDB',
+			'https://www.themoviedb.org/movie/XXXXX',
+			() => this.lookupTmdb(),
+		);
 
 		this.errorEl = content.createDiv({ cls: 'wl-modal-error' });
 		this.errorEl.hide();
 
-		const btnRow = content.createDiv({ cls: 'wl-modal-btn-row' });
-		this.addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add' });
-		this.addBtn.addEventListener('click', () => void this.handleAdd());
+		window.setTimeout(() => this.imdbInput?.focus(), 50);
+	}
 
-		window.setTimeout(() => this.urlInput?.focus(), 50);
+	/** label · url input · inline Add button; the button owns its own loading state */
+	private buildRow(
+		content: HTMLElement,
+		label: string,
+		placeholder: string,
+		lookup: () => Promise<MediaSearchResult | null | 'invalid' | 'nokey'>,
+	): HTMLInputElement {
+		const row = content.createDiv({ cls: 'wl-modal-row' });
+		row.createDiv({ cls: 'wl-modal-label wl-url-row-label', text: label });
+		const input = row.createEl('input', {
+			cls: 'wl-modal-input',
+			attr: { type: 'url', placeholder },
+		});
+		const btn = row.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add' });
+
+		const run = () => void this.handleAdd(btn, lookup);
+		btn.addEventListener('click', run);
+		input.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') run();
+		});
+		return input;
 	}
 
 	onClose(): void {
 		this.contentEl.empty();
 	}
 
-	private async handleAdd(): Promise<void> {
-		const url = this.urlInput?.value.trim() ?? '';
-		const match = url.match(/tt\d+/);
-		if (!match) {
-			this.showError('Title not found. Please check the URL and try again.');
-			return;
-		}
-		const imdbId = match[0];
+	private async lookupImdb(): Promise<MediaSearchResult | null | 'invalid'> {
+		const match = (this.imdbInput?.value.trim() ?? '').match(/tt\d+/);
+		if (!match) return 'invalid';
+		return this.plugin.settings.activeApi === 'TMDB'
+			? this.plugin.apiService.getTmdbByImdbId(match[0])
+			: this.plugin.apiService.getOmdbByImdbId(match[0]);
+	}
 
-		if (this.addBtn) {
-			this.addBtn.disabled = true;
-			this.addBtn.textContent = 'Loading…';
-		}
+	/** TMDB links carry the id + media type outright, so the detail call is direct — but it needs a key */
+	private async lookupTmdb(): Promise<MediaSearchResult | null | 'invalid' | 'nokey'> {
+		const match = (this.tmdbInput?.value.trim() ?? '').match(TMDB_URL_RE);
+		if (!match) return 'invalid';
+		if (!this.plugin.apiService.hasTmdbKey()) return 'nokey';
+		const [, kind, id] = match;
+		return kind!.toLowerCase() === 'movie'
+			? this.plugin.apiService.getTmdbMovieDetails(id!)
+			: this.plugin.apiService.getTmdbTvDetails(id!);
+	}
+
+	private async handleAdd(
+		btn: HTMLButtonElement,
+		lookup: () => Promise<MediaSearchResult | null | 'invalid' | 'nokey'>,
+	): Promise<void> {
+		btn.disabled = true;
+		btn.textContent = 'Loading…';
 		if (this.errorEl) this.errorEl.hide();
 
 		try {
-			const result = this.plugin.settings.activeApi === 'TMDB'
-				? await this.plugin.apiService.getTmdbByImdbId(imdbId)
-				: await this.plugin.apiService.getOmdbByImdbId(imdbId);
+			let result: MediaSearchResult | null | 'invalid' | 'nokey';
+			try {
+				result = await lookup();
+			} catch (err) {
+				// a rejected key reaches here instead of resolving null — it must not read as "not found"
+				this.showError(apiErrorMessage(err));
+				return;
+			}
 
-			if (!result) {
+			if (result === 'nokey') {
+				this.showError('Add a TMDB API key in Settings → API to use TMDB links.');
+				return;
+			}
+			if (result === 'invalid' || !result) {
 				this.showError('Title not found. Please check the URL and try again.');
 				return;
 			}
@@ -92,10 +141,8 @@ export class AddFromUrlModal extends Modal {
 				cast: result.cast,
 			}).open();
 		} finally {
-			if (this.addBtn) {
-				this.addBtn.disabled = false;
-				this.addBtn.textContent = 'Add';
-			}
+			btn.disabled = false;
+			btn.textContent = 'Add';
 		}
 	}
 

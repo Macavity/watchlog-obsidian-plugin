@@ -1,7 +1,7 @@
 import { App, Modal, Notice, setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { GameDataManager } from './GameDataManager';
-import { rawgResizedCover, steamAppIdFromUrl, type GameSearchResult } from './ApiService';
+import { apiErrorMessage, rawgResizedCover, steamAppIdFromUrl, type GameSearchResult } from './ApiService';
 import { Game, GameGroup, GAME_AUTO_STATUS } from './types';
 import { renderSearchResultRow } from './SearchThumbnail';
 import { LibraryIndex, gameResultIdKeys } from './LibraryIndex';
@@ -49,6 +49,7 @@ export class AddGameModal extends Modal {
 	private isSearching = false;
 	private searchGeneration = 0;
 	private noApiMessage = '';
+	private searchError = '';
 
 	private fieldTitle = '';
 	private fieldDeveloper = '';
@@ -165,10 +166,11 @@ export class AddGameModal extends Modal {
 			}
 			if (gen !== this.searchGeneration) return; // stale
 			this.noApiMessage = noApi;
+			this.searchError = '';
 			this.searchResults = results;
-		} catch {
+		} catch (err) {
 			if (gen !== this.searchGeneration) return;
-			new Notice('Search failed. Check your connection and API settings.');
+			this.searchError = apiErrorMessage(err);
 			this.searchResults = [];
 		} finally {
 			if (gen === this.searchGeneration) {
@@ -191,6 +193,13 @@ export class AddGameModal extends Modal {
 			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api' });
 			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: 'ℹ' });
 			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.noApiMessage });
+			return;
+		}
+
+		if (this.searchError) {
+			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api wl-modal-api-error' });
+			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: '⚠' });
+			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.searchError });
 			return;
 		}
 

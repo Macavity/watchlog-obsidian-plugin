@@ -436,7 +436,7 @@ export class GameDetailModal extends Modal {
 			attr: {
 				type: 'text',
 				placeholder: '0h',
-				title: 'Time played — e.g. 42h 30m, 90m, 1.5h',
+				title: 'Time played: e.g. 42h 30m, 90m, 1.5h',
 				'aria-label': 'Time played',
 			},
 		});
@@ -545,7 +545,7 @@ export class GameDetailModal extends Modal {
 						}
 						// stamp the link so the next sync matches by id, not by title
 						this.draft.steamAppId = steamAppId;
-						new Notice('Pulled from Steam — save changes to keep it.');
+						new Notice('Pulled from Steam; save changes to keep it.');
 					} finally {
 						steamBtn.removeClass('is-loading');
 					}

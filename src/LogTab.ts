@@ -333,7 +333,7 @@ export class LogTab {
 		content.createSpan({ cls: 'wl-log-source', text: source });
 		content.createSpan({ cls: 'wl-log-sep', text: ' · ' });
 		content.createSpan({ cls: 'wl-log-title', text: titleFromEntry(entry) });
-		content.createSpan({ cls: 'wl-log-sep', text: ' — ' });
+		content.createSpan({ cls: 'wl-log-sep', text: ' · ' });
 		const actionSpan = content.createSpan({ cls: 'wl-log-action', text: actionLabel(entry) });
 		actionSpan.style.color = color;
 
@@ -353,7 +353,7 @@ export class LogTab {
 	private confirmDelete(entry: HistoryEntry): void {
 		new ConfirmModal(
 			this.plugin.app,
-			`Delete this log event? (${titleFromEntry(entry)} — ${actionLabel(entry)})`,
+			`Delete this log event? (${titleFromEntry(entry)} · ${actionLabel(entry)})`,
 			() => {
 				const hm = this.plugin.historyManager;
 				if (!hm) return;

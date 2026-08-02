@@ -621,7 +621,9 @@
   padding: 4px 6px;
   border-radius: 4px;
   border: 0.5px solid var(--background-modifier-border);
-  background: var(--background-secondary);
+  /* background-color, never the shorthand — shorthand resets background-repeat to
+     `repeat` and any theme arrow then tiles across the whole select */
+  background-color: var(--background-secondary);
   color: var(--text-normal);
   font-size: 11px;
   cursor: pointer;
@@ -1393,6 +1395,11 @@
   flex-shrink: 0;
 }
 
+/* Add-from-URL: source name only, so the 110px form label is far too wide */
+.wl-url-row-label {
+  width: 40px;
+}
+
 /* two fields per row, fixed-width inputs in two columns */
 .wl-modal-pair-cell {
   display: flex;
@@ -1800,6 +1807,25 @@
 
 .wl-settings-nav-btn:hover {
   color: var(--text-normal);
+}
+
+/* Mobile/tablet: icon-only nav — 9 text labels overflow the pane */
+.wl-settings-mobile .wl-settings-nav {
+  gap: 0;
+}
+
+.wl-settings-nav-btn-icon {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.wl-settings-nav-btn-icon .svg-icon {
+  width: 20px;
+  height: 20px;
 }
 
 .wl-settings-nav-btn.is-active {
@@ -2393,6 +2419,18 @@ button.wl-api-test {
   line-height: 1.5;
   color: var(--text-faint);
   padding: 0 2px;
+}
+
+/* Full cause of a failed Test — the chip only has room for the short label */
+.wl-api-diagnosis {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--background-modifier-error) 35%, transparent 65%);
+  border: 0.5px solid color-mix(in srgb, var(--background-modifier-border) 50%, var(--text-error) 50%);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-normal);
 }
 
 /* Steam sync row, hanging off its provider card */
@@ -6242,6 +6280,40 @@ body.wl-cl-col-resizing {
   font-weight: 600;
   color: var(--text-normal);
   margin: 0 0 8px 2px;
+  display: flex;
+  align-items: center;
+}
+
+/* per-section select-all box, selection mode only. Tri-state: empty / dash / check */
+.wl-shelf-select.wl-shelf-select {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  min-width: 0;
+  margin: 0 8px 0 0;
+  padding: 0;
+  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--background-modifier-border-hover);
+  border-radius: 4px;
+  background: var(--background-primary);
+  color: var(--text-on-accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.wl-shelf-select.wl-shelf-select:hover {
+  border-color: var(--interactive-accent);
+}
+
+.wl-shelf-select.is-all,
+.wl-shelf-select.is-partial {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
 }
 
 .wl-rows-shelf-count {
@@ -7782,6 +7854,21 @@ input.wl-settings-count-input {
   opacity: 0.7;
 }
 
+/* API failure in a results panel — same slot as the no-api notice, warning-toned */
+.wl-modal-api-error {
+  align-items: flex-start;
+  text-align: left;
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--background-modifier-error) 35%, transparent 65%);
+  border: 0.5px solid color-mix(in srgb, var(--background-modifier-border) 50%, var(--text-error) 50%);
+  border-radius: 6px;
+}
+
+.wl-modal-api-error .wl-modal-no-api-icon {
+  opacity: 1;
+  line-height: 1.4;
+}
+
 /* Filter panel: per-section "All" toggle + Groups-only divider */
 .wl-filter-all-toggle {
   color: var(--interactive-accent);
@@ -9144,6 +9231,12 @@ input.wl-settings-count-input {
 }
 
 .wl-reading-lookup-btn {
+  flex-shrink: 0;
+}
+
+/* the modal is a capped flex column; a scroll container's auto min-height is 0, so this panel got
+   squashed instead of keeping its 400px. Don't shrink: let the modal scroll, like the other add modals */
+.wl-reading-modal > .wl-modal-results {
   flex-shrink: 0;
 }
 
@@ -11125,4 +11218,43 @@ button.wl-search-help-btn:focus {
   font-size: 11px;
   color: var(--text-faint);
   line-height: 1.4;
+}
+
+/* ══ TABLET ICON BUTTONS ══ */
+
+/* Core ships `.is-tablet button:not(.clickable-icon) { padding: 4px 20px }`.
+   Two classes + one element beats every plain `.wl-x` rule, so our icon buttons
+   get 40px of side padding. They are border-box and narrower than that, so the
+   content box goes to 0 and the svg vanishes — button still paints, icon gone.
+   Phones and desktop never load that rule; only tablets break.
+   Prefixing `body` + qualifying `button` outranks it. Values copied from each
+   button's own rule. */
+body.is-tablet button.wl-airtime-action-btn,
+body.is-tablet button.wl-card-menu-btn,
+body.is-tablet button.wl-community-refresh,
+body.is-tablet button.wl-credit-chip-del,
+body.is-tablet button.wl-credits-add,
+body.is-tablet button.wl-credits-name-del,
+body.is-tablet button.wl-credits-refresh,
+body.is-tablet button.wl-datepicker-nav,
+body.is-tablet button.wl-editcol-card-del,
+body.is-tablet button.wl-editcol-card-opt-del,
+body.is-tablet button.wl-editcol-card-toggle,
+body.is-tablet button.wl-editcol-opt-color-dot,
+body.is-tablet button.wl-group-action-btn,
+body.is-tablet button.wl-log-del,
+body.is-tablet button.wl-reading-card-menu-btn,
+body.is-tablet button.wl-reading-col-color-dot,
+body.is-tablet button.wl-reading-col-palette-swatch,
+body.is-tablet button.wl-search-clear,
+body.is-tablet button.wl-search-help-btn,
+body.is-tablet button.wl-toolbar-toggle-btn,
+body.is-tablet .wl-game-modal-actions button.wl-store-btn {
+  padding: 0;
+}
+
+/* these two keep their own non-zero padding */
+body.is-tablet button.wl-store-btn,
+body.is-tablet button.wl-trailer-btn {
+  padding: 1px 3px;
 }
