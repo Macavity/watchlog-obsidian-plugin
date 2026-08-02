@@ -368,7 +368,7 @@ export class ReadingCsvModal extends Modal {
 
 		this.progressWrap = btnRow.createDiv({ cls: 'wl-csv-progress-wrap' });
 		this.progressWrap.hide();
-		this.progressWrap.createSpan({ cls: 'wl-csv-bg-note', text: 'You can close this window — import will continue in the background.' });
+		this.progressWrap.createSpan({ cls: 'wl-csv-bg-note', text: 'You can close this window; import will continue in the background.' });
 		const progressTrack = this.progressWrap.createDiv({ cls: 'wl-csv-progress-track' });
 		this.progressBarFill = progressTrack.createDiv({ cls: 'wl-csv-progress-fill' });
 		this.progressText = this.progressWrap.createSpan({ cls: 'wl-csv-progress-text', text: '0 / 0' });
@@ -832,11 +832,11 @@ export class ReadingCsvModal extends Modal {
 		}
 
 		if (this.importCancelled) {
-			if (this.progressText) this.progressText.textContent = `Cancelled — ${added} / ${toImport.length} imported`;
+			if (this.progressText) this.progressText.textContent = `Cancelled: ${added} / ${toImport.length} imported`;
 			if (this.cancelBtn) { this.cancelBtn.disabled = false; this.cancelBtn.textContent = 'Close'; }
 			new Notice(`Import cancelled. ${added} ${this.itemNoun}${added !== 1 ? 's' : ''} imported.`);
 		} else {
-			if (this.progressText) this.progressText.textContent = `Done — ${added} imported`;
+			if (this.progressText) this.progressText.textContent = `Done: ${added} imported`;
 			if (this.cancelBtn) { this.cancelBtn.disabled = false; this.cancelBtn.textContent = 'Close'; }
 			new Notice(`Imported ${added} ${this.itemNoun}${added !== 1 ? 's' : ''}.`);
 			this.close();

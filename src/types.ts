@@ -420,6 +420,8 @@ export interface WatchLogPluginSettings {
 	rootFolder: string;
 	autoCreateFolders: boolean;
 	coloredTypeBadges: boolean;
+	/** Open the panel on the Watchlist tab after the Add title command adds something. */
+	openWatchlistAfterAdd: boolean;
 	seasonPalette: string[];
 	dashboardCardStyle: 'circles' | 'rectangles';
 	/**
@@ -466,6 +468,7 @@ export interface WatchLogPluginSettings {
 		secondSort?: string;
 		secondSortDir?: 'asc' | 'desc';
 		ratingEmptyOnly?: boolean;
+		/** legacy — read once by migratePriorityExclude, never written */
 		priorityEmptyOnly?: boolean;
 		recentlyArrivedOnly?: boolean;
 		groupsOnly?: boolean;
@@ -484,6 +487,7 @@ export interface WatchLogPluginSettings {
 		secondSort?: string;
 		secondSortDir?: 'asc' | 'desc';
 		ratingEmptyOnly?: boolean;
+		/** legacy — read once by migratePriorityExclude, never written */
 		priorityEmptyOnly?: boolean;
 		recentlyArrivedOnly?: boolean;
 		favoritesOnly?: boolean;
@@ -778,6 +782,7 @@ export interface GamesSavedFilterPreset {
 	platformExclude: string[];
 	groupExclude: string[];
 	ratingEmptyOnly?: boolean;
+	/** legacy — read once by migratePriorityExclude, never written */
 	priorityEmptyOnly?: boolean;
 	recentlyArrivedOnly?: boolean;
 	favoritesOnly?: boolean;
@@ -926,6 +931,7 @@ export interface SavedFilterPreset {
 	ratingExclude: string[];
 	priorityExclude: string[];
 	ratingEmptyOnly?: boolean;
+	/** legacy — read once by migratePriorityExclude, never written */
 	priorityEmptyOnly?: boolean;
 	recentlyArrivedOnly?: boolean;
 	groupsOnly?: boolean;
@@ -1036,6 +1042,7 @@ export const DEFAULT_SETTINGS: WatchLogPluginSettings = {
 	rootFolder: 'WatchLog',
 	autoCreateFolders: true,
 	coloredTypeBadges: true,
+	openWatchlistAfterAdd: true,
 	dashboardCardStyle: 'rectangles',
 	cardSize: 0,
 	cardSizeMobile: 0,
@@ -1103,6 +1110,37 @@ export const DEFAULT_SETTINGS: WatchLogPluginSettings = {
  */
 export function getThemedColor(name: string, defaultColor: string, theme: string): string {
 	return defaultColor;
+}
+
+// Priority filtering. '' is a real, tickable filter option — not a gap.
+
+/** Filter option value for "no priority set". */
+export const NO_PRIORITY = '';
+
+/** Filter label for NO_PRIORITY. */
+export const NO_PRIORITY_LABEL = 'No priority';
+
+/** Priority filter options: the configured names plus the empty one. */
+export function priorityFilterOpts(priorities: TagDefinition[]): string[] {
+	return [...priorities.map((p) => p.name), NO_PRIORITY];
+}
+
+/** Priority option label — '' reads as "No priority". */
+export function formatPriorityOpt(opt: string): string {
+	return opt === NO_PRIORITY ? NO_PRIORITY_LABEL : opt;
+}
+
+/**
+ * Legacy `priorityEmptyOnly` → exclude set. The old exclusive toggle meant "empty only",
+ * which is now the same as excluding every named priority.
+ */
+export function migratePriorityExclude(
+	exclude: string[] | undefined,
+	emptyOnly: boolean | undefined,
+	priorities: TagDefinition[],
+): Set<string> {
+	if (emptyOnly) return new Set(priorities.map((p) => p.name));
+	return new Set(exclude ?? []);
 }
 
 /** Badge color for a Reading type (Book / Manga), from settings.readingTypeColors. */
@@ -1499,6 +1537,8 @@ interface OmdbSearchItem {
 	Year: string;
 	imdbID: string;
 	Type: string;
+	/** Poster URL, or the literal 'N/A'. */
+	Poster?: string;
 }
 
 export interface OmdbSearchResponse {

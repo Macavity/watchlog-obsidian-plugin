@@ -2,6 +2,7 @@ import { requestUrl } from 'obsidian';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogPluginSettings } from './types';
 import { getApiGroupForType } from './types';
+import { ApiError, apiSourceFromUrl, readApiResponse } from './ApiService';
 
 const JIKAN_BASE = 'https://api.jikan.moe/v4';
 const OMDB_BASE = 'https://www.omdbapi.com';
@@ -130,11 +131,14 @@ export class PosterService {
 			try {
 				const url = await this.fetchPosterForTitle(item.title);
 				if (this.disposed) { item.resolve(null); break; }
+				// 'none' only for a clean "the API has no poster" — see the catch
 				const finalUrl = url || 'none';
 				this.dataManager.updatePosterUrl(item.title.id, finalUrl);
 				item.resolve(url);
 			} catch {
-				if (!this.disposed) this.dataManager.updatePosterUrl(item.title.id, 'none');
+				// a rejected key or a dropped connection must NOT be cached as 'none': that is
+				// permanent, and it used to take a bad TMDB token and burn "no poster" into every
+				// title the user scrolled past. Leave posterUrl untouched so it retries later.
 				item.resolve(null);
 			}
 
@@ -256,12 +260,26 @@ export class PosterService {
 
 	private async fetchMediaPoster(title: WatchLogTitle): Promise<string | null> {
 		const settings = this.getSettings();
+
+		if (settings.tmdbApiKey) {
+			try {
+				return await this.fetchTmdbPoster(title, settings);
+			} catch (err) {
+				// a rejected TMDB token used to dead-end here, leaving a working OMDb key unused
+				if (!settings.omdbApiKey) throw err;
+			}
+		}
+		if (settings.omdbApiKey) return this.fetchOmdbPoster(title, settings);
+		return null;
+	}
+
+	private async fetchTmdbPoster(title: WatchLogTitle, settings: WatchLogPluginSettings): Promise<string | null> {
 		const searchName = this.cleanTitleForSearch(title.title);
 		const imdbId = this.extractImdbId(title.externalLink);
 		const year = this.getReleaseYear(title);
 		const kind = this.resolveMediaKind(title);
 
-		if (settings.tmdbApiKey) {
+		{
 			const headers = { Authorization: `Bearer ${settings.tmdbApiKey}` };
 			// 1. most precise: resolve by IMDb id directly
 			if (imdbId) {
@@ -289,8 +307,15 @@ export class PosterService {
 			if (poster) return `${TMDB_IMG_BASE}${poster}`;
 			return null;
 		}
+	}
 
-		if (settings.omdbApiKey) {
+	private async fetchOmdbPoster(title: WatchLogTitle, settings: WatchLogPluginSettings): Promise<string | null> {
+		const searchName = this.cleanTitleForSearch(title.title);
+		const imdbId = this.extractImdbId(title.externalLink);
+		const year = this.getReleaseYear(title);
+		const kind = this.resolveMediaKind(title);
+
+		{
 			const key = encodeURIComponent(settings.omdbApiKey);
 			// 1. most precise: resolve by IMDb id directly
 			if (imdbId) {
@@ -324,20 +349,24 @@ export class PosterService {
 			if (poster && poster !== 'N/A') return poster;
 			return null;
 		}
-		return null;
 	}
 
+	/** throw:false + the shared classifier, so processQueue can tell a real failure from "no poster". */
 	private async fetchJson(
 		url: string,
 		headers?: Record<string, string>,
 	): Promise<unknown> {
+		const source = apiSourceFromUrl(url);
 		let timer: number | null = null;
 		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new Error('Request timed out')), API_TIMEOUT_MS);
+			timer = window.setTimeout(() => reject(new ApiError(source, 'network', 'Request timed out')), API_TIMEOUT_MS);
 		});
 		try {
-			const fetchPromise = requestUrl({ url, headers }).then((r) => r.json as unknown);
+			const fetchPromise = requestUrl({ url, headers, throw: false }).then((r) => readApiResponse(source, r));
 			return await Promise.race([fetchPromise, timeoutPromise]);
+		} catch (err) {
+			if (err instanceof ApiError) throw err;
+			throw new ApiError(source, 'network', (err as Error)?.message ?? 'Network error');
 		} finally {
 			if (timer !== null) window.clearTimeout(timer);
 		}
@@ -348,9 +377,10 @@ export class PosterService {
 		body: unknown,
 		headers?: Record<string, string>,
 	): Promise<unknown> {
+		const source = apiSourceFromUrl(url);
 		let timer: number | null = null;
 		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new Error('Request timed out')), API_TIMEOUT_MS);
+			timer = window.setTimeout(() => reject(new ApiError(source, 'network', 'Request timed out')), API_TIMEOUT_MS);
 		});
 		try {
 			const fetchPromise = requestUrl({
@@ -358,8 +388,12 @@ export class PosterService {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
 				body: JSON.stringify(body),
-			}).then((r) => r.json as unknown);
+				throw: false,
+			}).then((r) => readApiResponse(source, r));
 			return await Promise.race([fetchPromise, timeoutPromise]);
+		} catch (err) {
+			if (err instanceof ApiError) throw err;
+			throw new ApiError(source, 'network', (err as Error)?.message ?? 'Network error');
 		} finally {
 			if (timer !== null) window.clearTimeout(timer);
 		}

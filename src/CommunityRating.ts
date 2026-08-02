@@ -2,6 +2,7 @@ import { Notice } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { WatchLogTitle, AnimeSearchResult } from './types';
 import { formatVoteCount, getApiGroupForType } from './types';
+import { apiErrorMessage } from './ApiService';
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -203,6 +204,10 @@ export async function refreshCommunityRating(
 			new Notice(`Rating updated from ${label}.`);
 		}
 		return true;
+	} catch (err) {
+		// the name-search step now throws instead of returning an empty list
+		if (showNotice) new Notice(apiErrorMessage(err));
+		return false;
 	} finally {
 		if (btnEl) btnEl.removeClass('is-loading');
 	}

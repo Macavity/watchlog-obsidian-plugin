@@ -1,11 +1,11 @@
 import { Notice, setIcon } from 'obsidian';
-import { googleBooksErrorMessage } from './ApiService';
+import { apiErrorMessage } from './ApiService';
 import type WatchLogPlugin from './main';
 import type { ReadingDataManager, ReadingKind } from './ReadingDataManager';
 import { Book, Manga, ReadingStatus, ReadingCustomColumn, ReadingSavedFilterPreset, READING_STATUSES, SELECTABLE_READING_STATUSES, DEFAULT_READING_STATUS_COLORS, normalizeRowsLayout, READING_ROWS_SHELVES, bookUnitProgress, formatCount, sortByFavorited } from './types';
 import { searchItems, yearOf, type SearchFieldSpec } from './SearchQuery';
 import { renderSearchHelpButton } from './SearchHelpModal';
-import { renderShelf, renderShelfTitle } from './RowsView';
+import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { RowsCustomizeModal } from './RowsCustomizeModal';
 import { AddReadingModal } from './AddReadingModal';
 import { ReadingDetailModal } from './ReadingDetailModal';
@@ -836,8 +836,8 @@ export class ReadingTab {
 				text: currentDir === 'asc' ? '↑' : '↓',
 			});
 			dirBtn.title = currentDir === 'asc'
-				? 'Ascending — click to switch to descending'
-				: 'Descending — click to switch to ascending';
+				? 'Ascending; click to switch to descending'
+				: 'Descending; click to switch to ascending';
 
 			sel.addEventListener('change', () => {
 				if (isPrimary) {
@@ -1077,11 +1077,11 @@ export class ReadingTab {
 		const shelfRenderers: Record<string, () => void> = {
 			favorites: () => {
 				// newest favorite first — this shelf ignores the tab sort
+				const favorites = sortByFavorited(items.filter((i) => i.favorite === true && itemVisible(i)));
 				renderShelf(
-					scroll, 'Favorites',
-					sortByFavorited(items.filter((i) => i.favorite === true && itemVisible(i))),
-					`No favorites yet — open a ${isBooks ? 'book' : 'manga'} and tap the heart.`,
-					filtering, renderCard,
+					scroll, 'Favorites', favorites,
+					`No favorites yet; open a ${isBooks ? 'book' : 'manga'} and tap the heart.`,
+					filtering, renderCard, this.shelfSelect(favorites),
 				);
 			},
 			recentlyAdded: () => {
@@ -1091,15 +1091,16 @@ export class ReadingTab {
 					.filter(itemVisible);
 				renderShelf(
 					scroll, 'Recently Added', recentlyAdded,
-					'Nothing here yet — added items will show up in this row.',
-					filtering, renderCard,
+					'Nothing here yet; added items will show up in this row.',
+					filtering, renderCard, this.shelfSelect(recentlyAdded),
 				);
 			},
 			recentlyRead: () => {
+				const recentlyRead = this.getRecentlyReadItems(items).filter(itemVisible);
 				renderShelf(
-					scroll, 'Recently Read', this.getRecentlyReadItems(items).filter(itemVisible),
-					'Nothing read yet — items you progress or finish show up here.',
-					filtering, renderCard,
+					scroll, 'Recently Read', recentlyRead,
+					'Nothing read yet; items you progress or finish show up here.',
+					filtering, renderCard, this.shelfSelect(recentlyRead),
 				);
 			},
 			recentlyReleased: () => {
@@ -1119,8 +1120,8 @@ export class ReadingTab {
 					.filter(itemVisible);
 				renderShelf(
 					scroll, 'Recently Released', recentlyReleased,
-					'No released items yet — items with a past release date show up here.',
-					filtering, renderCard,
+					'No released items yet; items with a past release date show up here.',
+					filtering, renderCard, this.shelfSelect(recentlyReleased),
 				);
 			},
 			byStatus: () => {
@@ -1173,7 +1174,7 @@ export class ReadingTab {
 				// (quiet: onChanged re-renders this tab itself).
 				persist: () => this.readingData.persistQuiet(),
 				onChanged: () => this.renderContent(),
-				hint: 'Reorder the sections or switch them off. "By status" is the grouped grid section — with it off the items show as one flat grid.',
+				hint: 'Reorder the sections or switch them off. "By status" is the grouped grid section; with it off the items show as one flat grid.',
 				// Reading has a single grouped-grid section — nothing to be
 				// mutually exclusive with.
 				exclusiveGroups: [],
@@ -1270,7 +1271,7 @@ export class ReadingTab {
 			const bucket = this.applySort(items.filter((i) => i.status === status && itemVisible(i)));
 			if (bucket.length === 0) continue;
 			rendered++;
-			renderShelfTitle(section, status, bucket.length);
+			renderShelfTitle(section, status, bucket.length, this.shelfSelect(bucket));
 			this.addReadingGridSection(section, bucket, isBooks);
 		}
 		if (rendered === 0) {
@@ -1280,7 +1281,7 @@ export class ReadingTab {
 			}
 			section.createDiv({
 				cls: 'wl-rows-shelf-empty',
-				text: 'No items yet — added items are grouped by status here.',
+				text: 'No items yet; added items are grouped by status here.',
 			});
 		}
 	}
@@ -1296,7 +1297,7 @@ export class ReadingTab {
 	): void {
 		if (sortedItems.length === 0) return;
 		const section = parent.createDiv({ cls: 'wl-rows-bytype' });
-		if (titled) renderShelfTitle(section, isBooks ? 'All books' : 'All manga', sortedItems.length);
+		if (titled) renderShelfTitle(section, isBooks ? 'All books' : 'All manga', sortedItems.length, this.shelfSelect(sortedItems));
 		this.addReadingGridSection(section, sortedItems, isBooks);
 	}
 
@@ -1422,6 +1423,25 @@ export class ReadingTab {
 		this.bindCardClick(card, 'manga', manga.id);
 	}
 
+	/**
+	 * Select-all spec for one Rows section. undefined outside selection mode, which is what keeps
+	 * the box out of the header. This tab re-renders on every selection change, so the boxes
+	 * rebuild with fresh state and need no refresher registry.
+	 */
+	private shelfSelect(sectionItems: Array<{ id: string }>): ShelfSelect | undefined {
+		if (!this.selectionMode) return undefined;
+		return {
+			ids: sectionItems.map((i) => i.id),
+			selected: this.selectedIds,
+			onToggle: (ids, selectAll) => {
+				for (const id of ids) {
+					if (selectAll) { this.selectedIds.add(id); } else { this.selectedIds.delete(id); }
+				}
+				this.render();
+			},
+		};
+	}
+
 	private bindCardClick(card: HTMLElement, mode: 'book' | 'manga', id: string): void {
 		if (this.selectionMode) {
 			if (this.selectedIds.has(id)) {
@@ -1526,11 +1546,11 @@ export class ReadingTab {
 		if (kind === 'book') {
 			const book = item as Book;
 			if (!book.googleBooksId) {
-				new Notice('No Google Books ID — cannot refresh cover.');
+				new Notice('No Google Books ID; cannot refresh cover.');
 				return;
 			}
 			if (!this.plugin.apiService.hasGoogleBooksKey()) {
-				new Notice('Google Books API key required — add one in Settings → API → Books.');
+				new Notice('Google Books API key required; add one in Settings → API → Books.');
 				return;
 			}
 			void (async () => {
@@ -1545,13 +1565,13 @@ export class ReadingTab {
 					await this.readingData.updateBook({ ...fresh, coverUrl: result.coverUrl });
 					new Notice('Cover refreshed.');
 				} catch (err) {
-					new Notice(googleBooksErrorMessage(err));
+					new Notice(apiErrorMessage(err));
 				}
 			})();
 		} else {
 			const manga = item as Manga;
 			if (!manga.malId) {
-				new Notice('No MAL ID — cannot refresh cover.');
+				new Notice('No MAL ID; cannot refresh cover.');
 				return;
 			}
 			void (async () => {
@@ -1585,7 +1605,7 @@ export class ReadingTab {
 		const isBooks = this.activeSubTab === 'books';
 		empty.createSpan({ cls: 'wl-reading-empty-icon', text: isBooks ? '📖' : '📓' });
 		const msg = empty.createDiv({ cls: 'wl-reading-empty-msg' });
-		msg.createSpan({ text: isBooks ? 'No books yet — ' : 'No manga yet — ' });
+		msg.createSpan({ text: isBooks ? 'No books yet; ' : 'No manga yet; ' });
 		const link = msg.createEl('a', {
 			cls: 'wl-reading-empty-link',
 			text: isBooks ? 'add your first book' : 'add your first manga',

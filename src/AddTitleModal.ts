@@ -10,8 +10,10 @@ import type {
 } from './types';
 import { getApiGroupForType, todayIso } from './types';
 import { renderSearchResultRow } from './SearchThumbnail';
+import { apiErrorMessage } from './ApiService';
 import { LibraryIndex, animeResultIdKeys, mediaResultIdKeys } from './LibraryIndex';
 import { createDatePicker } from './DatePicker';
+import { renderStarRating } from './StarRating';
 
 type SearchResult = AnimeSearchResult | MediaSearchResult;
 
@@ -22,7 +24,8 @@ function isAnimeResult(r: SearchResult): r is AnimeSearchResult {
 export class AddTitleModal extends Modal {
 	private plugin: WatchLogPlugin;
 	private dataManager: DataManager;
-	private onAdded: () => void;
+	// gets the new entry — callers that don't care just ignore it
+	private onAdded: (entry: WatchLogTitle) => void;
 
 	private selectedType = 'Anime';
 	private searchQuery = '';
@@ -31,6 +34,7 @@ export class AddTitleModal extends Modal {
 	private searchGeneration = 0;
 	private autoSearch = false;
 	private noApiMessage = '';
+	private searchError = '';
 
 	private fieldTitle = '';
 	private fieldEpisodes = 0;
@@ -40,6 +44,7 @@ export class AddTitleModal extends Modal {
 	private fieldSeasons: Season[] = [];
 	private fieldStatus = 'Plan to watch';
 	private fieldPriority = 'Medium';
+	private fieldRating = 0;
 	private fieldDateStarted = '';
 	private fieldMalId: number | null = null;
 	private fieldAnilistId: number | null = null;
@@ -65,7 +70,7 @@ export class AddTitleModal extends Modal {
 		app: App,
 		plugin: WatchLogPlugin,
 		dataManager: DataManager,
-		onAdded: () => void,
+		onAdded: (entry: WatchLogTitle) => void,
 		prefill?: {
 			title?: string;
 			searchQuery?: string;
@@ -135,6 +140,7 @@ export class AddTitleModal extends Modal {
 			this.selectedType = typeSelect.value;
 			this.searchResults = [];
 			this.noApiMessage = '';
+			this.searchError = '';
 			this.renderResults();
 			this.renderForm();
 		});
@@ -189,10 +195,13 @@ export class AddTitleModal extends Modal {
 			}
 			if (gen !== this.searchGeneration) return; // stale
 			this.noApiMessage = noApi;
+			this.searchError = '';
 			this.searchResults = results;
-		} catch {
+		} catch (err) {
 			if (gen !== this.searchGeneration) return;
-			new Notice('Search failed. Check your connection and API settings.');
+			// in the panel, not a Notice — a blank result list is what made a rejected key
+			// look like a title that does not exist
+			this.searchError = apiErrorMessage(err);
 			this.searchResults = [];
 		} finally {
 			if (gen === this.searchGeneration) {
@@ -215,6 +224,13 @@ export class AddTitleModal extends Modal {
 			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api' });
 			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: 'ℹ' });
 			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.noApiMessage });
+			return;
+		}
+
+		if (this.searchError) {
+			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api wl-modal-api-error' });
+			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: '⚠' });
+			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.searchError });
 			return;
 		}
 
@@ -411,6 +427,18 @@ export class AddTitleModal extends Modal {
 		}
 		priSelect.addEventListener('change', () => { this.fieldPriority = priSelect.value; });
 
+		const ratingRow = makeRow('Rating');
+		const starsWrap = ratingRow.createDiv({ cls: 'wl-stars' });
+		const paintStars = (): void => {
+			renderStarRating(starsWrap, this.fieldRating, {
+				allowHalf: this.plugin.settings.halfStarRatings ?? false,
+				tiers: this.plugin.settings.ratingSystem,
+				showLabel: true,
+				onChange: (value) => { this.fieldRating = value; paintStars(); },
+			});
+		};
+		paintStars();
+
 		const startRow = makeRow('Date started');
 		createDatePicker({
 			parent: startRow,
@@ -520,7 +548,7 @@ export class AddTitleModal extends Modal {
 			status: this.fieldStatus,
 			priority: this.fieldPriority,
 			review: '',
-			rating: 0,
+			rating: this.fieldRating,
 			notes: '',
 			dateStarted: this.fieldDateStarted || null,
 			dateFinished: null,
@@ -584,6 +612,6 @@ export class AddTitleModal extends Modal {
 
 		new Notice(`"${titleName}" added to WatchLog.`);
 		this.close();
-		this.onAdded();
+		this.onAdded(entry);
 	}
 }

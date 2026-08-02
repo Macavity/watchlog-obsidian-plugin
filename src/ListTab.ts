@@ -2,7 +2,7 @@ import { Modal, setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, TagDefinition, SavedFilterPreset, Season } from './types';
-import { formatTime, formatDateDisplay, todayIso, getThemedColor, getDisplayPoster, getTitleCredits, getManualCredits, normalizeRowsLayout, ROWS_SHELVES, ROWS_EXCLUSIVE_SHELVES, sortByFavorited } from './types';
+import { formatTime, formatDateDisplay, todayIso, getThemedColor, getDisplayPoster, getTitleCredits, getManualCredits, normalizeRowsLayout, ROWS_SHELVES, ROWS_EXCLUSIVE_SHELVES, sortByFavorited, priorityFilterOpts, formatPriorityOpt, migratePriorityExclude } from './types';
 import { searchItems, yearOf, type SearchFieldSpec } from './SearchQuery';
 import { renderSearchHelpButton } from './SearchHelpModal';
 import { createDatePicker } from './DatePicker';
@@ -23,7 +23,7 @@ import { VirtualGrid, computeGridMetrics, setRowsCardWidth, type GridMetrics } f
 import { VirtualScroller } from './VirtualScroller';
 import { LazyCardObserver } from './LazyCardObserver';
 import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard';
-import { renderShelf, renderShelfTitle } from './RowsView';
+import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { RowsCustomizeModal } from './RowsCustomizeModal';
 import { toggleFilterPanel, FilterSection } from './FilterPanel';
 import { toggleSortPopover } from './SortPopover';
@@ -60,6 +60,8 @@ export class ListTab {
 
 	// selection mode
 	selectionMode = false;
+	// header select-all boxes of the current Rows render; re-synced on every selection change
+	private shelfSelectRefreshers: (() => void)[] = [];
 	selectedItems: Set<string> = new Set(); // title ids or group ids
 
 	// pinned groups (persisted via DataManager)
@@ -69,9 +71,8 @@ export class ListTab {
 	savedFilterActive = false;
 	private savedFilterBtnEl: HTMLButtonElement | null = null;
 
-	// empty-only filter flags
+	// empty-only filter flag (priority has none — '' is a normal option)
 	filterRatingEmptyOnly = false;
-	filterPriorityEmptyOnly = false;
 
 	filterRecentlyArrivedOnly = false;
 
@@ -130,7 +131,11 @@ export class ListTab {
 			this.filterStatusExclude   = new Set(saved.statusExclude   ?? []);
 			this.filterGroupExclude    = new Set(saved.groupExclude    ?? []);
 			this.filterRatingExclude   = new Set(saved.ratingExclude   ?? []);
-			this.filterPriorityExclude = new Set(saved.priorityExclude ?? []);
+			this.filterPriorityExclude = migratePriorityExclude(
+				saved.priorityExclude,
+				saved.priorityEmptyOnly,
+				plugin.settings.priorities,
+			);
 			const ms = ListTab.migrateSortKey(saved.sort ?? 'dateAdded-newest');
 			this.filterSort     = ms.key;
 			this.filterSortDir  = saved.sortDir ?? ms.dir;
@@ -138,7 +143,6 @@ export class ListTab {
 			this.filterSecondSort    = ms2.key;
 			this.filterSecondSortDir = saved.secondSortDir ?? ms2.dir;
 			this.filterRatingEmptyOnly      = saved.ratingEmptyOnly      ?? false;
-			this.filterPriorityEmptyOnly    = saved.priorityEmptyOnly    ?? false;
 			this.filterRecentlyArrivedOnly  = saved.recentlyArrivedOnly  ?? false;
 			this.filterGroupsOnly           = saved.groupsOnly           ?? false;
 			this.filterFavoritesOnly        = saved.favoritesOnly        ?? false;
@@ -154,9 +158,15 @@ export class ListTab {
 				setsMatch(this.filterStatusExclude, savedPreset.statusExclude) &&
 				setsMatch(this.filterGroupExclude, savedPreset.groupExclude) &&
 				setsMatch(this.filterRatingExclude, savedPreset.ratingExclude) &&
-				setsMatch(this.filterPriorityExclude, savedPreset.priorityExclude) &&
+				setsMatch(
+					this.filterPriorityExclude,
+					Array.from(migratePriorityExclude(
+						savedPreset.priorityExclude,
+						savedPreset.priorityEmptyOnly,
+						plugin.settings.priorities,
+					)),
+				) &&
 				(this.filterRatingEmptyOnly === (savedPreset.ratingEmptyOnly ?? false)) &&
-				(this.filterPriorityEmptyOnly === (savedPreset.priorityEmptyOnly ?? false)) &&
 				(this.filterRecentlyArrivedOnly === (savedPreset.recentlyArrivedOnly ?? false)) &&
 				(this.filterGroupsOnly === (savedPreset.groupsOnly ?? false)) &&
 				(this.filterFavoritesOnly === (savedPreset.favoritesOnly ?? false));
@@ -175,7 +185,6 @@ export class ListTab {
 			secondSort:    this.filterSecondSort,
 			secondSortDir: this.filterSecondSortDir,
 			ratingEmptyOnly:       this.filterRatingEmptyOnly,
-			priorityEmptyOnly:     this.filterPriorityEmptyOnly,
 			recentlyArrivedOnly:   this.filterRecentlyArrivedOnly,
 			groupsOnly:            this.filterGroupsOnly,
 			favoritesOnly:         this.filterFavoritesOnly,
@@ -190,7 +199,6 @@ export class ListTab {
 			this.filterRatingExclude.size > 0 ||
 			this.filterGroupExclude.size > 0 ||
 			this.filterRatingEmptyOnly ||
-			this.filterPriorityEmptyOnly ||
 			this.filterRecentlyArrivedOnly ||
 			this.filterGroupsOnly ||
 			this.filterFavoritesOnly;
@@ -203,7 +211,6 @@ export class ListTab {
 		this.filterRatingExclude.clear();
 		this.filterGroupExclude.clear();
 		this.filterRatingEmptyOnly      = false;
-		this.filterPriorityEmptyOnly    = false;
 		this.filterRecentlyArrivedOnly  = false;
 		this.filterGroupsOnly           = false;
 		this.filterFavoritesOnly        = false;
@@ -214,9 +221,12 @@ export class ListTab {
 		this.filterStatusExclude        = new Set(preset.statusExclude);
 		this.filterGroupExclude         = new Set(preset.groupExclude);
 		this.filterRatingExclude        = new Set(preset.ratingExclude);
-		this.filterPriorityExclude      = new Set(preset.priorityExclude);
+		this.filterPriorityExclude      = migratePriorityExclude(
+			preset.priorityExclude,
+			preset.priorityEmptyOnly,
+			this.plugin.settings.priorities,
+		);
 		this.filterRatingEmptyOnly      = preset.ratingEmptyOnly      ?? false;
-		this.filterPriorityEmptyOnly    = preset.priorityEmptyOnly    ?? false;
 		this.filterRecentlyArrivedOnly  = preset.recentlyArrivedOnly  ?? false;
 		this.filterGroupsOnly           = preset.groupsOnly           ?? false;
 		this.filterFavoritesOnly        = preset.favoritesOnly        ?? false;
@@ -252,9 +262,8 @@ export class ListTab {
 		} else if (this.filterRatingExclude.size > 0 && (t.rating === 0 || this.filterRatingExclude.has(`${t.rating}★`))) {
 			return false;
 		}
-		if (this.filterPriorityEmptyOnly) {
-			if (t.priority) return false;
-		} else if (this.filterPriorityExclude.size > 0 && this.filterPriorityExclude.has(t.priority)) {
+		// '' is a real option here — no-priority titles are excludable like any other
+		if (this.filterPriorityExclude.size > 0 && this.filterPriorityExclude.has(t.priority)) {
 			return false;
 		}
 		return true;
@@ -308,6 +317,7 @@ export class ListTab {
 		// clear stale observer/scroller state; this render builds fresh ones
 		this.destroyVirtualScroll();
 		this.destroyRowsVirtual();
+		this.shelfSelectRefreshers = [];
 
 		// search/filter keeps the shelves layout; a shelf with no matches disappears entirely
 		const searchMatched = this.getSearchMatchedIds();
@@ -340,7 +350,7 @@ export class ListTab {
 				onChanged: () => {
 					if (this.currentView === 'rows') this.rerenderActiveView();
 				},
-				hint: 'Reorder the sections or switch them off. "By type" and "By status" are the grouped grid sections — only one can be on at a time, and with both off the titles show as one flat grid.',
+				hint: 'Reorder the sections or switch them off. "By type" and "By status" are the grouped grid sections; only one can be on at a time, and with both off the titles show as one flat grid.',
 				exclusiveGroups: ROWS_EXCLUSIVE_SHELVES,
 			}).open();
 		});
@@ -379,6 +389,8 @@ export class ListTab {
 		// the 10 newest overall, not the 10 newest matches
 		const titleCard = (strip: HTMLElement, t: WatchLogTitle): void =>
 			this.renderTitleCard(strip, t, cardWidth);
+		const sel = (items: { id: string }[]): ShelfSelect | undefined =>
+			this.shelfSelect(items.map((i) => i.id));
 		const shelfRenderers: Record<string, () => void> = {
 			favorites: () => {
 				// newest favorite first — this shelf ignores the tab sort
@@ -387,15 +399,16 @@ export class ListTab {
 				);
 				renderShelf(
 					scroll, 'Favorites', favorites,
-					'No favorites yet — mark a title as favorite to see it here.',
-					filtering, titleCard,
+					'No favorites yet; mark a title as favorite to see it here.',
+					filtering, titleCard, sel(favorites),
 				);
 			},
 			recommended: () => {
+				const recommended = this.getRecommendedTitles(titles).filter(titleVisible);
 				renderShelf(
-					scroll, 'Recommended', this.getRecommendedTitles(titles).filter(titleVisible),
-					'Nothing to recommend — add titles to "Plan to watch" or "Watching".',
-					filtering, titleCard,
+					scroll, 'Recommended', recommended,
+					'Nothing to recommend; add titles to "Plan to watch" or "Watching".',
+					filtering, titleCard, sel(recommended),
 				);
 			},
 			// ISO timestamps, so string compare sorts chronologically
@@ -406,15 +419,16 @@ export class ListTab {
 					.filter(titleVisible);
 				renderShelf(
 					scroll, 'Recently Added', recentlyAdded,
-					'Nothing here yet — added titles will show up in this row.',
-					filtering, titleCard,
+					'Nothing here yet; added titles will show up in this row.',
+					filtering, titleCard, sel(recentlyAdded),
 				);
 			},
 			recentlyWatched: () => {
+				const recentlyWatched = this.getRecentlyWatchedTitles(titles).filter(titleVisible);
 				renderShelf(
-					scroll, 'Recently Watched', this.getRecentlyWatchedTitles(titles).filter(titleVisible),
-					'Nothing watched yet — episodes you tick or titles you complete will show up here.',
-					filtering, titleCard,
+					scroll, 'Recently Watched', recentlyWatched,
+					'Nothing watched yet; episodes you tick or titles you complete will show up here.',
+					filtering, titleCard, sel(recentlyWatched),
 				);
 			},
 			groups: () => {
@@ -436,8 +450,8 @@ export class ListTab {
 					.filter(titleVisible);
 				renderShelf(
 					scroll, 'Recently Released', recentlyReleased,
-					'No released titles yet — titles with a past release date show up here.',
-					filtering, titleCard,
+					'No released titles yet; titles with a past release date show up here.',
+					filtering, titleCard, sel(recentlyReleased),
 				);
 			},
 			// the grouped grids are regular layout entries, so they sit anywhere — the windowing
@@ -483,11 +497,11 @@ export class ListTab {
 	): void {
 		if (filtering && groups.length === 0) return;
 		const shelf = parent.createDiv({ cls: 'wl-rows-shelf' });
-		renderShelfTitle(shelf, 'Groups', groups.length);
+		renderShelfTitle(shelf, 'Groups', groups.length, this.shelfSelect(groups.map((g) => g.id)));
 		if (groups.length === 0) {
 			shelf.createDiv({
 				cls: 'wl-rows-shelf-empty',
-				text: 'No groups yet — group related titles to see their covers here.',
+				text: 'No groups yet; group related titles to see their covers here.',
 			});
 			return;
 		}
@@ -516,7 +530,6 @@ export class ListTab {
 			this.filterRatingExclude.size > 0 ||
 			this.filterPriorityExclude.size > 0 ||
 			this.filterRatingEmptyOnly ||
-			this.filterPriorityEmptyOnly ||
 			this.filterRecentlyArrivedOnly ||
 			this.filterFavoritesOnly;
 		return groups.filter((group) => {
@@ -560,7 +573,7 @@ export class ListTab {
 			);
 			if (bucketTitles.length === 0) continue;
 			rendered++;
-			renderShelfTitle(section, def.name, bucketTitles.length);
+			renderShelfTitle(section, def.name, bucketTitles.length, this.shelfSelect(bucketTitles.map((t) => t.id)));
 			const spacer = section.createDiv({ cls: 'wl-rows-bytype-spacer' });
 			// same classes as the flat grid so the CLS fix applies unchanged
 			const grid = spacer.createDiv({ cls: 'wl-cards-grid wl-cards-grid-virtual' });
@@ -585,7 +598,7 @@ export class ListTab {
 			}
 			section.createDiv({
 				cls: 'wl-rows-shelf-empty',
-				text: `No titles yet — added titles are grouped by ${byType ? 'type' : 'status'} here.`,
+				text: `No titles yet; added titles are grouped by ${byType ? 'type' : 'status'} here.`,
 			});
 		}
 	}
@@ -608,7 +621,7 @@ export class ListTab {
 			return;
 		}
 		const section = parent.createDiv({ cls: 'wl-rows-bytype' });
-		if (titled) renderShelfTitle(section, 'All titles', items.length);
+		if (titled) renderShelfTitle(section, 'All titles', items.length, this.shelfSelect(items.map((i) => i.data.id)));
 		const spacer = section.createDiv({ cls: 'wl-rows-bytype-spacer' });
 		const grid = spacer.createDiv({ cls: 'wl-cards-grid wl-cards-grid-virtual' });
 		const vgrid = new VirtualGrid(spacer, grid, items.length, {
@@ -1055,10 +1068,36 @@ export class ListTab {
 		this.selectedItems.clear();
 		this.refreshToolbarActions();
 		if (this.currentView === 'rows') {
-			this.syncCardSelectionClasses();
+			// full rebuild: the section headers gain/lose their select-all box
+			this.rerenderActiveView();
 		} else {
 			this.rerenderTable();
 		}
+	}
+
+	/**
+	 * Select-all spec for one Rows section. undefined outside selection mode, which is what keeps
+	 * the box out of the header. Ids, not DOM: the grid sections are virtualised.
+	 */
+	private shelfSelect(ids: string[]): ShelfSelect | undefined {
+		if (!this.selectionMode) return undefined;
+		return {
+			ids,
+			selected: this.selectedItems,
+			onToggle: (sectionIds, selectAll) => {
+				for (const id of sectionIds) {
+					if (selectAll) { this.selectedItems.add(id); } else { this.selectedItems.delete(id); }
+				}
+				this.syncCardSelectionClasses();
+				this.refreshToolbarActions();
+			},
+			register: (refresh) => this.shelfSelectRefreshers.push(refresh),
+		};
+	}
+
+	/** A title can sit in several sections, so every header box re-reads the set. */
+	private refreshShelfSelects(): void {
+		for (const refresh of this.shelfSelectRefreshers) refresh();
 	}
 
 	/** Sync wl-card-selected across the whole tab (Cards grid, shelves, By-type grids). */
@@ -1067,6 +1106,7 @@ export class ListTab {
 			const id = card.dataset.titleId ?? card.dataset.groupId;
 			card.classList.toggle('wl-card-selected', !!id && this.selectedItems.has(id));
 		});
+		this.refreshShelfSelects();
 	}
 
 	/**
@@ -1086,6 +1126,7 @@ export class ListTab {
 				`.wl-card[data-title-id="${esc}"], .wl-card[data-group-id="${esc}"]`,
 			)
 			.forEach((el) => el.classList.toggle('wl-card-selected', selected));
+		this.refreshShelfSelects();
 		this.refreshToolbarActions();
 	}
 
@@ -1226,7 +1267,7 @@ export class ListTab {
 			}
 			const formatRatingOpt = (opt: string): string =>
 				opt.replace(/^(\d+)\.5/, (_m, whole: string) => (whole === '0' ? '½' : `${whole}½`));
-			const priorityOpts = this.plugin.settings.priorities.map((p) => p.name);
+			const priorityOpts = priorityFilterOpts(this.plugin.settings.priorities);
 			const groupOpts = this.dataManager.getGroups().map((g) => g.name);
 
 			// draft — live filter state only changes on Apply
@@ -1237,7 +1278,6 @@ export class ListTab {
 				priorityExclude:          new Set(this.filterPriorityExclude),
 				groupExclude:             new Set(this.filterGroupExclude),
 				filterRatingEmptyOnly:    this.filterRatingEmptyOnly,
-				filterPriorityEmptyOnly:  this.filterPriorityEmptyOnly,
 				filterRecentlyArrivedOnly: this.filterRecentlyArrivedOnly,
 				filterGroupsOnly:         this.filterGroupsOnly,
 				filterFavoritesOnly:      this.filterFavoritesOnly,
@@ -1268,12 +1308,7 @@ export class ListTab {
 				},
 				{
 					label: 'Priority', opts: priorityOpts, excludeSet: draft.priorityExclude,
-					specials: [{
-						text: 'Empty',
-						get: () => draft.filterPriorityEmptyOnly,
-						set: (v) => { draft.filterPriorityEmptyOnly = v; },
-						mode: 'exclusive',
-					}],
+					formatOpt: formatPriorityOpt,
 				},
 			];
 			if (groupOpts.length > 0) {
@@ -1308,7 +1343,6 @@ export class ListTab {
 						ratingExclude:   Array.from(draft.ratingExclude),
 						priorityExclude: Array.from(draft.priorityExclude),
 						ratingEmptyOnly:       draft.filterRatingEmptyOnly,
-						priorityEmptyOnly:     draft.filterPriorityEmptyOnly,
 						recentlyArrivedOnly:   draft.filterRecentlyArrivedOnly,
 						groupsOnly:            draft.filterGroupsOnly,
 						favoritesOnly:         draft.filterFavoritesOnly,
@@ -1326,7 +1360,6 @@ export class ListTab {
 					this.filterPriorityExclude = draft.priorityExclude;
 					this.filterGroupExclude    = draft.groupExclude;
 					this.filterRatingEmptyOnly      = draft.filterRatingEmptyOnly;
-					this.filterPriorityEmptyOnly    = draft.filterPriorityEmptyOnly;
 					this.filterRecentlyArrivedOnly  = draft.filterRecentlyArrivedOnly;
 					this.filterGroupsOnly           = draft.filterGroupsOnly;
 					this.filterFavoritesOnly        = draft.filterFavoritesOnly;
@@ -1496,7 +1529,7 @@ export class ListTab {
 		const moveSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
 		if (hasGroupSelected) {
 			moveSelect.disabled = true;
-			moveSelect.title = 'A group is selected — cannot move groups into other groups';
+			moveSelect.title = 'A group is selected; cannot move groups into other groups';
 		}
 		moveSelect.createEl('option', { text: 'Group…', value: '' });
 		for (const g of allGroups) {

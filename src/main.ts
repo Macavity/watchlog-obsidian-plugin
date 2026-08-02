@@ -13,6 +13,7 @@ import { WatchLogView, WATCHLOG_VIEW_TYPE, TabName } from './WatchLogView';
 import { AirtimeTab } from './AirtimeTab';
 import { WatchLogSettingsTab } from './SettingsTab';
 import { AddTitleModal } from './AddTitleModal';
+import { TitleDetailModal } from './TitleDetailModal';
 import { InsertWidgetModal } from './InsertWidgetModal';
 import { WidgetRenderer } from './WidgetRenderer';
 
@@ -99,8 +100,17 @@ export default class WatchLogPlugin extends Plugin {
 			id: 'add-title',
 			name: 'Add title',
 			callback: () => {
-				new AddTitleModal(this.app, this, this.dataManager, () => {
-					void this.activateView();
+				new AddTitleModal(this.app, this, this.dataManager, (entry) => {
+					// setting off = just reveal whatever tab was open, no modal
+					if (!(this.settings.openWatchlistAfterAdd ?? true)) {
+						void this.activateView();
+						return;
+					}
+					void this.activateView('watchlist').then(() => {
+						// re-read: addTitle may have forced "To be released"
+						const fresh = this.dataManager.getTitle(entry.id) ?? entry;
+						new TitleDetailModal(this.app, this, fresh).open();
+					});
 				}).open();
 			},
 		});
@@ -120,7 +130,7 @@ export default class WatchLogPlugin extends Plugin {
 				const titles = this.dataManager.getTitles();
 				new InsertWidgetModal(this.app, titles, (title) => {
 					void this.activateView().then(() => {
-						new Notice(`"${title.title}" — ${title.type} · ${title.status}`);
+						new Notice(`"${title.title}" · ${title.type} · ${title.status}`);
 					});
 				}).open();
 			},
@@ -226,7 +236,7 @@ export default class WatchLogPlugin extends Plugin {
 		if (Platform.isMobile) return;
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.addClass('wl-statusbar-upcoming');
-		this.statusBarEl.setAttribute('aria-label', 'WatchLog — Upcoming due');
+		this.statusBarEl.setAttribute('aria-label', 'WatchLog: Upcoming due');
 		this.statusBarEl.addEventListener('click', () => void this.activateView('upcoming'));
 		this.updateStatusBar();
 	}
@@ -451,7 +461,7 @@ export default class WatchLogPlugin extends Plugin {
 			}
 		} catch (e) {
 			readingOk = false;
-			console.warn('[WL] reading.json read/parse failed — migration will retry next load:', e);
+			console.warn('[WL] reading.json read/parse failed; migration will retry next load:', e);
 		}
 
 		// read legacy history.json
@@ -468,7 +478,7 @@ export default class WatchLogPlugin extends Plugin {
 			}
 		} catch (e) {
 			historyOk = false;
-			console.warn('[WL] history.json read/parse failed — migration will retry next load:', e);
+			console.warn('[WL] history.json read/parse failed; migration will retry next load:', e);
 		}
 
 		// copy into the saveData object (with the don't-overwrite-with-empty belt)
@@ -501,15 +511,15 @@ export default class WatchLogPlugin extends Plugin {
 
 	private openWidgetPalette(editor: Editor): void {
 		const widgets = [
-			{ name: 'wl-todo — Track a title (full)', id: 'wl-todo' },
-			{ name: 'wl-todo mini — Track a title (compact)', id: 'wl-todo:mini' },
-			{ name: 'wl-stat: watched — Time watched (mini)', id: 'wl-stat:watched' },
-			{ name: 'wl-stat: completed — Completed titles (mini)', id: 'wl-stat:completed' },
-			{ name: 'wl-stat: remaining — Time remaining (mini)', id: 'wl-stat:remaining' },
-			{ name: 'wl-stat: time — Watched + remaining (mini)', id: 'wl-stat:time' },
-			{ name: 'wl-upcoming: next — Next upcoming (mini)', id: 'wl-upcoming:next' },
-			{ name: 'wl-stat: time completed full — Time · Remaining · Completed card', id: 'wl-stat:time completed full' },
-			{ name: 'wl-now-next — Now Watching + Up Next card', id: 'wl-now-next' },
+			{ name: 'wl-todo: Track a title (full)', id: 'wl-todo' },
+			{ name: 'wl-todo mini: Track a title (compact)', id: 'wl-todo:mini' },
+			{ name: 'wl-stat: watched: Time watched (mini)', id: 'wl-stat:watched' },
+			{ name: 'wl-stat: completed: Completed titles (mini)', id: 'wl-stat:completed' },
+			{ name: 'wl-stat: remaining: Time remaining (mini)', id: 'wl-stat:remaining' },
+			{ name: 'wl-stat: time: Watched + remaining (mini)', id: 'wl-stat:time' },
+			{ name: 'wl-upcoming: next: Next upcoming (mini)', id: 'wl-upcoming:next' },
+			{ name: 'wl-stat: time completed full: Time · Remaining · Completed card', id: 'wl-stat:time completed full' },
+			{ name: 'wl-now-next: Now Watching + Up Next card', id: 'wl-now-next' },
 		];
 
 		new WidgetSelectModal(this.app, widgets, (selected) => {
