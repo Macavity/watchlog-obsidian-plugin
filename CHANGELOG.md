@@ -1,6 +1,27 @@
 # Changelog
 
 All notable changes to WatchLog are documented here.
+## [3.1.0] - 2026-08-02
+
+##### Added
+
+* Added an input to the "Add from URL" modal to allow adding via TMDb links as well
+* Added a checkbox next to the header of each row for the "Select" feature to select all titles from a single row
+##### Improved
+
+* When adding a title in Watchlist via Command Palette, it now navigates to the plugin modal; this can be toggled off in the plugin settings under the Watchlist tab
+
+##### Changed
+
+* The "Add" modal inside the Watchlist tab now includes the Rating feature as well
+* When adding a title through OMDb, only the year (YYYY) is now shown, since day/month weren't accurate data; no change to TMDb, as its API returns a real full date
+* Mobile/Tablet view on settings tabs now shows icons instead of text; fixes a visual bug where tabs overflowed outside the DOM
+##### Fixed
+
+* Fixed the thumbnail not showing inside the "Add" modal when using the OMDb API
+* Fixed the title type below the cards showing "1 eps" instead of "movie" when using the OMDb API
+* Fixed a visual bug in dropdown fields showing excessive arrows due to certain themes or CSS snippets
+
 
 ## [3.0.0] - 2026-08-01
 
