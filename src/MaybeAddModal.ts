@@ -4,7 +4,7 @@ import type { DataManager } from './DataManager';
 import type { MaybeTitle, AnimeSearchResult, MediaSearchResult } from './types';
 import { formatDateDisplay, getApiGroupForType } from './types';
 import { createDatePicker } from './DatePicker';
-import { apiErrorMessage } from './ApiService';
+import { apiErrorMessage, SEARCH_PAGE_SIZE, SEARCH_RESULT_LIMIT } from './ApiService';
 
 type SearchResult = AnimeSearchResult | MediaSearchResult;
 
@@ -19,7 +19,9 @@ export class MaybeAddModal extends Modal {
 
 	private selectedType = 'Anime';
 	private searchQuery = '';
+	private searchYear = '';
 	private searchResults: SearchResult[] = [];
+	private resultPage = 0;
 	private isSearching = false;
 	private searchGeneration = 0;
 	private searchError = '';
@@ -31,6 +33,7 @@ export class MaybeAddModal extends Modal {
 	private fieldLink = '';
 
 	private resultsEl: HTMLElement | null = null;
+	private pagerEl: HTMLElement | null = null;
 	private formEl: HTMLElement | null = null;
 	private searchDebounce: number | null = null;
 
@@ -87,10 +90,24 @@ export class MaybeAddModal extends Modal {
 			if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
 			this.searchDebounce = window.setTimeout(() => void this.performSearch(), 600);
 		});
+		const yearInput = searchRow.createEl('input', {
+			cls: 'wl-modal-input wl-search-year',
+			attr: { type: 'text', inputmode: 'numeric', maxlength: '4', placeholder: 'Year' },
+		});
+		yearInput.value = this.searchYear;
+		yearInput.addEventListener('input', () => {
+			// digits only; the APIs want a bare YYYY
+			yearInput.value = yearInput.value.replace(/\D/g, '');
+			this.searchYear = yearInput.value;
+			if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
+			this.searchDebounce = window.setTimeout(() => void this.performSearch(), 600);
+		});
+
 		const searchBtn = searchRow.createEl('button', { cls: 'wl-btn', text: 'Search' });
 		searchBtn.addEventListener('click', () => void this.performSearch());
 
 		this.resultsEl = content.createDiv({ cls: 'wl-modal-results' });
+		this.pagerEl = content.createDiv({ cls: 'wl-result-pager' });
 		this.formEl = content.createDiv({ cls: 'wl-modal-form' });
 		this.renderForm();
 	}
@@ -99,6 +116,7 @@ export class MaybeAddModal extends Modal {
 		if (!this.searchQuery.trim()) return;
 		const gen = ++this.searchGeneration;
 		this.isSearching = true;
+		this.resultPage = 0;
 		this.renderResults();
 		try {
 			const api = this.plugin.apiService;
@@ -111,12 +129,12 @@ export class MaybeAddModal extends Modal {
 			} else if (apiGroup === 'anime') {
 				const animeSource = this.plugin.settings.animeApiSource ?? 'jikan';
 				results = animeSource === 'anilist'
-					? await api.searchAniList(this.searchQuery)
-					: await api.searchAnime(this.searchQuery);
+					? await api.searchAniList(this.searchQuery, this.searchYear)
+					: await api.searchAnime(this.searchQuery, this.searchYear, SEARCH_RESULT_LIMIT);
 			} else if (activeApi === 'TMDB') {
-				results = await api.searchTmdb(this.searchQuery, isMovie ? 'movie' : 'series');
+				results = await api.searchTmdb(this.searchQuery, isMovie ? 'movie' : 'series', this.searchYear);
 			} else {
-				results = await api.searchOmdb(this.searchQuery, isMovie ? 'movie' : 'series');
+				results = await api.searchOmdb(this.searchQuery, isMovie ? 'movie' : 'series', this.searchYear);
 			}
 			if (gen !== this.searchGeneration) return; // stale
 			this.searchError = '';
@@ -136,6 +154,7 @@ export class MaybeAddModal extends Modal {
 	private renderResults(): void {
 		if (!this.resultsEl) return;
 		this.resultsEl.empty();
+		this.renderPager();
 		if (this.isSearching) { this.resultsEl.createDiv({ cls: 'wl-modal-loading', text: 'Searching...' }); return; }
 		if (this.searchError) {
 			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api wl-modal-api-error' });
@@ -144,14 +163,39 @@ export class MaybeAddModal extends Modal {
 			return;
 		}
 		if (!this.searchResults.length) return;
-		this.searchResults.forEach((result, idx) => {
+		const start = this.resultPage * SEARCH_PAGE_SIZE;
+		this.searchResults.slice(start, start + SEARCH_PAGE_SIZE).forEach((result, i) => {
 			const item = this.resultsEl!.createDiv({ cls: 'wl-result-item' });
 			const epText = isAnimeResult(result) ? `${result.episodes} eps` : result.episodes > 0 ? `${result.episodes} eps` : result.mediaType;
 			item.createDiv({ cls: 'wl-result-title', text: result.title });
 			item.createDiv({ cls: 'wl-result-meta', text: `${epText} · ${formatDateDisplay(result.releaseDate)}` });
-			item.dataset['idx'] = String(idx);
+			item.dataset['idx'] = String(start + i);
 			item.addEventListener('click', () => void this.selectResult(result, item));
 		});
+	}
+
+	private renderPager(): void {
+		if (!this.pagerEl) return;
+		this.pagerEl.empty();
+		const total = Math.ceil(this.searchResults.length / SEARCH_PAGE_SIZE);
+		if (this.isSearching || total <= 1) return;
+
+		const prev = this.pagerEl.createEl('button', { cls: 'wl-btn wl-result-pager-btn', text: '‹' });
+		prev.disabled = this.resultPage === 0;
+		prev.addEventListener('click', () => this.goToPage(this.resultPage - 1));
+
+		this.pagerEl.createSpan({ cls: 'wl-result-pager-info', text: `Page ${this.resultPage + 1} of ${total}` });
+
+		const next = this.pagerEl.createEl('button', { cls: 'wl-btn wl-result-pager-btn', text: '›' });
+		next.disabled = this.resultPage >= total - 1;
+		next.addEventListener('click', () => this.goToPage(this.resultPage + 1));
+	}
+
+	private goToPage(page: number): void {
+		const total = Math.ceil(this.searchResults.length / SEARCH_PAGE_SIZE);
+		this.resultPage = Math.max(0, Math.min(page, total - 1));
+		this.renderResults();
+		this.resultsEl?.scrollTo({ top: 0 });
 	}
 
 	private async selectResult(result: SearchResult, itemEl: HTMLElement): Promise<void> {
