@@ -1444,6 +1444,14 @@
   flex: unset;
 }
 
+/* add-flow search: optional YYYY filter beside the query */
+.wl-search-year {
+  flex: 0 0 auto;
+  width: 60px;
+  min-width: 0;
+  text-align: center;
+}
+
 .wl-modal-input:focus {
   outline: none;
   border-color: var(--interactive-accent);
@@ -1520,6 +1528,30 @@
 .wl-results-grid > .wl-modal-loading,
 .wl-results-grid > .wl-modal-no-api {
   grid-column: 1 / -1;
+}
+
+/* 9 results per page; empty when there is only one page */
+.wl-result-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.wl-result-pager-info {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.wl-result-pager-btn {
+  padding: 2px 10px;
+  line-height: 1.2;
+}
+
+.wl-result-pager-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* text-only rows: maybe-add modal + autofill dropdown */

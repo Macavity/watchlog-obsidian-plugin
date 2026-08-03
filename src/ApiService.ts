@@ -4,9 +4,11 @@ import type {
 	MediaSearchResult,
 	WatchLogTitle,
 	JikanAnime,
+	OmdbSearchItem,
 	OmdbSearchResponse,
 	OmdbDetailResponse,
 	OmdbSeasonResponse,
+	TmdbSearchItem,
 	TmdbSearchResponse,
 	TmdbMovieDetail,
 	TmdbTvDetail,
@@ -35,6 +37,20 @@ const IGDB_BASE = 'https://api.igdb.com/v4';
 const TWITCH_TOKEN_URL = 'https://id.twitch.tv/oauth2/token';
 const JIKAN_RATE_LIMIT_MS = 400;
 const API_TIMEOUT_MS = 8000;
+
+/** Add-flow search: 9 results per modal page, 3 pages. */
+export const SEARCH_PAGE_SIZE = 9;
+export const SEARCH_MAX_PAGES = 3;
+export const SEARCH_RESULT_LIMIT = SEARCH_PAGE_SIZE * SEARCH_MAX_PAGES;
+/** Fixed upstream page sizes; the fetch loops page until they reach the cap. */
+const TMDB_PAGE_SIZE = 20;
+const OMDB_PAGE_SIZE = 10;
+const JIKAN_PAGE_SIZE = 25;
+
+/** '' unless the input is a plain 4-digit year. Guards every provider's year filter. */
+function searchYear(year: string | undefined): string {
+	return year?.trim().match(/^\d{4}$/)?.[0] ?? '';
+}
 
 /** Canonical YouTube watch URL from a raw video id. */
 function youtubeWatchUrl(id: string): string {
@@ -804,11 +820,13 @@ export class ApiService {
 		};
 	}
 
-	async searchAniList(query: string): Promise<AnimeSearchResult[]> {
+	async searchAniList(query: string, year?: string): Promise<AnimeSearchResult[]> {
+		// AniList rejects startDate_like: null, so the arg is only declared when a year is set
+		const yr = searchYear(year);
 		const gql = `
-			query ($search: String) {
-				Page(page: 1, perPage: 10) {
-					media(search: $search, type: ANIME) {
+			query ($search: String${yr ? ', $year: String' : ''}) {
+				Page(page: 1, perPage: ${SEARCH_RESULT_LIMIT}) {
+					media(search: $search, type: ANIME${yr ? ', startDate_like: $year' : ''}) {
 						id
 						title { romaji english native }
 						episodes
@@ -827,9 +845,10 @@ export class ApiService {
 				}
 			}
 		`;
+		const variables = yr ? { search: query, year: `${yr}%` } : { search: query };
 		// throws ApiError — the caller renders the reason instead of an empty result list
 		const res = await this.throttleAniList(() =>
-			this.postJsonWithTimeout(ANILIST_ENDPOINT, { query: gql, variables: { search: query } }),
+			this.postJsonWithTimeout(ANILIST_ENDPOINT, { query: gql, variables }),
 		);
 		const data = res as AniListSearchResponse;
 		const media = data.data?.Page?.media ?? [];
@@ -871,11 +890,27 @@ export class ApiService {
 
 	// Jikan / MAL
 
-	/** throws ApiError */
-	async searchAnime(query: string): Promise<AnimeSearchResult[]> {
-		const url = `${JIKAN_BASE}/anime?q=${encodeURIComponent(query)}&limit=10&sfw=false`;
-		const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanAnime[] };
-		return (data.data ?? []).map((a) => this.mapJikanAnime(a));
+	/**
+	 * throws ApiError. `limit` defaults to one Jikan page; the add flow passes the full cap,
+	 * which costs a second (throttled) request.
+	 */
+	async searchAnime(query: string, year?: string, limit = JIKAN_PAGE_SIZE): Promise<AnimeSearchResult[]> {
+		// Jikan has no year param; a whole-year window is the equivalent
+		const yr = searchYear(year);
+		const base =
+			`${JIKAN_BASE}/anime?q=${encodeURIComponent(query)}&limit=${JIKAN_PAGE_SIZE}&sfw=false` +
+			(yr ? `&start_date=${yr}-01-01&end_date=${yr}-12-31` : '');
+		const items: JikanAnime[] = [];
+		const maxPages = Math.ceil(limit / JIKAN_PAGE_SIZE);
+		for (let page = 1; page <= maxPages; page++) {
+			const data = (await this.throttleJikan(() => this.fetchWithTimeout(`${base}&page=${page}`))) as {
+				data?: JikanAnime[];
+				pagination?: { has_next_page?: boolean };
+			};
+			items.push(...(data.data ?? []));
+			if (items.length >= limit || !data.pagination?.has_next_page) break;
+		}
+		return items.slice(0, limit).map((a) => this.mapJikanAnime(a));
 	}
 
 	/** Resolves a Jikan `trailer` object to a YouTube URL, or 'none' when absent. */
@@ -911,32 +946,44 @@ export class ApiService {
 	// OMDb
 
 	/** throws ApiError */
-	async searchOmdb(query: string, type: 'movie' | 'series'): Promise<MediaSearchResult[]> {
+	async searchOmdb(query: string, type: 'movie' | 'series', year?: string): Promise<MediaSearchResult[]> {
 		if (!this.omdbApiKey) throw new ApiError('omdb', 'no-key', 'OMDb API key not set');
-		const url = `${OMDB_BASE}/?s=${encodeURIComponent(query)}&type=${type}&apikey=${encodeURIComponent(this.omdbApiKey)}`;
-		{
-			const data = (await this.fetchWithTimeout(url)) as OmdbSearchResponse;
+		const yr = searchYear(year);
+		const base =
+			`${OMDB_BASE}/?s=${encodeURIComponent(query)}&type=${type}` +
+			(yr ? `&y=${yr}` : '') +
+			`&apikey=${encodeURIComponent(this.omdbApiKey)}`;
+		const items: OmdbSearchItem[] = [];
+		const maxPages = Math.ceil(SEARCH_RESULT_LIMIT / OMDB_PAGE_SIZE);
+		for (let page = 1; page <= maxPages; page++) {
+			const data = (await this.fetchWithTimeout(`${base}&page=${page}`)) as OmdbSearchResponse;
 			assertOmdbOk(data);
-			if (data.Response === 'False') return [];
-			return (data.Search ?? []).slice(0, 10).map((item) => {
-				// series Year is a range ("2008–2013", "2025–") — keep the start year only
-				const year = item.Year?.match(/^(\d{4})/)?.[1];
-				// year only. OMDb search has no day/month; a faked 01-01 reads like a real date
-				return {
-					imdbId: item.imdbID,
-					title: item.Title,
-					mediaType: type === 'movie' ? ('movie' as const) : ('tv' as const),
-					// 0 like TMDB — the result card prints the media type instead of "1 eps".
-					// The real count comes from the detail call on select.
-					episodes: 0,
-					episodeDuration: 0,
-					releaseDate: year ?? '',
-					url: `https://www.imdb.com/title/${item.imdbID}`,
-					seasons: [],
-					posterUrl: item.Poster && item.Poster !== 'N/A' ? item.Poster : undefined,
-				};
-			});
+			// past the last page OMDb answers Response:False, not an empty list
+			if (data.Response === 'False') break;
+			const batch = data.Search ?? [];
+			items.push(...batch);
+			const total = parseInt(data.totalResults ?? '', 10);
+			if (items.length >= SEARCH_RESULT_LIMIT || batch.length < OMDB_PAGE_SIZE) break;
+			if (Number.isFinite(total) && items.length >= total) break;
 		}
+		return items.slice(0, SEARCH_RESULT_LIMIT).map((item) => {
+			// series Year is a range ("2008–2013", "2025–") — keep the start year only
+			const startYear = item.Year?.match(/^(\d{4})/)?.[1];
+			// year only. OMDb search has no day/month; a faked 01-01 reads like a real date
+			return {
+				imdbId: item.imdbID,
+				title: item.Title,
+				mediaType: type === 'movie' ? ('movie' as const) : ('tv' as const),
+				// 0 like TMDB — the result card prints the media type instead of "1 eps".
+				// The real count comes from the detail call on select.
+				episodes: 0,
+				episodeDuration: 0,
+				releaseDate: startYear ?? '',
+				url: `https://www.imdb.com/title/${item.imdbID}`,
+				seasons: [],
+				posterUrl: item.Poster && item.Poster !== 'N/A' ? item.Poster : undefined,
+			};
+		});
 	}
 
 	async getOmdbMovieDetails(imdbId: string): Promise<MediaSearchResult | null> {
@@ -1088,12 +1135,23 @@ export class ApiService {
 	// TMDB
 
 	/** throws ApiError */
-	async searchTmdb(query: string, type: 'movie' | 'series'): Promise<MediaSearchResult[]> {
+	async searchTmdb(query: string, type: 'movie' | 'series', year?: string): Promise<MediaSearchResult[]> {
 		if (!this.tmdbApiKey) throw new ApiError('tmdb', 'no-key', 'TMDB token not set');
 		const endpoint = type === 'movie' ? 'movie' : 'tv';
-		const url = `${TMDB_BASE}/search/${endpoint}?query=${encodeURIComponent(query)}&page=1`;
-		const data = (await this.fetchWithTimeout(url, this.tmdbHeaders())) as TmdbSearchResponse;
-		return (data.results ?? []).slice(0, 10).map((item) => ({
+		// TMDB matches `query` literally; a year typed into it ("Bachelor 2021") finds nothing
+		const yr = searchYear(year);
+		const yearKey = type === 'movie' ? 'primary_release_year' : 'first_air_date_year';
+		const base =
+			`${TMDB_BASE}/search/${endpoint}?query=${encodeURIComponent(query)}` +
+			(yr ? `&${yearKey}=${yr}` : '');
+		const items: TmdbSearchItem[] = [];
+		const maxPages = Math.ceil(SEARCH_RESULT_LIMIT / TMDB_PAGE_SIZE);
+		for (let page = 1; page <= maxPages; page++) {
+			const data = (await this.fetchWithTimeout(`${base}&page=${page}`, this.tmdbHeaders())) as TmdbSearchResponse;
+			items.push(...(data.results ?? []));
+			if (items.length >= SEARCH_RESULT_LIMIT || page >= (data.total_pages ?? 1)) break;
+		}
+		return items.slice(0, SEARCH_RESULT_LIMIT).map((item) => ({
 			imdbId: String(item.id),
 			title: item.title ?? item.name ?? '',
 			mediaType: type === 'movie' ? ('movie' as const) : ('tv' as const),

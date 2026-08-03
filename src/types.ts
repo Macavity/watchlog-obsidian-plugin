@@ -1547,7 +1547,7 @@ export interface JikanAnime {
 
 // OMDb API shapes
 
-interface OmdbSearchItem {
+export interface OmdbSearchItem {
 	Title: string;
 	Year: string;
 	imdbID: string;
@@ -1560,6 +1560,8 @@ export interface OmdbSearchResponse {
 	Search?: OmdbSearchItem[];
 	Response: string;
 	Error?: string;
+	/** Total hits across all pages, as a string. */
+	totalResults?: string;
 }
 
 export interface OmdbDetailResponse {
@@ -1590,7 +1592,7 @@ export interface OmdbSeasonResponse {
 
 // TMDB API shapes
 
-interface TmdbSearchItem {
+export interface TmdbSearchItem {
 	id: number;
 	title?: string;
 	name?: string;
@@ -1601,6 +1603,7 @@ interface TmdbSearchItem {
 
 export interface TmdbSearchResponse {
 	results?: TmdbSearchItem[];
+	total_pages?: number;
 }
 
 export interface TmdbVideo {

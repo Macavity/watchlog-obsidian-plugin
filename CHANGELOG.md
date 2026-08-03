@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to WatchLog are documented here.
+## [3.1.1] - 2026-08-03
+
+* Search in the "Add" modals now has a Year filter and returns up to 27 results across 3 pages instead of only the first 10 
+
+
 ## [3.1.0] - 2026-08-02
 
 ##### Added
