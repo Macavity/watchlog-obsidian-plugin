@@ -1444,6 +1444,15 @@
   flex: unset;
 }
 
+/* add-flow search: query, year and button share a wrapper so mobile can stack them */
+.wl-search-fields {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 /* add-flow search: optional YYYY filter beside the query */
 .wl-search-year {
   flex: 0 0 auto;
@@ -11079,6 +11088,26 @@ input.wl-settings-count-input {
 .is-mobile .wl-reading-detail-today-btn {
   padding: 2px 7px;
   font-size: 11px;
+}
+
+/* search row, phone: query on its own line, year + Search under it */
+.is-mobile .wl-search-fields {
+  flex-wrap: wrap;
+}
+
+.is-mobile .wl-search-fields .wl-search-query {
+  box-sizing: border-box;
+  flex: 1 0 100%;
+}
+
+.is-mobile .wl-search-row .wl-search-year {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 90px;
+}
+
+.is-mobile .wl-search-fields .wl-btn {
+  margin-left: auto;
 }
 
 /* needs 3 classes: Obsidian's `body.is-mobile input[type=text] { width: 100% }` outweighs 2 */
