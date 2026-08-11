@@ -78,10 +78,12 @@ export class MaybeAddModal extends Modal {
 			this.renderForm();
 		});
 
-		const searchRow = content.createDiv({ cls: 'wl-modal-row' });
+		const searchRow = content.createDiv({ cls: 'wl-modal-row wl-search-row' });
 		searchRow.createSpan({ cls: 'wl-modal-label', text: 'Search' });
-		const searchInput = searchRow.createEl('input', {
-			cls: 'wl-modal-input',
+		// one wrapper so mobile can stack: query on top, year + button under it
+		const searchFields = searchRow.createDiv({ cls: 'wl-search-fields' });
+		const searchInput = searchFields.createEl('input', {
+			cls: 'wl-modal-input wl-search-query',
 			attr: { type: 'text', placeholder: 'Search for a title...' },
 		});
 		searchInput.value = this.searchQuery;
@@ -90,7 +92,7 @@ export class MaybeAddModal extends Modal {
 			if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
 			this.searchDebounce = window.setTimeout(() => void this.performSearch(), 600);
 		});
-		const yearInput = searchRow.createEl('input', {
+		const yearInput = searchFields.createEl('input', {
 			cls: 'wl-modal-input wl-search-year',
 			attr: { type: 'text', inputmode: 'numeric', maxlength: '4', placeholder: 'Year' },
 		});
@@ -103,7 +105,7 @@ export class MaybeAddModal extends Modal {
 			this.searchDebounce = window.setTimeout(() => void this.performSearch(), 600);
 		});
 
-		const searchBtn = searchRow.createEl('button', { cls: 'wl-btn', text: 'Search' });
+		const searchBtn = searchFields.createEl('button', { cls: 'wl-btn', text: 'Search' });
 		searchBtn.addEventListener('click', () => void this.performSearch());
 
 		this.resultsEl = content.createDiv({ cls: 'wl-modal-results' });

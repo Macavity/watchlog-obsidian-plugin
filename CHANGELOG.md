@@ -1,6 +1,10 @@
 # Changelog
 
 All notable changes to WatchLog are documented here.
+## [3.1.2] - 2026-08-11
+
+* Mobile add modal fix: stack year + search under the query
+
 ## [3.1.1] - 2026-08-03
 
 * Search in the "Add" modals now has a Year filter and returns up to 27 results across 3 pages instead of only the first 10 
