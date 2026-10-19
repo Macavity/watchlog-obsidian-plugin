@@ -300,8 +300,6 @@ export class GameDataManager {
 		if (slot && this.dirty.has(src.id)) return slot.view;
 		const base = this.normalized(src);
 		const view = structuredClone(base);
-		// a cover cached by an earlier version shows until the note is written with it
-		if (!view.coverUrl) view.coverUrl = this.local.getCache(src.id)?.coverUrl ?? '';
 		this.views.set(src.id, { src, base, view });
 		setBaseline(view, base);
 		return view;
@@ -478,16 +476,6 @@ export class GameDataManager {
 		await this.flushViews();
 	}
 
-	/** Covers live in the note (E12); a cached one is legacy and goes once the note has been written. */
-	private dropLegacyCover(id: string): void {
-		const cached = this.local.getCache(id);
-		if (cached?.coverUrl === undefined) return;
-		const rest = { ...cached };
-		delete rest.coverUrl;
-		this.local.data.cache[id] = rest;
-		this.local.queueSave();
-	}
-
 	// Groups — derived from the `groups` property of the game notes (id = name); an empty group does not exist.
 
 	getGroups(): GameGroup[] {
@@ -641,7 +629,6 @@ export class GameDataManager {
 	 */
 	private afterWrite(g: Game, fm: Record<string, unknown>, background = false): void {
 		const fresh = this.basedOnStored(g);
-		this.dropLegacyCover(g.id);
 		const stored = decodeGame(g.id, fm).entry;
 		this.index.applyLocal({ kind: 'game', entry: stored }, { background });
 		g.vaultPage = this.layout().pathFromId(g.id);

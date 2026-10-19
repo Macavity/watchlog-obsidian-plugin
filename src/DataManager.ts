@@ -39,10 +39,6 @@ const TITLE_KEYS: readonly string[] = [
 	...AIRTIME_KEYS,
 ];
 
-function isLegacyCachedPoster(url: string | undefined): boolean {
-	return !!url && url !== 'none';
-}
-
 /** The note-side schedule of an Upcoming entry; the 'once' date lives in the note's releaseDate. */
 function toEntryAirtime(e: AirtimeEntry): EntryAirtime {
 	const s = e.schedule;
@@ -192,8 +188,7 @@ export class DataManager {
 		if (!service) return;
 		for (const t of titles) {
 			if (t.maybe || this.posterRequested.has(t.id)) continue;
-			// a cached URL is legacy (posters live in the note): queue it so the note gets it
-			if (t.posterUrl && !isLegacyCachedPoster(this.local.getCache(t.id)?.posterUrl)) continue;
+			if (t.posterUrl) continue;
 			const identified = !!t.tmdbId || !!t.malId || !!t.anilistId || externalIdFromLink(t.externalLink) !== null;
 			if (!identified) continue;
 			this.posterRequested.add(t.id);
@@ -338,7 +333,7 @@ export class DataManager {
 			this.schedulePosterSave();
 			return;
 		}
-		if (!url || (hasPoster && !overwrite && !isLegacyCachedPoster(this.local.getCache(titleId)?.posterUrl))) return;
+		if (!url || (hasPoster && !overwrite)) return;
 		if (this.dirty.has(titleId) || this.pendingMdTitleIds.has(titleId)) {
 			// the pending write carries it
 			title.posterUrl = url;
@@ -356,13 +351,6 @@ export class DataManager {
 			delete raw.manualPosterUrl;
 			title.posterUrl = url;
 		}, !overwrite);
-		const cached = this.local.getCache(titleId);
-		if (isLegacyCachedPoster(cached?.posterUrl)) {
-			const rest = { ...cached };
-			delete rest.posterUrl;
-			this.local.data.cache[titleId] = rest;
-			this.local.queueSave();
-		}
 	}
 
 	/** Silent TMDB id + collection cache. tmdbId null = not a movie, keep the verdict only. */
@@ -1757,8 +1745,6 @@ export class DataManager {
 		for (const key of TITLE_CACHE_KEYS) delete next[key];
 		Object.assign(next, splitCache(t));
 		if (!next.seasons && prev.seasons) next.seasons = prev.seasons;
-		// a legacy cached poster stays until the note holds the URL
-		if (isLegacyCachedPoster(prev.posterUrl) && prev.posterUrl === t.posterUrl) next.posterUrl = prev.posterUrl;
 		if (sameJson(next, prev)) return;
 		this.local.data.cache[t.id] = next;
 		this.local.queueSave();

@@ -41,12 +41,11 @@ describe('images are note fields (E12)', () => {
 		expect(game).not.toHaveProperty('coverOverride');
 	});
 
-	it('title: background fetch writes poster into an empty note field and clears the cache', async () => {
+	it('title: background fetch writes poster into an empty note field', async () => {
 		const { dm, f, local } = await setupDataManager({ 'W/Movie/A.md': '---\ntitle: A\ntype: Movie\n---\n' });
-		local.setCache('Movie/A', { posterUrl: 'https://legacy' });
 		await dm.updatePosterUrl('Movie/A', 'https://img/p.jpg');
 		expect(fmOf(f.files.get('W/Movie/A.md')).poster).toBe('https://img/p.jpg');
-		expect(local.getCache('Movie/A')).not.toHaveProperty('posterUrl');
+		expect(local.getCache('Movie/A')?.posterUrl).toBeUndefined();
 		expect(dm.getTitle('Movie/A')?.posterUrl).toBe('https://img/p.jpg');
 	});
 
@@ -80,7 +79,7 @@ describe('images are note fields (E12)', () => {
 		expect(dm.getTitle('Movie/A')?.posterUrl).toBe('none');
 	});
 
-	it('title: queues a legacy cached poster so it moves into the note', async () => {
+	it('title: queues an identified title without poster', async () => {
 		const { posterQueue } = await setupDataManager({
 			'W/Movie/A.md': '---\ntitle: A\ntype: Movie\nexternalId: tmdb:movie:603\n---\n',
 		});
@@ -100,21 +99,13 @@ describe('images are note fields (E12)', () => {
 		expect(rdm.getBook('Books/Emma')?.coverUrl).toBe('https://mine');
 	});
 
-	it('reading: an explicit update overwrites; a legacy cached cover is shown and moves into the note', async () => {
-		const { rdm, f, local } = await setupReadingDataManager({
+	it('reading: an explicit update overwrites', async () => {
+		const { rdm, f } = await setupReadingDataManager({
 			'W/Books/Dune.md': '---\ntitle: Dune\nstatus: Reading\ntype: book\ncoverUrl: https://old\n---\n',
-			'W/Books/Emma.md': '---\ntitle: Emma\nstatus: Reading\ntype: book\n---\n',
 		});
 		const dune = rdm.getBook('Books/Dune')!;
 		await rdm.updateBook({ ...dune, coverUrl: 'https://new' });
 		expect(fmOf(f.files.get('W/Books/Dune.md')).coverUrl).toBe('https://new');
-		local.setCache('Books/Emma', { coverUrl: 'https://legacy' });
-		const emma = rdm.getBook('Books/Emma')!;
-		expect(emma.coverUrl).toBe('https://legacy');
-		emma.rating = 3;
-		await rdm.updateBook(emma);
-		expect(fmOf(f.files.get('W/Books/Emma.md')).coverUrl).toBe('https://legacy');
-		expect(local.getCache('Books/Emma')).not.toHaveProperty('coverUrl');
 	});
 
 	it('games: lazy cover fetch fills an empty coverUrl only', async () => {

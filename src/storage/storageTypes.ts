@@ -22,7 +22,7 @@ export interface ExternalId {
 export type ApiCheckResult = 'ok' | 'transient' | 'nokey' | 'notfound';
 
 export interface EntryCache {
-	/** 'none' = the poster fetch found nothing; a URL is legacy (posters live in the note, E12) */
+	/** only the marker 'none' = the poster fetch found nothing; posters live in the note (E12) */
 	posterUrl?: string;
 	trailerUrl?: string;
 	director?: string[];
@@ -38,8 +38,6 @@ export interface EntryCache {
 	tmdbMediaType?: 'movie' | 'tv';
 	malId?: number;
 	anilistId?: number;
-	/** legacy: covers live in the note now (E12); still read when the note has none */
-	coverUrl?: string;
 	/** last background API check per kind: when, and how it ended (drives the retry deadline) */
 	apiCheck?: Partial<Record<'airing' | 'seasons', { at: string; result: ApiCheckResult }>>;
 	/** next/last aired episode from TMDB or AniList; season-relative episode numbers */

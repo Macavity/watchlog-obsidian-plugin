@@ -318,16 +318,6 @@ export class ReadingDataManager {
 		return this.updateCoverUrl(kind, id, url);
 	}
 
-	/** Covers live in the note (E12); a cached one is legacy and goes once the note has been written. */
-	private dropLegacyCover(id: string): void {
-		const cached = this.local.getCache(id);
-		if (cached?.coverUrl === undefined) return;
-		const rest = { ...cached };
-		delete rest.coverUrl;
-		this.local.data.cache[id] = rest;
-		this.local.queueSave();
-	}
-
 	// Reading → Upcoming and release status
 
 	/**
@@ -379,8 +369,6 @@ export class ReadingDataManager {
 			...(src.groups ? { groups: [...src.groups] } : {}),
 			vaultPage: this.layout().pathFromId(src.id),
 		} as Item;
-		// a cover cached by an earlier version shows until the note is written with it
-		if (!view.coverUrl) view.coverUrl = this.local.getCache(src.id)?.coverUrl ?? '';
 		this.applyReleaseStatus(view);
 		this.views.set(src.id, { src, view });
 		setBaseline(view, src);
@@ -732,7 +720,6 @@ export class ReadingDataManager {
 	 */
 	private afterWrite(kind: ReadingKind, item: Item, fm: Fm, background = false): void {
 		const fresh = this.basedOnStored(item);
-		this.dropLegacyCover(item.id);
 		const stored = kind === 'book' ? decodeBook(item.id, fm).entry : decodeManga(item.id, fm).entry;
 		this.index.applyLocal(kind === 'book'
 			? { kind: 'book', entry: stored as Book }
