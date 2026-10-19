@@ -51,6 +51,10 @@ const OMDB_PAGE_SIZE = 10;
 const JIKAN_PAGE_SIZE = 25;
 
 /** '' unless the input is a plain 4-digit year. Guards every provider's year filter. */
+function nonEmptySeasons(seasons: Season[] | undefined): Season[] | null {
+	return seasons && seasons.length > 0 ? seasons : null;
+}
+
 function searchYear(year: string | undefined): string {
 	return year?.trim().match(/^\d{4}$/)?.[0] ?? '';
 }
@@ -1248,6 +1252,38 @@ export class ApiService {
 			};
 		} catch (e) {
 			rethrowAuth(e);
+			return null;
+		}
+	}
+
+	// Season refill (a note from another device, no cached seasons)
+
+	/**
+	 * Season list by identity, from the same sources the add flow uses: AniList/Jikan episode count
+	 * (one season), TMDB tv details, or OMDb/TMDB for an IMDb link. null = movie, no source, no
+	 * seasons or the request failed.
+	 */
+	async fetchSeasons(
+		title: Pick<WatchLogTitle, 'anilistId' | 'malId' | 'tmdbId' | 'tmdbMediaType' | 'externalLink'>,
+	): Promise<Season[] | null> {
+		const single = (episodes: number | null | undefined): Season[] | null =>
+			episodes ? [{ name: 'Season 1', episodes, offset: 0 }] : null;
+		try {
+			if (title.anilistId !== undefined) return single((await this.getAniListById(title.anilistId))?.episodes);
+			if (title.malId !== undefined) {
+				const url = `${JIKAN_BASE}/anime/${title.malId}`;
+				const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanAnime };
+				return single(data.data?.episodes);
+			}
+			if (title.tmdbId !== undefined) {
+				if (title.tmdbMediaType !== 'tv') return null;
+				return nonEmptySeasons((await this.getTmdbTvDetails(String(title.tmdbId)))?.seasons);
+			}
+			const imdbId = imdbIdFromLink(title.externalLink);
+			if (!imdbId) return null;
+			const full = this.omdbApiKey ? await this.getOmdbTvDetails(imdbId) : await this.getTmdbByImdbId(imdbId);
+			return full?.mediaType === 'tv' ? nonEmptySeasons(full.seasons) : null;
+		} catch {
 			return null;
 		}
 	}

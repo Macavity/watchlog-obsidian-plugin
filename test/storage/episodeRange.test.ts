@@ -28,4 +28,14 @@ describe('episodeRange', () => {
 		expect(toAbsolute(refs, seasons)).toEqual([12, 13]);
 		expect(fromAbsolute([12, 13], seasons)).toEqual(refs);
 	});
+
+	it('rejects episode numbers above 10000 or beyond a known season', () => {
+		expect(parseEpisodeRange('S01E10001')).toBeNull();
+		expect(parseEpisodeRange('S01E01-E99999999')).toBeNull();
+		expect(parseEpisodeRange('S01E10000')).toEqual([{ season: 1, episode: 10000 }]);
+		expect(parseEpisodeRange('S01E13', seasons)).toBeNull();
+		expect(parseEpisodeRange('S01E01-E13', seasons)).toBeNull();
+		// a season the list does not know yet is not checked against a count
+		expect(parseEpisodeRange('S03E40', seasons)).toEqual([{ season: 3, episode: 40 }]);
+	});
 });

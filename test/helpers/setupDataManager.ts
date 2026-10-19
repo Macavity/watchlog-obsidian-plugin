@@ -15,7 +15,7 @@ const g = globalThis as Record<string, unknown>;
 g.window ??= globalThis;
 g.activeDocument ??= { dispatchEvent: () => true };
 
-export async function setupDataManager(files: Record<string, string>) {
+export async function setupDataManager(files: Record<string, string>, extra: Record<string, unknown> = {}) {
 	const f = createFakeApp(files);
 	const settings = {
 		...DEFAULT_SETTINGS,
@@ -31,6 +31,7 @@ export async function setupDataManager(files: Record<string, string>) {
 		posterService: {
 			enqueue: (t: WatchLogTitle) => { posterQueue.push(t.id); return Promise.resolve(null); },
 		},
+		...extra,
 	} as unknown as WatchLogPlugin;
 	const local = new LocalStore(f.plugin);
 	await local.load();

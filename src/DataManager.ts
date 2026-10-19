@@ -1,6 +1,6 @@
 import { App, Notice, TAbstractFile, TFile, normalizePath, stringifyYaml } from 'obsidian';
 import type WatchLogPlugin from './main';
-import type { DraftPersistState, WatchLogTitle, WatchLogGroup, AirtimeEntry, AirtimeSchedule, EntryAirtime, MaybeTitle, RecommendedDaily, SavedFilterPreset, Book, Manga, Game } from './types';
+import type { DraftPersistState, Season, WatchLogTitle, WatchLogGroup, AirtimeEntry, AirtimeSchedule, EntryAirtime, MaybeTitle, RecommendedDaily, SavedFilterPreset, Book, Manga, Game } from './types';
 import type { HistoryManager } from './HistoryManager';
 import { formatHistoryDate } from './HistoryManager';
 import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso, GAME_AUTO_STATUS } from './types';
@@ -10,7 +10,7 @@ import type { LocalStore } from './storage/LocalStore';
 import type { EntryCache } from './storage/storageTypes';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
-import { decodeTitle, encodeTitle, splitCache } from './storage/titleCodec';
+import { decodeTitle, encodeTitle, isMovie, splitCache } from './storage/titleCodec';
 import { externalIdFromLink } from './storage/externalId';
 import { decodeBook, decodeManga, encodeAirtime } from './storage/readingCodec';
 import { decodeGame } from './storage/gameCodec';
@@ -35,6 +35,12 @@ const TITLE_KEYS: readonly string[] = [
 	'seasons', 'manualPosterUrl', 'manualTrailerUrl', 'manualDirector', 'manualCast', 'manualStudio',
 	...AIRTIME_KEYS,
 ];
+
+/** Output-only keys and the cache field they are derived from; kept on a full rewrite while uncached. */
+const OUTPUT_CACHE_FIELDS: Readonly<Record<string, keyof EntryCache>> = {
+	poster: 'posterUrl', trailer: 'trailerUrl', director: 'director', cast: 'cast', studio: 'studio',
+	communityRating: 'communityRating', communityVotes: 'communityVotes', communitySource: 'communitySource',
+};
 
 /** The note-side schedule of an Upcoming entry; the 'once' date lives in the note's releaseDate. */
 function toEntryAirtime(e: AirtimeEntry): EntryAirtime {
@@ -119,6 +125,10 @@ export class DataManager {
 	private dirty: Set<string> = new Set();
 	// ids already handed to the poster queue this session
 	private posterRequested: Set<string> = new Set();
+	/** ids whose seasons were requested this session; the queue fetches one at a time */
+	private seasonsRequested: Set<string> = new Set();
+	private seasonQueue: WatchLogTitle[] = [];
+	private seasonQueueRunning = false;
 
 	// debounced save for high-frequency edits (rapid episode clicks): memory now, note coalesced
 	private pendingSaveTimer: number | null = null;
@@ -154,7 +164,9 @@ export class DataManager {
 	async init(): Promise<void> {
 		await Promise.all(this.index.titles().map((t) => this.readNotes(t.id)));
 		this.index.onChange((ids) => {
-			this.queueMissingPosters([...ids].map((id) => this.getTitle(id)).filter((t): t is WatchLogTitle => !!t));
+			const changed = [...ids].map((id) => this.getTitle(id)).filter((t): t is WatchLogTitle => !!t);
+			this.queueMissingPosters(changed);
+			this.queueMissingSeasons(changed);
 			this.notifyListeners();
 		});
 		const { vault } = this.app;
@@ -162,6 +174,7 @@ export class DataManager {
 		this.plugin.registerEvent(vault.on('create', (f) => void this.refreshNotes(f)));
 		this.plugin.registerEvent(vault.on('rename', (f, oldPath) => this.onVaultRename(f, oldPath)));
 		this.queueMissingPosters(this.getTitles());
+		this.queueMissingSeasons(this.getTitles());
 		this.notifyListeners();
 	}
 
@@ -180,6 +193,61 @@ export class DataManager {
 			this.posterRequested.add(t.id);
 			void service.enqueue(t);
 		}
+	}
+
+	/**
+	 * Seasons not known yet: an API identity, no seasons in note or cache, not a movie (a fresh device,
+	 * a note from elsewhere). Episode toggles wait for the refill.
+	 */
+	private seasonsPending(t: WatchLogTitle): boolean {
+		if (t.seasonsOverride || t.seasons.length > 0 || t.tmdbMediaType === 'movie') return false;
+		if (isMovie(t.seasons, t.totalEpisodes)) return false;
+		return !!t.tmdbId || !!t.malId || !!t.anilistId || externalIdFromLink(t.externalLink) !== null;
+	}
+
+	/** Fetches seasons for titles that lack them, once per id and session, one request at a time. */
+	private queueMissingSeasons(titles: WatchLogTitle[]): void {
+		if (!this.plugin.apiService) return;
+		for (const t of titles) {
+			if (t.maybe || this.seasonsRequested.has(t.id) || !this.seasonsPending(t)) continue;
+			this.seasonsRequested.add(t.id);
+			this.seasonQueue.push(t);
+		}
+		if (!this.seasonQueueRunning && this.seasonQueue.length > 0) void this.drainSeasonQueue();
+	}
+
+	/** Stores fetched seasons in the cache only (no note write), then re-decodes the notes. */
+	private async drainSeasonQueue(): Promise<void> {
+		this.seasonQueueRunning = true;
+		let filled = false;
+		try {
+			for (let t = this.seasonQueue.shift(); t; t = this.seasonQueue.shift()) {
+				let seasons: Season[] | null = null;
+				try {
+					seasons = await this.plugin.apiService.fetchSeasons(t);
+				} catch {
+					// stays pending; no retry this session
+				}
+				if (!seasons || seasons.length === 0 || !this.index.get(t.id)) continue;
+				const cached = seasons.map((x) => ({ name: x.name, episodes: x.episodes, offset: x.offset }));
+				this.local.data.cache[t.id] = { ...this.local.getCache(t.id), seasons: cached };
+				filled = true;
+			}
+		} finally {
+			this.seasonQueueRunning = false;
+		}
+		if (!filled) return;
+		this.local.queueSave();
+		// decoding happens in the index; a rebuild picks up the new cache and emits the changed ids
+		await this.index.rebuild();
+	}
+
+	/** True (and a notice) when an episode toggle must wait for the season refill. */
+	private blockedBySeasonRefill(t: WatchLogTitle): boolean {
+		if (!this.seasonsPending(t)) return false;
+		new Notice(`Episodes of "${t.title}" are still loading.`);
+		this.queueMissingSeasons([t]);
+		return true;
 	}
 
 	/** Re-reads data.json (backup restore). */
@@ -1202,7 +1270,7 @@ export class DataManager {
 		watched: boolean,
 	): WatchLogTitle | null {
 		const title = this.getTitle(id);
-		if (!title) return null;
+		if (!title || this.blockedBySeasonRefill(title)) return null;
 
 		if (watched) {
 			if (!title.watchedEpisodes.includes(episodeNumber)) {
@@ -1271,7 +1339,7 @@ export class DataManager {
 
 	async markEpisodeWatched(id: string, episodeNumber: number, watched: boolean): Promise<void> {
 		const title = this.getTitle(id);
-		if (!title) return;
+		if (!title || this.blockedBySeasonRefill(title)) return;
 
 		if (watched) {
 			if (!title.watchedEpisodes.includes(episodeNumber)) {
@@ -1319,7 +1387,7 @@ export class DataManager {
 		seasonLabel?: string,
 	): Promise<void> {
 		const title = this.getTitle(id);
-		if (!title) return;
+		if (!title || this.blockedBySeasonRefill(title)) return;
 
 		// capture season completion BEFORE the tick, to detect a not-complete → complete transition
 		const before = new Set(title.watchedEpisodes);
@@ -1416,8 +1484,9 @@ export class DataManager {
 
 	/**
 	 * Rewrites every plugin-owned frontmatter key of an existing title note, body verbatim. Keys the
-	 * encoder omits are removed, except progress text kept while seasons are unknown and fields the
-	 * decoder could not read. Does NOT create the file — returns false then. Powers the bulk
+	 * encoder omits are removed, except progress text kept while seasons are unknown, output fields
+	 * (poster, credits, community rating) the cache does not know yet and fields the decoder could not
+	 * read. Does NOT create the file — returns false then. Powers the bulk
 	 * "Rewrite all frontmatter" action.
 	 */
 	async rewriteFrontmatterIfExists(title: WatchLogTitle): Promise<boolean> {
@@ -1428,6 +1497,12 @@ export class DataManager {
 		if (title.seasons.length === 0) {
 			keep.add('watched');
 			keep.add('skipped');
+			// derived from the unreadable watched text: 0% would be wrong
+			if (!isMovie(title.seasons, title.totalEpisodes)) keep.add('progress');
+		}
+		const cache = this.local.getCache(title.id) ?? {};
+		for (const [key, field] of Object.entries(OUTPUT_CACHE_FIELDS)) {
+			if (!(key in out) && cache[field] === undefined) keep.add(key);
 		}
 		return this.processFrontMatter(file, title, (raw) => {
 			for (const key of TITLE_KEYS) {

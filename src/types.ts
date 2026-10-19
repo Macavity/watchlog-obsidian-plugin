@@ -68,6 +68,9 @@ export interface WatchLogTitle {
 	maybe?: boolean;
 	/** seasons were set by hand; frontmatter `seasons` wins over the API cache */
 	seasonsOverride?: boolean;
+	/** `watched`/`skipped` refs in seasons the season list does not know yet; written back unchanged */
+	unmappedWatched?: { season: number; episode: number }[];
+	unmappedSkipped?: { season: number; episode: number }[];
 	/** group names (frontmatter `groups`) */
 	groups?: string[];
 	/** manual Upcoming schedule (frontmatter airtime* keys); absent = none or derived from releaseDate */

@@ -1,43 +1,50 @@
 import type { AirtimeRecurrence, EntryAirtime, Season, WatchLogTitle } from '../types';
 import { getDisplayPoster, getDisplayTrailer, getTitleCredits } from '../types';
 import type { Decoded, EntryCache, EpisodeRef, ExternalId } from './storageTypes';
-import { formatEpisodeRange, fromAbsolute, parseEpisodeRange, toAbsolute } from './episodeRange';
+import { MAX_EPISODE, formatEpisodeRange, fromAbsolute, outsideSeasons, parseEpisodeRange, toAbsolute } from './episodeRange';
 import { externalIdFromLink, formatExternalId, parseExternalId } from './externalId';
 
 const RECURRENCES: readonly AirtimeRecurrence[] = ['once', 'daily', 'weekly', 'monthly'];
 
 /** Movie = a single "Movie" season, or no seasons and exactly one episode. */
-function isMovie(seasons: Season[], totalEpisodes: number): boolean {
+export function isMovie(seasons: Season[], totalEpisodes: number): boolean {
 	if (seasons.length === 1) return seasons[0]?.name === 'Movie';
 	return seasons.length === 0 && totalEpisodes === 1;
 }
 
-/** Parses "Name: N" lines (optional " (skip_spec)") into seasons; offsets are cumulative. */
-function parseSeasonLines(lines: string[]): Season[] {
+/**
+ * Parses "Name: N" lines (optional " (skip_spec)") into seasons; offsets are cumulative. null when a
+ * count or skipped episode is out of bounds.
+ */
+function parseSeasonLines(lines: string[]): Season[] | null {
 	const seasons: Season[] = [];
 	let offset = 0;
 	for (const line of lines) {
 		const m = line.trim().match(/^(.+?):\s*(\d+)(?:\s*\(([^)]+)\))?/);
 		if (!m || !m[1] || !m[2]) continue;
 		const episodes = parseInt(m[2], 10);
-		const skippedEpisodes = m[3] ? parseSkipSpec(m[3]) : [];
+		if (episodes > MAX_EPISODE) return null;
+		const skippedEpisodes = m[3] ? parseSkipSpec(m[3], episodes) : [];
+		if (!skippedEpisodes) return null;
 		seasons.push({ name: m[1].trim(), episodes, offset, skippedEpisodes });
 		offset += episodes;
 	}
 	return seasons;
 }
 
-/** "5,8,33-37" -> [5, 8, 33..37] */
-function parseSkipSpec(spec: string): number[] {
+/** "5,8,33-37" -> [5, 8, 33..37]; null when a number exceeds the season's `episodes`. */
+function parseSkipSpec(spec: string, episodes: number): number[] | null {
 	const out: number[] = [];
 	for (const part of spec.split(',').map((s) => s.trim()).filter(Boolean)) {
 		const bits = part.split('-');
 		if (bits.length === 2) {
 			const from = parseInt(bits[0] ?? '', 10);
 			const to = parseInt(bits[1] ?? '', 10);
+			if (to > episodes) return null;
 			if (!isNaN(from) && !isNaN(to) && from <= to) for (let i = from; i <= to; i++) out.push(i);
 		} else if (bits.length === 1) {
 			const n = parseInt(part, 10);
+			if (n > episodes) return null;
 			if (!isNaN(n)) out.push(n);
 		}
 	}
@@ -114,7 +121,7 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 	let seasonsOverride = false;
 	const seasonLines = r.list('seasons');
 	if (seasonLines && seasonLines.length > 0) {
-		seasons = parseSeasonLines(seasonLines);
+		seasons = parseSeasonLines(seasonLines) ?? [];
 		seasonsOverride = seasons.length > 0;
 		if (!seasonsOverride) r.invalid.push('seasons');
 	}
@@ -124,20 +131,25 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 	const movie = isMovie(seasons, total);
 
 	let watchedEpisodes: number[] = [];
+	let unmappedWatched: EpisodeRef[] = [];
+	let unmappedSkipped: EpisodeRef[] = [];
 	if (movie) {
 		if (status === 'Completed') watchedEpisodes = [1];
 	} else {
 		const watchedText = r.str('watched');
 		if (watchedText?.trim()) {
 			const refs = parseEpisodeRange(watchedText, seasons);
-			if (refs) watchedEpisodes = toAbsolute(refs, seasons);
-			else r.invalid.push('watched');
+			if (refs) {
+				watchedEpisodes = toAbsolute(refs, seasons);
+				unmappedWatched = outsideSeasons(refs, seasons);
+			} else r.invalid.push('watched');
 		}
 		const skippedText = r.str('skipped');
 		if (skippedText?.trim()) {
 			const refs = parseEpisodeRange(skippedText, seasons);
 			if (!refs) r.invalid.push('skipped');
 			else {
+				unmappedSkipped = outsideSeasons(refs, seasons);
 				for (const ref of refs) {
 					const season = seasons[ref.season - 1];
 					if (season) season.skippedEpisodes = [...(season.skippedEpisodes ?? []), ref.episode];
@@ -167,6 +179,8 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 		watchedEpisodes,
 	};
 	if (seasonsOverride) title.seasonsOverride = true;
+	if (unmappedWatched.length > 0) title.unmappedWatched = unmappedWatched;
+	if (unmappedSkipped.length > 0) title.unmappedSkipped = unmappedSkipped;
 
 	// cache fields
 	if (c.posterUrl !== undefined) title.posterUrl = c.posterUrl;
@@ -296,8 +310,8 @@ export function encodeTitle(t: WatchLogTitle, progress: number): Record<string, 
 
 	// progress: movies are carried by status; without known seasons the note's text is left alone
 	if (!isMovie(t.seasons, t.totalEpisodes) && t.seasons.length > 0) {
-		out.watched = formatEpisodeRange(fromAbsolute(t.watchedEpisodes, t.seasons));
-		const skipped: EpisodeRef[] = [];
+		out.watched = formatEpisodeRange([...fromAbsolute(t.watchedEpisodes, t.seasons), ...(t.unmappedWatched ?? [])]);
+		const skipped: EpisodeRef[] = [...(t.unmappedSkipped ?? [])];
 		t.seasons.forEach((s, i) => {
 			for (const episode of s.skippedEpisodes ?? []) skipped.push({ season: i + 1, episode });
 		});

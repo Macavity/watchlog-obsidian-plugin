@@ -43,4 +43,26 @@ describe('titleCodec', () => {
     expect(entry.airtime).toEqual({ recurrence: 'weekly', day: 3, time: '18:00', episode: 4 });
     expect(encodeTitle(entry, 0)).toMatchObject({ maybe: true, groups: ['Marvel'], airtimeRecurrence: 'weekly' });
   });
+  it('keeps refs outside the known seasons and writes them back unchanged', () => {
+    const s1 = [{ name: 'Season 1', episodes: 8, offset: 0 }];
+    const fm = { title: 'Dark', type: 'TV Show', status: 'Watching', externalId: 'tmdb:tv:70523',
+      watched: 'S01E01-E08, S02E01', skipped: 'S03E02' };
+    const { entry, invalidFields } = decodeTitle('TV Show/Dark', fm, { seasons: s1 });
+    expect(invalidFields).toEqual([]);
+    expect(entry.watchedEpisodes).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    entry.watchedEpisodes = entry.watchedEpisodes.filter((e) => e !== 1);
+    const out = encodeTitle(entry, 50);
+    expect(out.watched).toBe('S01E02-E08, S02E01');
+    expect(out.skipped).toBe('S03E02');
+    expect(splitCache(entry)).not.toHaveProperty('unmappedWatched');
+  });
+  it('marks out-of-range episode numbers invalid', () => {
+    const s1 = [{ name: 'Season 1', episodes: 8, offset: 0 }];
+    expect(decodeTitle('TV Show/A', { title: 'A', watched: 'S01E09' }, { seasons: s1 }).invalidFields).toContain('watched');
+    expect(decodeTitle('TV Show/A', { title: 'A', watched: 'S01E10001' }, undefined).invalidFields).toContain('watched');
+    expect(decodeTitle('TV Show/A', { title: 'A', seasons: ['Season 1: 12 (13)'] }, undefined).invalidFields).toContain('seasons');
+    expect(decodeTitle('TV Show/A', { title: 'A', seasons: ['Season 1: 20000 (1-10001)'] }, undefined).invalidFields).toContain('seasons');
+    expect(decodeTitle('TV Show/A', { title: 'A', seasons: ['Season 1: 12 (3, 5-6)'] }, undefined).invalidFields).toEqual([]);
+  });
 });
+
