@@ -2461,18 +2461,6 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		}).body;
 
 		new Setting(folders)
-			.setName('Root folder name')
-			.setDesc('Vault folder where watchlog Markdown files are stored.')
-			.addText((t) =>
-				t
-					.setValue(this.plugin.settings.rootFolder)
-					.onChange(async (v) => {
-						this.plugin.settings.rootFolder = v;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(folders)
 			.setName('Auto-create folders')
 			.setDesc('Automatically create type subfolders on plugin load.')
 			.addToggle((t) =>
@@ -2512,7 +2500,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			row.createSpan({ cls: 'wl-folder-type', text: type.name });
 			row.createSpan({
 				cls: 'wl-folder-path',
-				text: `${this.plugin.settings.rootFolder}/${type.name}`,
+				text: `${this.plugin.getLayout().root}/${type.name}`,
 			});
 		}
 	}
@@ -2591,18 +2579,6 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			variant: 'folders',
 			rows: true,
 		}).body;
-
-		new Setting(folder)
-			.setName('Custom lists folder path')
-			.setDesc('Vault folder where custom list files are stored.')
-			.addText((t) =>
-				t
-					.setValue(this.plugin.settings.customListsFolder ?? 'WatchLog/CustomLists')
-					.onChange(async (v) => {
-						this.plugin.settings.customListsFolder = v;
-						await this.plugin.saveSettings();
-					}),
-			);
 
 		new Setting(folder)
 			.setName('Create folder now')
@@ -2692,28 +2668,6 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 						new ReadingCsvModal(this.app, this.plugin, kind, 'import').open();
 					}).open();
 				}),
-			);
-
-		// folder
-		const folder = this.settingsGroup(page, {
-			title: 'Folder',
-			sub: 'Where reading notes are generated in your vault',
-			icon: 'folder',
-			variant: 'folders',
-			rows: true,
-		}).body;
-
-		new Setting(folder)
-			.setName('Reading folder path')
-			.setDesc('Vault folder where reading note files are generated. Changing this will not move existing files.')
-			.addText((t) =>
-				t
-					.setPlaceholder('WatchLog/Reading')
-					.setValue(settings.defaultFolder)
-					.onChange((v) => {
-						const next = v.trim() || 'WatchLog/Reading';
-						void readingData.updateSettings({ defaultFolder: next });
-					}),
 			);
 	}
 

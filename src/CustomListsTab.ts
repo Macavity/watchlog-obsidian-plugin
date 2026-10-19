@@ -43,7 +43,7 @@ export class CustomListManager {
 	}
 
 	get folderPath(): string {
-		return this.plugin.settings.customListsFolder || 'WatchLog/CustomLists';
+		return this.plugin.getLayout().customListsFolder;
 	}
 
 	async ensureFolder(): Promise<void> {

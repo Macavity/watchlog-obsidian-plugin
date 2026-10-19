@@ -1,5 +1,5 @@
 import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, normalizePath, parseYaml, setIcon, stringifyYaml } from 'obsidian';
-import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, AirtimeSchedule, normalizeRowsLayout, setActiveDateFormat } from './types';
+import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, AirtimeSchedule, setActiveDateFormat } from './types';
 import { cardSizeToMinWidth } from './VirtualGrid';
 import type { ReadingData, CardStyleTab, WatchLogData } from './types';
 import type { HistoryEntry } from './HistoryManager';
@@ -22,6 +22,7 @@ import { SharedConfigStore } from './storage/SharedConfigStore';
 import { EntryIndex } from './storage/EntryIndex';
 import { HistoryStore } from './storage/HistoryStore';
 import { hasWatchlogKey } from './storage/baseFile';
+import { composeSettings, persistSettings } from './settingsSplit';
 
 /** Root folder created on a fresh install (no `.base` with a `watchlog:` key found). */
 const DEFAULT_ROOT = 'WatchLog';
@@ -80,16 +81,17 @@ export default class WatchLogPlugin extends Plugin {
 	private statusBarEl: HTMLElement | null = null;
 
 	async onload(): Promise<void> {
-		await this.loadSettings();
-		// the card-size CSS var must be live before any view or modal renders a grid
-		this.applyCardSizeCssVar();
-		this.register(() => activeDocument.body.style.removeProperty('--wl-card-min-width'));
 		const loaded = await this.local.load();
 		if (loaded.schema === 1) {
 			// migration (Task 16): convert the legacy data.json here. Until then it is kept in memory and
 			// on disk untouched (saves are suppressed) while the plugin runs like a fresh install.
 			this.legacyData = loaded.legacy;
 		}
+		// local + defaults only; shared keys are re-composed once the base is loaded (startVaultStorage)
+		await this.loadSettings();
+		// the card-size CSS var must be live before any view or modal renders a grid
+		this.applyCardSizeCssVar();
+		this.register(() => activeDocument.body.style.removeProperty('--wl-card-min-width'));
 
 		// one-time migration: pull legacy reading.json / history.json into data.json so Sync replicates
 		// them. After data.json loads, before the reading/history managers bind. Idempotent — gated by a
@@ -214,6 +216,8 @@ export default class WatchLogPlugin extends Plugin {
 				await this.shared.createBase(this.settings as unknown as Record<string, unknown>);
 			}
 			await this.shared.load();
+			await this.applySharedSettings();
+			this.shared.onChange(() => void this.applySharedSettings());
 			if (root !== null && (await this.shared.ensureFilter()) === 'missing') {
 				new Notice('Watchlog: the folder filter in WatchLog.base was not found; the base view may list other notes.');
 			}
@@ -229,6 +233,18 @@ export default class WatchLogPlugin extends Plugin {
 			console.error('[WL] vault storage failed to start', e);
 			new Notice('Watchlog could not load its notes. See the developer console for details.');
 		}
+	}
+
+	/** Current vault layout (root and central folders). */
+	getLayout(): VaultLayout {
+		return this.layout;
+	}
+
+	/** Re-composes settings from the (re)loaded base, then refreshes derived state and views. */
+	private async applySharedSettings(): Promise<void> {
+		await this.loadSettings();
+		this.applyCardSizeCssVar();
+		activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
 	}
 
 	private async findRoot(): Promise<string | null> {
@@ -400,97 +416,22 @@ export default class WatchLogPlugin extends Plugin {
 		activeDocument.body.style.setProperty('--wl-card-min-width', `${this.getCardMinWidth()}px`);
 	}
 
+	/** Composes settings from defaults, data.json and the shared base (shared keys win). */
 	async loadSettings(): Promise<void> {
-		const saved = (await this.loadData()) as {
-			settings?: Partial<WatchLogPluginSettings>;
-		} | null;
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved?.settings ?? {});
-		if (saved?.settings?.listFilters) {
-			this.settings.listFilters = Object.assign(
-				{},
-				DEFAULT_SETTINGS.listFilters,
-				saved.settings.listFilters,
-			);
-		}
-		// per-tab merge so a partially saved record keeps defaults for the rest
-		this.settings.cardTextStyles = Object.assign(
-			{},
-			DEFAULT_SETTINGS.cardTextStyles,
-			saved?.settings?.cardTextStyles ?? {},
+		// a schema-1 data.json is not adopted yet: its settings are the local part until migration
+		const localSettings = this.legacyData?.settings ?? this.local.data.settings;
+		this.settings = composeSettings(
+			localSettings as Record<string, unknown>,
+			this.shared.get().settings,
 		);
-		if (this.settings.animeApiSource === undefined) {
-			this.settings.animeApiSource = 'jikan';
-		}
-		// date display format. Existing installs saw DD/MM/YYYY everywhere, so 'european' is both the
-		// default and the migration target for a missing or hand-edited value. Storage is unaffected.
-		if (
-			this.settings.dateFormat !== 'european' &&
-			this.settings.dateFormat !== 'american' &&
-			this.settings.dateFormat !== 'iso'
-		) {
-			this.settings.dateFormat = 'european';
-		}
 		// mirror into types.ts so the pure formatters render in the chosen order without a settings ref
 		setActiveDateFormat(this.settings.dateFormat);
-		if (this.settings.typeApiMapping === undefined) {
-			this.settings.typeApiMapping = {};
-		}
-		// reading type badge colors (Manga / Book) — backfill defaults for old installs
-		if (!this.settings.readingTypeColors) {
-			this.settings.readingTypeColors = { manga: '#D4537E', book: '#D85A30' };
-		} else {
-			if (!this.settings.readingTypeColors.manga) this.settings.readingTypeColors.manga = '#D4537E';
-			if (!this.settings.readingTypeColors.book) this.settings.readingTypeColors.book = '#D85A30';
-		}
-		// watchlist view: 'rows' is the default, and the removed 'cards' view migrates to 'rows'
-		if (this.settings.defaultWatchlistView !== 'list' && this.settings.defaultWatchlistView !== 'rows') {
-			this.settings.defaultWatchlistView = 'rows';
-		}
-		// backfill the status-bar Upcoming counter toggle for existing installs (default ON)
-		if (this.settings.showUpcomingStatusBar === undefined) {
-			this.settings.showUpcomingStatusBar = true;
-		}
-		// normalize the stored rows layout (drops unknown ids, appends shelves missing from an older
-		// layout) and always take a fresh array so later in-place edits can't mutate DEFAULT_SETTINGS
-		this.settings.rowsLayout = normalizeRowsLayout(this.settings.rowsLayout);
-		// backfill the default Add type setting for existing installs
-		if (this.settings.defaultAddType === undefined) {
-			this.settings.defaultAddType = LAST_USED_TYPE_SENTINEL;
-		}
-		if (this.settings.lastAddedType === undefined) {
-			this.settings.lastAddedType = '';
-		}
-		// array fields are never undefined after a partial merge
-		if (!this.settings.types?.length) this.settings.types = DEFAULT_SETTINGS.types;
-		if (!this.settings.statuses?.length) this.settings.statuses = DEFAULT_SETTINGS.statuses;
-		if (!this.settings.reviews?.length) this.settings.reviews = DEFAULT_SETTINGS.reviews;
-		if (!this.settings.priorities?.length) this.settings.priorities = DEFAULT_SETTINGS.priorities;
-		if (!this.settings.seasonPalette?.length) this.settings.seasonPalette = DEFAULT_SETTINGS.seasonPalette;
-		// the rating system must always be exactly five well-formed tiers; a missing or malformed value
-		// (older or hand-edited data) resets to defaults
-		if (
-			!Array.isArray(this.settings.ratingSystem) ||
-			this.settings.ratingSystem.length !== 5 ||
-			this.settings.ratingSystem.some((t) => !t || typeof t.label !== 'string' || typeof t.color !== 'string')
-		) {
-			this.settings.ratingSystem = DEFAULT_SETTINGS.ratingSystem.map((t) => ({ ...t }));
-		}
-		// migrate the Plan to watch colour from old grey to new teal
-		const ptw = this.settings.statuses.find((s) => s.name === 'Plan to watch');
-		if (ptw && ptw.color === '#888780') ptw.color = '#00A9A5';
-
-		// ensure the "To be released" status exists (migration for existing users)
-		if (!this.settings.statuses.find((s) => s.name === 'To be released')) {
-			const completedIdx = this.settings.statuses.findIndex((s) => s.name === 'Completed');
-			const insertAt = completedIdx >= 0 ? completedIdx + 1 : this.settings.statuses.length;
-			this.settings.statuses.splice(insertAt, 0, { name: 'To be released', color: '#E8873A' });
-		}
 	}
 
 	async saveSettings(): Promise<void> {
 		// keep the date formatters in step with the setting on every save
 		setActiveDateFormat(this.settings.dateFormat);
-		await this.dataManager.saveSettings(this.settings);
+		await persistSettings(this.settings, this.local, this.shared);
 	}
 
 	/**

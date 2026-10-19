@@ -425,7 +425,6 @@ export interface WatchLogPluginSettings {
 	statuses: TagDefinition[];
 	reviews: TagDefinition[];
 	priorities: TagDefinition[];
-	rootFolder: string;
 	autoCreateFolders: boolean;
 	coloredTypeBadges: boolean;
 	/** Open the panel on the Watchlist tab after the Add title command adds something. */
@@ -463,7 +462,6 @@ export interface WatchLogPluginSettings {
 	dashboardTopCredits: number;
 	/** Colors for the Reading type badges (Manga / Book). */
 	readingTypeColors: { manga: string; book: string };
-	customListsFolder: string;
 	defaultCustomColumns: CustomListColumn[];
 	listFilters: {
 		typeExclude: string[];
@@ -1072,7 +1070,6 @@ export const DEFAULT_SETTINGS: WatchLogPluginSettings = {
 		{ name: 'Medium', color: '#3b82f6' },
 		{ name: 'High', color: '#E24B4A' },
 	],
-	rootFolder: 'WatchLog',
 	autoCreateFolders: true,
 	coloredTypeBadges: true,
 	openWatchlistAfterAdd: true,
@@ -1093,7 +1090,6 @@ export const DEFAULT_SETTINGS: WatchLogPluginSettings = {
 	lastAddedType: '',
 	dashboardTopCredits: 5,
 	readingTypeColors: { manga: '#D4537E', book: '#D85A30' },
-	customListsFolder: 'WatchLog/CustomLists',
 	defaultCustomColumns: [],
 	draftsVaultTag: '#watchlog',
 	draftsAfterAdding: 'keep',
