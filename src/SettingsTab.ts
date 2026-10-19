@@ -111,7 +111,7 @@ import { WatchLogView } from './WatchLogView';
 import { CustomListManager, DefaultColumnsModal } from './CustomListsTab';
 import { ConfirmModal } from './ConfirmModal';
 import { apiErrorMessage, apiErrorShort } from './ApiService';
-import { buildBackup, parseBackup, restoreBackup } from './backup';
+import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup } from './backup';
 
 type SettingsSection = 'general' | 'api' | 'customize' | 'watchlist' | 'drafts' | 'custom-lists' | 'reading' | 'widgets' | 'quick-info';
 
@@ -542,7 +542,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		new Setting(bk)
 			.setName('Restore from backup')
-			.setDesc('Restore from a .JSON backup file. Missing notes are created; existing notes are kept. Shared settings and the activity log are replaced. API keys are not part of a backup.')
+			.setDesc('Restore from a .JSON backup file. Missing notes are created; existing notes are kept. Shared settings, device settings (API keys included) and the activity log are replaced. Backups from older plugin versions are imported too. Keep backup files private.')
 			.addButton((b) =>
 				b.setButtonText('Restore from backup').onClick(() => this.openRestoreDialog()),
 			);
@@ -581,7 +581,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const filename = `watchlog-backup-${dateStr}.json`;
 
 		// notes plus shared settings and log; API keys stay out of the file
-		const json = JSON.stringify(buildBackup(this.plugin), null, 2);
+		const json = JSON.stringify(buildBackup(this.plugin.backupManagers()), null, 2);
 
 		// on mobile a browser download lands in an inaccessible sandbox — write into the vault
 		// instead; desktop keeps the download path
@@ -664,9 +664,22 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 					return;
 				}
 				// validated as a whole before anything is written
-				new ConfirmModal(this.app, 'This restores the backup into your vault: missing notes are created, the shared settings and the activity log are replaced. Existing notes are kept. Continue?', () => {
+				const legacy = 'legacy' in result ? result.legacy : null;
+				const prompt = legacy
+					? 'This is a backup from an older plugin version. Missing notes are created and missing note properties filled; existing values are kept. Continue?'
+					: 'This restores the backup into your vault: missing notes are created, the shared settings, device settings (API keys included) and the activity log are replaced. Existing notes are kept. Continue?';
+				new ConfirmModal(this.app, prompt, () => {
 					void (async () => {
-						await restoreBackup(this.plugin, result.backup);
+						const managers = this.plugin.backupManagers();
+						if (legacy) {
+							const errors = await restoreLegacyBackup(managers, legacy);
+							if (errors.length > 0) {
+								new Notice(`Backup import failed: ${errors.join('; ')}`);
+								return;
+							}
+						} else if ('backup' in result) {
+							await restoreBackup(managers, result.backup);
+						}
 						await this.plugin.loadSettings();
 						activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
 						new Notice('Backup restored successfully.');

@@ -9,6 +9,7 @@ import { DataManager } from '../../src/DataManager';
 import { ReadingDataManager } from '../../src/ReadingDataManager';
 import { GameDataManager } from '../../src/GameDataManager';
 import { HistoryManager } from '../../src/HistoryManager';
+import { HistoryStore } from '../../src/storage/HistoryStore';
 import { DEFAULT_SETTINGS } from '../../src/types';
 import type WatchLogPlugin from '../../src/main';
 
@@ -50,5 +51,13 @@ export async function setupBackup(files: Record<string, string>) {
 	await dataManager.init();
 	await readingDataManager.init();
 	await gameDataManager.init();
-	return { f, local, shared, dataManager, readingDataManager, gameDataManager, historyManager };
+	const storage = {
+		local,
+		shared,
+		importContext: () => ({
+			app: f.app, local, shared, layout, yaml: { parse, stringify },
+			history: new HistoryStore(f.app, () => layout),
+		}),
+	};
+	return { f, local, shared, dataManager, readingDataManager, gameDataManager, historyManager, storage };
 }

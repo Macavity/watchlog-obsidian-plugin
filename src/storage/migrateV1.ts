@@ -23,16 +23,19 @@ export interface MigrationReport {
 	errors: string[];
 }
 
-export interface MigrationContext {
+export interface ImportContext {
 	app: App;
-	plugin: { manifest: { dir?: string } };
 	local: LocalStore;
-	legacy: WatchLogData;
 	shared: SharedConfigStore;
 	history: HistoryStore;
 	yaml: YamlIO;
 	/** Root: folder of an existing `watchlog:` base, else `legacyRoot(legacy)`. */
 	layout: VaultLayout;
+}
+
+export interface MigrationContext extends ImportContext {
+	plugin: { manifest: { dir?: string } };
+	legacy: WatchLogData;
 }
 
 type Fm = Record<string, unknown>;
@@ -62,7 +65,23 @@ export function legacyRoot(legacy: WatchLogData): string {
 export async function migrateV1(ctx: MigrationContext): Promise<MigrationReport> {
 	const report: MigrationReport = { notesCreated: 0, notesFilled: 0, foldersMoved: [], skipped: [], errors: [] };
 	try {
-		await new Migration(ctx, report).run();
+		await new Migration(ctx, ctx.legacy, report, ctx.plugin.manifest.dir).run();
+	} catch (e) {
+		report.errors.push(e instanceof Error ? e.message : String(e));
+	}
+	return report;
+}
+
+/**
+ * Imports a legacy data object (a restored v1-v3 backup) into the vault: notes are created or
+ * only filled, groups, airtime and history are applied, the base is filled when empty and the
+ * cache is merged. Writes no data.v1-backup.json, moves no folders, leaves schemaVersion and
+ * device-local settings alone.
+ */
+export async function importLegacy(legacy: WatchLogData, ctx: ImportContext): Promise<MigrationReport> {
+	const report: MigrationReport = { notesCreated: 0, notesFilled: 0, foldersMoved: [], skipped: [], errors: [] };
+	try {
+		await new Migration(ctx, legacy, report, undefined).importOnly();
 	} catch (e) {
 		report.errors.push(e instanceof Error ? e.message : String(e));
 	}
@@ -83,20 +102,40 @@ class Migration {
 	private claimed = new Set<string>();
 	private ids: IdMaps = { title: new Map(), book: new Map(), manga: new Map(), game: new Map(), group: new Map() };
 
-	constructor(private ctx: MigrationContext, private report: MigrationReport) {}
+	constructor(
+		private ctx: ImportContext,
+		private legacy: WatchLogData,
+		private report: MigrationReport,
+		private pluginDir: string | undefined,
+	) {}
 
 	async run(): Promise<void> {
 		await this.backup();
-		const data = await this.prepare();
+		const data = await this.prepare(true);
 		await this.centralizeFolders(data);
-		await this.ensureBase(data);
-		await this.importEntries(data);
-		await this.importHistory(data);
+		await this.importData(data);
 		await this.ctx.local.adoptV2(this.localData(data));
 	}
 
+	/** Restore path: the notes, base, history and cache part of `run`, nothing else. */
+	async importOnly(): Promise<void> {
+		const data = await this.prepare(false);
+		await this.importData(data);
+		const { local } = this.ctx;
+		for (const [id, cache] of Object.entries(this.cache)) {
+			local.data.cache[id] = { ...cache, ...local.data.cache[id] };
+		}
+		local.queueSave();
+	}
+
+	private async importData(data: WatchLogData): Promise<void> {
+		await this.ensureBase(data);
+		await this.importEntries(data);
+		await this.importHistory(data);
+	}
+
 	private dir(): string {
-		const dir = this.ctx.plugin.manifest.dir;
+		const dir = this.pluginDir;
 		if (!dir) throw new Error('plugin folder unknown, no backup of data.json written');
 		return dir;
 	}
@@ -110,15 +149,15 @@ class Migration {
 		const source = normalizePath(`${dir}/data.json`);
 		const content = (await adapter.exists(source))
 			? await adapter.read(source)
-			: JSON.stringify(this.ctx.legacy, null, '\t');
+			: JSON.stringify(this.legacy, null, '\t');
 		await adapter.write(target, content);
 	}
 
 	/** A normalized copy of the legacy data with the old load-time corrections applied. */
-	private async prepare(): Promise<WatchLogData> {
-		const data = structuredClone(this.ctx.legacy);
+	private async prepare(mergeFiles: boolean): Promise<WatchLogData> {
+		const data = structuredClone(this.legacy);
 		data.settings = isRecord(data.settings) ? data.settings : {};
-		await this.mergeLegacyFiles(data);
+		if (mergeFiles) await this.mergeLegacyFiles(data);
 		data.titles = (Array.isArray(data.titles) ? data.titles : []).map(normalizeTitle);
 		data.groups = Array.isArray(data.groups) ? data.groups : [];
 		data.reading = normalizeReading(data.reading);
