@@ -70,6 +70,9 @@ export class ReadingDataManager {
 	// Mutable copies handed to the UI, one per id. `src` is the index entry the copy was made from:
 	// the baseline a write diffs against, so only fields the user changed reach the note.
 	private views: Map<string, { src: Item; view: Item }> = new Map();
+	// Per handed-out copy, the stored state it was made from: a stale copy diffs against that, not
+	// against the refreshed slot, so it cannot revert a field changed elsewhere in between.
+	private baselines: WeakMap<Item, Item> = new WeakMap();
 	// ids changed via the *Silent updaters, written on the next saveAndNotify()
 	private dirty: Set<string> = new Set();
 
@@ -92,7 +95,8 @@ export class ReadingDataManager {
 			let touched = false;
 			for (const id of ids) {
 				if (id.startsWith(`${FOLDERS.book}/`) || id.startsWith(`${FOLDERS.manga}/`)) {
-					this.views.delete(id);
+					// a pending silent edit keeps its copy until written
+					if (!this.dirty.has(id)) this.views.delete(id);
 					touched = true;
 				}
 			}
@@ -195,6 +199,11 @@ export class ReadingDataManager {
 
 	/** Writes items changed via the silent updaters, then notifies. */
 	async saveAndNotify(): Promise<void> {
+		await this.writeDirty();
+		this.notifyListeners();
+	}
+
+	private async writeDirty(): Promise<void> {
 		const ids = [...this.dirty];
 		this.dirty.clear();
 		for (const id of ids) {
@@ -202,9 +211,20 @@ export class ReadingDataManager {
 			const slot = this.views.get(id);
 			if (kind && slot) {
 				try { await this.writeItem(kind, slot.view); } catch (e) { console.warn('[WL] reading note write failed:', e); }
+			} else {
+				new Notice(`An edit of "${id}" was not saved: its note can no longer be read.`);
 			}
 		}
-		this.notifyListeners();
+	}
+
+	/** Writes pending silent edits and cover saves now, without notifying (plugin unload). */
+	async flushPending(): Promise<void> {
+		if (this.coverSaveTimer !== null) {
+			window.clearTimeout(this.coverSaveTimer);
+			this.coverSaveTimer = null;
+		}
+		await this.writeDirty();
+		await this.writePendingCovers();
 	}
 
 	/**
@@ -377,6 +397,7 @@ export class ReadingDataManager {
 		} as Item;
 		this.applyReleaseStatus(view);
 		this.views.set(src.id, { src, view });
+		this.baselines.set(view, src);
 		return view;
 	}
 
@@ -549,11 +570,12 @@ export class ReadingDataManager {
 	private updateSilent(updated: Item): void {
 		const id = updated.id;
 		const slot = this.views.get(id);
-		const src = slot?.src ?? this.sourceOf(this.kindOf(id) ?? 'book', id);
+		const src = this.baselines.get(updated) ?? slot?.src ?? this.sourceOf(this.kindOf(id) ?? 'book', id);
 		if (!src) return;
 		updated.dateModified = new Date().toISOString();
 		this.applyReleaseStatus(updated);
 		this.views.set(id, { src, view: updated });
+		this.baselines.set(updated, src);
 		this.dirty.add(id);
 	}
 
@@ -718,6 +740,7 @@ export class ReadingDataManager {
 			: { kind: 'manga', entry: stored as Manga });
 		item.vaultPage = this.layout().pathFromId(item.id);
 		this.views.set(item.id, { src: stored, view: item });
+		this.baselines.set(item, stored);
 	}
 
 	/**
@@ -772,7 +795,7 @@ export class ReadingDataManager {
 			await this.createNote(kind, item);
 			return;
 		}
-		const src = this.views.get(item.id)?.src ?? this.sourceOf(kind, item.id);
+		const src = this.baselines.get(item) ?? this.views.get(item.id)?.src ?? this.sourceOf(kind, item.id);
 
 		if (src && item.title !== src.title) {
 			const target = this.layout().notePath(kind, item.title);
@@ -798,12 +821,14 @@ export class ReadingDataManager {
 		const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
 			.filter((k) => !sameJson(before[k], after[k]));
 		if (changed.length > 0) {
-			await this.processFrontMatter(file, kind, item, (raw) => {
+			const ok = await this.processFrontMatter(file, kind, item, (raw) => {
 				for (const key of changed) {
 					if (key in after) raw[key] = after[key];
 					else delete raw[key];
 				}
 			});
+			// the copy now holds what the note holds for every field it knows
+			if (ok) this.baselines.set(item, structuredClone(item));
 		} else if (src) {
 			this.views.set(item.id, { src, view: item });
 		}

@@ -86,6 +86,9 @@ export class GameDataManager {
 	// Mutable copies handed to the UI, one per id. `src` is the index entry the copy was made from,
 	// `base` its normalized form: the baseline a write diffs against, so only changed fields reach the note.
 	private views = new Map<string, { src: Game; base: Game; view: Game }>();
+	// Per handed-out copy, the normalized stored state it was made from: a stale copy diffs against
+	// that, not against the refreshed slot, so it cannot revert a field changed elsewhere in between.
+	private baselines = new WeakMap<Game, Game>();
 	// games changed via updateGameSilent, written on the next saveAndNotify
 	private dirty = new Set<string>();
 	private settingsCache: GamesSettings | null = null;
@@ -244,12 +247,13 @@ export class GameDataManager {
 	private async flushViews(): Promise<void> {
 		const ids = new Set(this.dirty);
 		for (const [id, slot] of this.views) {
-			if (!sameJson(encodeGame(slot.view), encodeGame(slot.base))) ids.add(id);
+			if (!sameJson(encodeGame(slot.view), encodeGame(this.baselines.get(slot.view) ?? slot.base))) ids.add(id);
 		}
 		this.dirty.clear();
 		for (const id of ids) {
 			const view = this.views.get(id)?.view;
 			if (view) await this.writeGame(view);
+			else new Notice(`An edit of "${id}" was not saved: its note can no longer be read.`);
 		}
 	}
 
@@ -266,8 +270,12 @@ export class GameDataManager {
 			const groups = data.groups.filter((gr) => gr.gameIds.includes(game.id)).map((gr) => gr.name);
 			const existing = byTitle.get(game.title);
 			const next = { ...game, groups: groups.length > 0 ? groups : game.groups };
-			if (existing) await this.writeGame({ ...next, id: existing.id });
-			else await this.createNote({ ...next });
+			if (!existing) await this.createNote({ ...next });
+			else {
+				// existing notes stay as they are; only groups the note lacks are added
+				const missing = groups.filter((name) => !existing.groups?.includes(name));
+				if (missing.length > 0) await this.writeGame({ ...existing, groups: [...(existing.groups ?? []), ...missing] });
+			}
 		}
 		this.views.clear();
 		this.notifyListeners();
@@ -299,6 +307,7 @@ export class GameDataManager {
 		const base = this.normalized(src);
 		const view = structuredClone(base);
 		this.views.set(src.id, { src, base, view });
+		this.baselines.set(view, base);
 		return view;
 	}
 
@@ -318,7 +327,7 @@ export class GameDataManager {
 		this.applyReleaseStatus(updated);
 		const slot = this.views.get(updated.id);
 		const indexed = this.index.get(updated.id);
-		const old = slot?.base ?? (indexed?.kind === 'game' ? this.normalized(indexed.entry) : undefined);
+		const old = this.baselines.get(updated) ?? slot?.base ?? (indexed?.kind === 'game' ? this.normalized(indexed.entry) : undefined);
 		if (!old) return;
 		// favorite arrives as a whole-object replace — stamp/clear off the transition. Drives the
 		// Favorites shelf order (newest first).
@@ -359,7 +368,9 @@ export class GameDataManager {
 		const indexed = this.index.get(updated.id);
 		if (!slot && indexed?.kind !== 'game') return;
 		const src = slot?.src ?? (indexed!.entry as Game);
-		this.views.set(updated.id, { src, base: slot?.base ?? this.normalized(src), view: updated });
+		const base = this.baselines.get(updated) ?? slot?.base ?? this.normalized(src);
+		this.views.set(updated.id, { src, base, view: updated });
+		this.baselines.set(updated, base);
 		this.dirty.add(updated.id);
 	}
 
@@ -465,6 +476,16 @@ export class GameDataManager {
 			this.coverSaveTimer = null;
 		}
 		void this.flushPendingCovers();
+	}
+
+	/** Writes pending silent edits and cover saves now, without notifying (plugin unload). */
+	async flushPending(): Promise<void> {
+		if (this.coverSaveTimer !== null) {
+			window.clearTimeout(this.coverSaveTimer);
+			this.coverSaveTimer = null;
+		}
+		await this.flushViews();
+		await this.flushPendingCovers();
 	}
 
 	private async flushPendingCovers(): Promise<void> {
@@ -619,7 +640,9 @@ export class GameDataManager {
 		const stored = decodeGame(g.id, fm).entry;
 		this.index.applyLocal({ kind: 'game', entry: stored });
 		g.vaultPage = this.layout().pathFromId(g.id);
-		this.views.set(g.id, { src: stored, base: this.normalized(stored), view: g });
+		const base = this.normalized(stored);
+		this.views.set(g.id, { src: stored, base, view: g });
+		this.baselines.set(g, base);
 	}
 
 	/** Creates the note for a new game; the game's id becomes the note path. */
@@ -653,7 +676,7 @@ export class GameDataManager {
 			return;
 		}
 		const indexed = this.index.get(g.id);
-		const src = this.views.get(g.id)?.base ?? (indexed?.kind === 'game' ? this.normalized(indexed.entry) : undefined);
+		const src = this.baselines.get(g) ?? this.views.get(g.id)?.base ?? (indexed?.kind === 'game' ? this.normalized(indexed.entry) : undefined);
 
 		if (src && g.title !== src.title) {
 			const target = this.layout().notePath('game', g.title);
@@ -677,12 +700,14 @@ export class GameDataManager {
 		const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
 			.filter((k) => !sameJson(before[k], after[k]));
 		if (changed.length > 0) {
-			await this.processFrontMatter(file, g, (raw) => {
+			const ok = await this.processFrontMatter(file, g, (raw) => {
 				for (const key of changed) {
 					if (key in after) raw[key] = after[key];
 					else delete raw[key];
 				}
 			});
+			// the copy now holds what the note holds for every field it knows
+			if (ok) this.baselines.set(g, structuredClone(g));
 		} else {
 			const slot = this.views.get(g.id);
 			if (slot) slot.view = g;

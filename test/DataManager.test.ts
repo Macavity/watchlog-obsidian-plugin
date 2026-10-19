@@ -305,4 +305,26 @@ describe('DataManager on vault storage', () => {
 		await tick();
 		expect(posterQueue).toEqual(['Movie/A', 'Movie/C']);
 	});
+
+	it('keeps an external change when a stale copy edits another field', async () => {
+		const { dm, f } = await setupDataManager({ 'W/Movie/A.md': '---\ntitle: A\ntype: Movie\nrating: 1\n---\n\n## Notes\n' });
+		const t = dm.getTitle('Movie/A')!;
+		f.externalWrite('W/Movie/A.md', '---\ntitle: A\ntype: Movie\nrating: 5\n---\n\n## Notes\n');
+		await tick();
+		dm.getTitles();
+		t.review = 'nice';
+		await dm.updateTitle(t);
+		const c = f.files.get('W/Movie/A.md')!;
+		expect(c).toContain('rating: 5');
+		expect(c).toContain('review: nice');
+	});
+
+	it('flushes pending silent edits on flushPendingSave', async () => {
+		const { dm, f } = await setupDataManager({ 'W/Movie/A.md': '---\ntitle: A\ntype: Movie\n---\n' });
+		const t = dm.getTitle('Movie/A')!;
+		t.status = 'Watching';
+		dm.updateTitleSilent(t);
+		await dm.flushPendingSave();
+		expect(f.files.get('W/Movie/A.md')).toContain('status: Watching');
+	});
 });

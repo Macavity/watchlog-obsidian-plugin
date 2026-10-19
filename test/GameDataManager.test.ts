@@ -99,4 +99,33 @@ describe('GameDataManager on vault storage', () => {
 		expect(gdm.getGame('Games/Soon')?.status).toBe('To be released');
 		expect(airtime.added).toContain('Games/Soon');
 	});
+
+	it('keeps an external change when a stale copy edits another field', async () => {
+		const { gdm, f } = await setupGames({ 'W/Games/A.md': '---\ntitle: A\ntype: game\nrating: 1\n---\n' });
+		const g = gdm.getGame('Games/A')!;
+		f.externalWrite('W/Games/A.md', '---\ntitle: A\ntype: game\nrating: 5\n---\n');
+		await tick();
+		gdm.getGames();
+		g.playtimeMinutes = 60;
+		await gdm.updateGame(g);
+		const c = f.files.get('W/Games/A.md')!;
+		expect(c).toContain('rating: 5');
+		expect(c).toContain('playtime: 1h');
+	});
+
+	it('restore leaves existing notes untouched', async () => {
+		const { gdm, f } = await setupGames({ 'W/Games/A.md': '---\ntitle: A\ntype: game\nrating: 4\n---\n' });
+		const g = gdm.getGame('Games/A')!;
+		await gdm.restore({ games: [{ ...g, rating: 1, status: 'Playing' }], groups: [], settings: gdm.getSettings() });
+		const c = f.files.get('W/Games/A.md')!;
+		expect(c).toContain('rating: 4');
+		expect(c).not.toContain('Playing');
+	});
+
+	it('restore adds missing groups to an existing note', async () => {
+		const { gdm, f } = await setupGames({ 'W/Games/A.md': '---\ntitle: A\ntype: game\n---\n' });
+		const g = gdm.getGame('Games/A')!;
+		await gdm.restore({ games: [g], groups: [{ id: 'G', name: 'Fav', gameIds: [g.id] }] as never, settings: gdm.getSettings() });
+		expect(f.files.get('W/Games/A.md')).toContain('Fav');
+	});
 });

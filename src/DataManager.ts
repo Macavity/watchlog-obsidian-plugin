@@ -119,6 +119,9 @@ export class DataManager {
 	// Mutable copies handed to the UI, one per id. `src` is the index entry the copy was made from:
 	// it is the baseline a write diffs against, so only fields the user changed reach the note.
 	private views: Map<string, { src: WatchLogTitle; view: WatchLogTitle }> = new Map();
+	// Per handed-out copy, the stored state it was made from. Survives a refreshed slot, so a stale copy
+	// diffs against what it was made from and cannot revert a field changed elsewhere in between.
+	private baselines: WeakMap<WatchLogTitle, WatchLogTitle> = new WeakMap();
 	// `## Notes` body per id as last read from / written to the note
 	private notes: Map<string, string> = new Map();
 	// titles changed via updateTitleSilent, written on the next save()
@@ -464,13 +467,7 @@ export class DataManager {
 			window.clearTimeout(this.pendingSaveTimer);
 			this.pendingSaveTimer = null;
 		}
-		const ids = [...this.dirty, ...this.pendingMdTitleIds];
-		this.dirty.clear();
-		this.pendingMdTitleIds.clear();
-		for (const id of new Set(ids)) {
-			const t = this.getTitle(id);
-			if (t) await this.writeTitle(t);
-		}
+		await this.writePending();
 		for (const { view } of this.views.values()) this.syncCache(view);
 		this.notifyListeners();
 	}
@@ -495,12 +492,18 @@ export class DataManager {
 			window.clearTimeout(this.pendingSaveTimer);
 			this.pendingSaveTimer = null;
 		}
-		if (this.pendingMdTitleIds.size === 0) return;
-		const ids = Array.from(this.pendingMdTitleIds);
+		await this.writePending();
+	}
+
+	/** Writes the titles with pending silent or episode edits. */
+	private async writePending(): Promise<void> {
+		const ids = new Set([...this.dirty, ...this.pendingMdTitleIds]);
+		this.dirty.clear();
 		this.pendingMdTitleIds.clear();
 		for (const id of ids) {
 			const t = this.getTitle(id);
 			if (t) await this.writeTitle(t);
+			else new Notice(`An edit of "${id}" was not saved: its note can no longer be read.`);
 		}
 	}
 
@@ -522,6 +525,7 @@ export class DataManager {
 		// nothing cached yet: '' (not undefined) lets the lazy poster fetch pick it up
 		if (view.posterUrl === undefined) view.posterUrl = '';
 		this.views.set(src.id, { src, view });
+		this.baselines.set(view, src);
 		return view;
 	}
 
@@ -574,6 +578,7 @@ export class DataManager {
 		delete title.maybe;
 		if (!title.notes) title.notes = this.notes.get(id) ?? '';
 		this.views.set(id, { src: maybe.entry, view: title });
+		this.baselines.set(title, maybe.entry);
 		await this.writeTitle(title);
 	}
 
@@ -687,7 +692,7 @@ export class DataManager {
 
 	/** Logs rating / completion changes against the stored state. */
 	private logChanges(updated: WatchLogTitle): void {
-		const old = this.views.get(updated.id)?.src;
+		const old = this.baselineOf(updated);
 		if (!old) return;
 		const now = new Date().toISOString();
 		if (old.rating !== updated.rating) {
@@ -728,6 +733,8 @@ export class DataManager {
 			updated.priority = '';
 		}
 		this.logChanges(updated);
+		const base = this.baselineOf(updated);
+		if (base) this.baselines.set(updated, base);
 		slot.view = updated;
 		this.dirty.add(updated.id);
 	}
@@ -1594,8 +1601,7 @@ export class DataManager {
 			await this.createNote(t);
 			return;
 		}
-		const indexed = this.index.get(t.id);
-		const src = this.views.get(t.id)?.src ?? (indexed?.kind === 'title' ? indexed.entry : undefined);
+		const src = this.baselineOf(t);
 
 		if (src && (t.title !== src.title || t.type !== src.type)) {
 			const target = this.layout().notePath('title', t.title, t.type);
@@ -1624,6 +1630,8 @@ export class DataManager {
 				}
 			});
 			if (!ok) return;
+			// the copy now holds what the note holds for every field it knows
+			this.baselines.set(t, structuredClone(t));
 		} else {
 			// nothing for the note; API data may still have changed
 			this.syncCache(t);
@@ -1639,12 +1647,21 @@ export class DataManager {
 		}
 	}
 
+	/** Stored state a copy was made from; falls back to the current slot or index entry. */
+	private baselineOf(t: WatchLogTitle): WatchLogTitle | undefined {
+		const known = this.baselines.get(t) ?? this.views.get(t.id)?.src;
+		if (known) return known;
+		const indexed = this.index.get(t.id);
+		return indexed?.kind === 'title' ? indexed.entry : undefined;
+	}
+
 	/** Cache + optimistic index update after an own write; `t` stays the UI's copy. */
 	private afterWrite(t: WatchLogTitle, fm: Record<string, unknown>): void {
 		this.syncCache(t);
 		const stored = decodeTitle(t.id, fm, this.local.getCache(t.id)).entry;
 		this.index.applyLocal({ kind: 'title', entry: stored });
 		this.views.set(t.id, { src: stored, view: t });
+		this.baselines.set(t, stored);
 	}
 
 	/** Stores the title's API-derived fields in data.json when they changed. */

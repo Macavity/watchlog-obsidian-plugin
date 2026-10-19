@@ -195,8 +195,8 @@ export default class WatchLogPlugin extends Plugin {
 		this.dataManager.flushPendingSaveSync();
 		this.dataManager.flushPosterSaveSync();
 		this.dataManager.flushQueuedSaveSync();
-		this.readingDataManager?.flushCoverSave();
-		this.gameDataManager?.flushCoverSave();
+		void this.readingDataManager?.flushPending();
+		void this.gameDataManager?.flushPending();
 		this.posterService?.destroy();
 		this.widgetRenderer?.cleanup();
 		this.index.stop();

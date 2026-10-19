@@ -77,4 +77,25 @@ describe('ReadingDataManager on vault storage', () => {
 		await rdm.appendQuote('book', rdm.getBook('Books/A')!, 'line', 'p. 1');
 		expect(f.files.get('W/Books/A.md')).toContain('> [!quote] p. 1\n> line');
 	});
+
+	it('keeps an external change when a stale copy edits another field', async () => {
+		const { rdm, f } = await setupReadingDataManager({ 'W/Books/A.md': '---\ntitle: A\ntype: book\npagesRead: 1\n---\n' });
+		const b = rdm.getBook('Books/A')!;
+		f.externalWrite('W/Books/A.md', '---\ntitle: A\ntype: book\npagesRead: 5\n---\n');
+		await tick();
+		rdm.getBooks();
+		b.author = 'X';
+		await rdm.updateBook(b);
+		const c = f.files.get('W/Books/A.md')!;
+		expect(c).toContain('pagesRead: 5');
+		expect(c).toContain('author: X');
+	});
+
+	it('flushes dirty silent edits via flushPending', async () => {
+		const { rdm, f } = await setupReadingDataManager({ 'W/Books/A.md': '---\ntitle: A\ntype: book\n---\n' });
+		const b = rdm.getBook('Books/A')!;
+		rdm.updateBookSilent({ ...b, author: 'Y' });
+		await rdm.flushPending();
+		expect(f.files.get('W/Books/A.md')).toContain('author: Y');
+	});
 });
