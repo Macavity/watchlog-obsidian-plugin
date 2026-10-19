@@ -625,7 +625,7 @@ export class DataManager {
 		const now = new Date().toISOString();
 		void this.historyManager?.log(
 			`${title.title} (${title.type}) was added on ${formatHistoryDate(now)}`,
-			{ source: 'Watchlist', action: 'added', titleName: title.title },
+			{ source: 'Watchlist', action: 'added', titleName: title.title, titleId: title.id },
 		);
 	}
 
@@ -771,13 +771,13 @@ export class DataManager {
 		if (old.rating !== updated.rating) {
 			void this.historyManager?.log(
 				`${updated.title} (${updated.type}) was reviewed on ${formatHistoryDate(now)}`,
-				{ source: 'Watchlist', action: 'rating', titleName: updated.title },
+				{ source: 'Watchlist', action: 'rating', titleName: updated.title, titleId: updated.id },
 			);
 		}
 		if (old.status !== updated.status && updated.status === 'Completed') {
 			void this.historyManager?.log(
 				`${updated.title} (${updated.type}) was marked as watched on ${formatHistoryDate(now)}`,
-				{ source: 'Watchlist', action: 'completed', titleName: updated.title },
+				{ source: 'Watchlist', action: 'completed', titleName: updated.title, titleId: updated.id },
 			);
 		}
 	}
@@ -818,7 +818,7 @@ export class DataManager {
 			const now = new Date().toISOString();
 			void this.historyManager?.log(
 				`${title.title} (${title.type}) was deleted on ${formatHistoryDate(now)}`,
-				{ source: 'Watchlist', action: 'deleted', titleName: title.title },
+				{ source: 'Watchlist', action: 'deleted', titleName: title.title, titleId: title.id },
 			);
 		}
 		await this.deleteNote(id);
@@ -1356,12 +1356,12 @@ export class DataManager {
 			if (title.totalEpisodes > 1) {
 				void this.historyManager?.log(
 					`${title.title} (${title.type}) episode ${episodeNumber} was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title },
+					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
 				);
 			} else {
 				void this.historyManager?.log(
 					`${title.title} (${title.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title },
+					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
 				);
 			}
 		} else {
@@ -1425,12 +1425,12 @@ export class DataManager {
 			if (title.totalEpisodes > 1) {
 				void this.historyManager?.log(
 					`${title.title} (${title.type}) episode ${episodeNumber} was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title },
+					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
 				);
 			} else {
 				void this.historyManager?.log(
 					`${title.title} (${title.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title },
+					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
 				);
 			}
 		} else {
@@ -1486,7 +1486,7 @@ export class DataManager {
 				const now = new Date().toISOString();
 				void this.historyManager?.log(
 					`${title.title} (${title.type}) ${seasonLabel} was fully watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title },
+					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
 				);
 			}
 		}

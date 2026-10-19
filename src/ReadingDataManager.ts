@@ -405,7 +405,7 @@ export class ReadingDataManager {
 		await this.syncUpcoming(book, 'book');
 		void this.historyManager?.log(
 			`${book.title} (Book) was added`,
-			{ source: 'Reading', action: 'added', titleName: book.title },
+			{ source: 'Reading', action: 'added', titleName: book.title, titleId: book.id },
 		);
 	}
 
@@ -437,7 +437,7 @@ export class ReadingDataManager {
 			await this.syncUpcoming(book, 'book');
 			void this.historyManager?.log(
 				`${book.title} (Book) was added`,
-				{ source: 'Reading', action: 'added', titleName: book.title },
+				{ source: 'Reading', action: 'added', titleName: book.title, titleId: book.id },
 			);
 		}
 	}
@@ -469,7 +469,7 @@ export class ReadingDataManager {
 		await this.syncUpcoming(manga, 'manga');
 		void this.historyManager?.log(
 			`${manga.title} (Manga) was added`,
-			{ source: 'Reading', action: 'added', titleName: manga.title },
+			{ source: 'Reading', action: 'added', titleName: manga.title, titleId: manga.id },
 		);
 	}
 
@@ -505,7 +505,7 @@ export class ReadingDataManager {
 			await this.syncUpcoming(manga, 'manga');
 			void this.historyManager?.log(
 				`${manga.title} (Manga) was added`,
-				{ source: 'Reading', action: 'added', titleName: manga.title },
+				{ source: 'Reading', action: 'added', titleName: manga.title, titleId: manga.id },
 			);
 		}
 	}
@@ -536,13 +536,13 @@ export class ReadingDataManager {
 			}
 			void this.historyManager?.log(
 				`${name} (${label}) status changed to ${updated.status}`,
-				{ source: 'Reading', action: act, titleName: name },
+				{ source: 'Reading', action: act, titleName: name, titleId: updated.id },
 			);
 		}
 		if (src.rating !== updated.rating) {
 			void this.historyManager?.log(
 				`${name} (${label}) Rating → ${updated.rating}/5`,
-				{ source: 'Reading', action: 'rating', titleName: name },
+				{ source: 'Reading', action: 'rating', titleName: name, titleId: updated.id },
 			);
 		}
 		const oldReleaseDate = src.releaseDate;
@@ -573,7 +573,7 @@ export class ReadingDataManager {
 		if (item) {
 			void this.historyManager?.log(
 				`${item.title} (${label}) was deleted`,
-				{ source: 'Reading', action: 'deleted', titleName: item.title },
+				{ source: 'Reading', action: 'deleted', titleName: item.title, titleId: item.id },
 			);
 		}
 	}
@@ -586,7 +586,7 @@ export class ReadingDataManager {
 		for (const item of items) {
 			void this.historyManager?.log(
 				`${item.title} (${label}) was deleted`,
-				{ source: 'Reading', action: 'deleted', titleName: item.title },
+				{ source: 'Reading', action: 'deleted', titleName: item.title, titleId: item.id },
 			);
 		}
 	}

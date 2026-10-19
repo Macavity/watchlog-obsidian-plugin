@@ -72,7 +72,6 @@ export default class WatchLogPlugin extends Plugin {
 	historyManager: HistoryManager = new HistoryManager(this, new HistoryStore(
 		this.app,
 		() => this.layout,
-		(name) => this.dataManager.getTitles().some((t) => t.title === name),
 		(ref) => this.registerEvent(ref),
 	));
 	posterService!: PosterService;
@@ -287,8 +286,7 @@ export default class WatchLogPlugin extends Plugin {
 			local: this.local,
 			legacy,
 			shared: this.shared,
-			// links only to title notes that exist after the import
-			history: new HistoryStore(this.app, () => this.layout, (name) => this.isTitleNote(name)),
+			history: new HistoryStore(this.app, () => this.layout),
 			yaml: this.yaml,
 			layout: this.layout,
 		});
@@ -318,17 +316,12 @@ export default class WatchLogPlugin extends Plugin {
 					app: this.app,
 					local: this.local,
 					shared: this.shared,
-					history: new HistoryStore(this.app, () => this.layout, (name) => this.isTitleNote(name)),
+					history: new HistoryStore(this.app, () => this.layout),
 					yaml: this.yaml,
 					layout: this.layout,
 				}),
 			},
 		};
-	}
-
-	private isTitleNote(name: string): boolean {
-		return this.app.vault.getMarkdownFiles()
-			.some((f: TFile) => f.basename === name && this.layout.classify(f.path)?.kind === 'title');
 	}
 
 	/** Current vault layout (root and central folders). */

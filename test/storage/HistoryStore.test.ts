@@ -61,11 +61,11 @@ describe('HistoryStore', () => {
 
 	it('roundtrips entries incl. source, wikilink and ids', async () => {
 		const f = createFakeApp();
-		const h = new HistoryStore(f.app, layout, (n) => n === 'T1');
-		await h.append(entry(1, { source: 'Reading' }));
+		const h = new HistoryStore(f.app, layout);
+		await h.append(entry(1, { source: 'Reading', titleId: 'Movie/T1' }));
 		await h.append(entry(2));
-		expect(f.files.get('W/History.md')).toContain('[[T1]]');
-		expect(f.files.get('W/History.md')).not.toContain('[[T2]]');
+		expect(f.files.get('W/History.md')).toContain('[[Movie/T1]]');
+		expect(f.files.get('W/History.md')).not.toContain('[[T2');
 		const all = await h.load();
 		expect(all.map((e) => [e.titleName, e.message, e.source, e.action])).toEqual([
 			['T1', 'm1', 'Reading', 'added'], ['T2', 'm2', undefined, 'added']]);
@@ -106,11 +106,45 @@ describe('HistoryStore', () => {
 		await tick();
 		expect(cb).toHaveBeenCalledTimes(1);
 	});
-	it('links to the note path and loads the plain title name', async () => {
-		const f = createFakeApp({ 'W/TV Show/Dark.md': '---\ntype: TV Show\n---\n' });
-		const h = new HistoryStore(f.app, () => new VaultLayout('W', () => ['TV Show']), (n) => n === 'Dark');
+	it('links by titleId without a vault scan, also for sanitized names', async () => {
+		const f = createFakeApp();
+		const scan = vi.spyOn(f.app.vault, 'getMarkdownFiles');
+		const h = new HistoryStore(f.app, () => new VaultLayout('W', () => ['Movie']));
+		await h.append(entry(1, { titleName: 'Léon: The Professional', titleId: 'Movie/Léon- The Professional' }));
+		expect(f.files.get('W/History.md')).toContain('[[Movie/Léon- The Professional]]');
+		expect(scan).not.toHaveBeenCalled();
+		const [e] = await h.load();
+		expect(e!.titleId).toBe('Movie/Léon- The Professional');
+		expect(e!.titleName).toBe('Léon- The Professional');
+	});
+
+	it('links two same-named titles of different types to their own notes', async () => {
+		const f = createFakeApp();
+		const h = new HistoryStore(f.app, () => new VaultLayout('W', () => ['Movie', 'TV Show']));
+		await h.appendMany([
+			entry(1, { titleName: 'Dark', titleId: 'Movie/Dark' }),
+			entry(2, { titleName: 'Dark', titleId: 'TV Show/Dark' }),
+		]);
+		const txt = f.files.get('W/History.md')!;
+		expect(txt).toContain('[[Movie/Dark]]');
+		expect(txt).toContain('[[TV Show/Dark]]');
+	});
+
+	it('keeps entries without id as plain text', async () => {
+		const f = createFakeApp({ 'W/Movie/Dark.md': '---\n---\n' });
+		const h = new HistoryStore(f.app, () => new VaultLayout('W', () => ['Movie']));
 		await h.append(entry(1, { titleName: 'Dark' }));
-		expect(f.files.get('W/History.md')).toContain('[[TV Show/Dark]]');
-		expect((await h.load())[0]!.titleName).toBe('Dark');
+		expect(f.files.get('W/History.md')).not.toContain('[[');
+	});
+
+	it('replaceAll keeps existing link targets', async () => {
+		const f = createFakeApp();
+		const h = new HistoryStore(f.app, () => new VaultLayout('W', () => ['Movie']));
+		await h.append(entry(1, { titleName: 'Léon: The Professional', titleId: 'Movie/Léon- The Professional' }));
+		await h.append(entry(2));
+		await h.replaceAll(await h.load());
+		const txt = f.files.get('W/History.md')!;
+		expect(txt).toContain('[[Movie/Léon- The Professional]]');
+		expect(txt).not.toContain('[[T2');
 	});
 });

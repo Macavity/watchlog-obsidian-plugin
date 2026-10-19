@@ -314,7 +314,7 @@ export class GameDataManager {
 		await this.syncUpcoming(game);
 		void this.historyManager?.log(
 			`${game.title} (Game) was added`,
-			{ source: 'Games', action: 'added', titleName: game.title },
+			{ source: 'Games', action: 'added', titleName: game.title, titleId: game.id },
 		);
 	}
 
@@ -339,13 +339,13 @@ export class GameDataManager {
 			}
 			void this.historyManager?.log(
 				`${updated.title} (Game) status changed to ${updated.status}`,
-				{ source: 'Games', action: act, titleName: updated.title },
+				{ source: 'Games', action: act, titleName: updated.title, titleId: updated.id },
 			);
 		}
 		if (old.rating !== updated.rating) {
 			void this.historyManager?.log(
 				`${updated.title} (Game) Rating → ${updated.rating}/5`,
-				{ source: 'Games', action: 'rating', titleName: updated.title },
+				{ source: 'Games', action: 'rating', titleName: updated.title, titleId: updated.id },
 			);
 		}
 		const oldId = updated.id;
@@ -378,7 +378,7 @@ export class GameDataManager {
 		if (game) {
 			void this.historyManager?.log(
 				`${game.title} (Game) was deleted`,
-				{ source: 'Games', action: 'deleted', titleName: game.title },
+				{ source: 'Games', action: 'deleted', titleName: game.title, titleId: game.id },
 			);
 		}
 	}
@@ -399,7 +399,7 @@ export class GameDataManager {
 		for (const game of toDelete) {
 			void this.historyManager?.log(
 				`${game.title} (Game) was deleted`,
-				{ source: 'Games', action: 'deleted', titleName: game.title },
+				{ source: 'Games', action: 'deleted', titleName: game.title, titleId: game.id },
 			);
 		}
 	}

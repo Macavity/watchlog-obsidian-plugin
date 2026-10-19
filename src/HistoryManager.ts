@@ -12,6 +12,8 @@ export interface HistoryEntry {
 	source?: HistorySource;
 	action?: HistoryAction;
 	titleName?: string;
+	/** Note id of the title (C1); history lines link to it. */
+	titleId?: string;
 }
 
 /**
@@ -88,7 +90,7 @@ export class HistoryManager {
 
 	async log(
 		message: string,
-		meta?: { source?: HistorySource; action?: HistoryAction; titleName?: string },
+		meta?: { source?: HistorySource; action?: HistoryAction; titleName?: string; titleId?: string },
 	): Promise<void> {
 		const entry: HistoryEntry = {
 			id: '',
@@ -97,6 +99,7 @@ export class HistoryManager {
 			source: meta?.source,
 			action: meta?.action,
 			titleName: meta?.titleName,
+			titleId: meta?.titleId,
 		};
 		// optimistic, so getEntries() is current immediately; ids are replaced on the next load
 		entry.id = `${entry.timestamp}#${this.entries.length}`;

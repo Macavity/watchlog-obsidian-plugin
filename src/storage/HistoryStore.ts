@@ -6,15 +6,15 @@ import type { VaultLayout } from './VaultLayout';
 export const MAX_HISTORY_ENTRIES = 1000;
 const GROUP_CREATED = /^Group "(.+)" was created$/;
 
-/** `target` is the wikilink target (the note path); history lines carry the title name for everything else. */
-function toLine(e: HistoryEntry, isLink: boolean, linkTarget?: string): HistoryLine {
+/** Entries with a `titleId` link to their note (`[[<id>]]`); everything else is plain text. */
+function toLine(e: HistoryEntry, link: boolean): HistoryLine {
 	const group = e.action ? null : GROUP_CREATED.exec(e.message);
-	const target = group ? (group[1] ?? '') : (e.titleName || '(unknown)');
+	const isLink = link && !group && !!e.titleId;
 	const line: HistoryLine = {
 		timestamp: e.timestamp,
 		action: group ? 'group-created' : (e.action ?? 'added'),
-		target: isLink && !group && linkTarget ? linkTarget : target,
-		isLink: isLink && !group && !!e.titleName,
+		target: group ? (group[1] ?? '') : isLink ? e.titleId! : (e.titleName || '(unknown)'),
+		isLink,
 	};
 	// the group message is derived from the target on load
 	if (e.message && !group) line.message = e.message.replace(/\s+/g, ' ').trim();
@@ -37,8 +37,9 @@ function byTime<T extends { timestamp: string }>(items: T[]): T[] {
 
 function toEntry(l: HistoryLine, index: number): HistoryEntry {
 	const group = l.action === 'group-created';
-	// a link target is a note path ("TV Show/Dark"); the entry keeps the plain name
-	const name = l.isLink ? (l.target.split('|')[0] ?? '').split('/').pop() || l.target : l.target;
+	// a link target is the note id ("TV Show/Dark", or "id|alias"); the entry keeps the plain name
+	const id = l.isLink ? (l.target.split('|')[0] ?? l.target) : undefined;
+	const name = id ? id.split('/').pop() || l.target : l.target;
 	return {
 		id: `${l.timestamp}#${index}`,
 		timestamp: l.timestamp,
@@ -47,6 +48,7 @@ function toEntry(l: HistoryLine, index: number): HistoryEntry {
 		// group-created has no HistoryAction; the Log tab infers 'added' from the message
 		action: l.action === 'group-created' ? undefined : l.action,
 		titleName: group ? undefined : name,
+		titleId: group ? undefined : id,
 	};
 }
 
@@ -58,7 +60,6 @@ export class HistoryStore {
 	constructor(
 		private app: App,
 		private layout: () => VaultLayout,
-		private titleExists: (name: string) => boolean = () => false,
 		private register: (ref: EventRef) => void = () => {},
 	) {}
 
@@ -67,18 +68,8 @@ export class HistoryStore {
 		return f instanceof TFile ? f : null;
 	}
 
-	/** Links to the title note by path (unambiguous when two notes share a name); falls back to the name. */
 	private format(e: HistoryEntry): string {
-		const name = e.titleName ?? '';
-		const isLink = this.titleExists(name);
-		let target: string | undefined;
-		if (isLink) {
-			const layout = this.layout();
-			const note = this.app.vault.getMarkdownFiles()
-				.find((f) => f.basename === name && layout.classify(f.path)?.kind === 'title');
-			if (note) target = layout.idFromPath(note.path);
-		}
-		return formatHistoryLine(toLine(e, isLink, target));
+		return formatHistoryLine(toLine(e, true));
 	}
 
 	async load(): Promise<HistoryEntry[]> {

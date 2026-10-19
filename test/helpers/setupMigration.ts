@@ -35,7 +35,7 @@ export async function setupMigration(legacy: unknown, files: Record<string, stri
 		const types = (data.settings.types ?? []).map((t) => t.name);
 		const layout = new VaultLayout(VaultLayout.findRoot(bases) ?? legacyRoot(data), () => types);
 		const shared = new SharedConfigStore(f.app, () => layout, yaml);
-		const history = new HistoryStore(f.app, () => layout, (name) => data.titles.some((t) => t.title === name));
+		const history = new HistoryStore(f.app, () => layout);
 		return migrateV1({ app: f.app, plugin: f.plugin, local, legacy: data, shared, history, yaml, layout });
 	}
 

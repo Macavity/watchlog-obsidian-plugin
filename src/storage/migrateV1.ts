@@ -481,10 +481,26 @@ class Migration {
 		const { history } = this.ctx;
 		const seen = new Set((await history.load()).map(historyKey));
 		const candidates: HistoryEntry[] = [];
+		// legacy entries carry only the name: link when exactly one migrated note of that source has it
+		const byName = new Map<string, Set<string>>();
+		const note = (source: string, name: string, legacyId: string, map: Map<string, string>): void => {
+			const id = map.get(legacyId);
+			if (!id) return;
+			const key = `${source}|${name}`;
+			byName.set(key, (byName.get(key) ?? new Set()).add(id));
+		};
+		const reading = data.reading as ReadingData;
+		for (const t of data.titles) if (!t.maybe) note('Watchlist', t.title, t.id, this.ids.title);
+		for (const b of reading.books) note('Reading', b.title, b.id, this.ids.book);
+		for (const m of reading.manga) note('Reading', m.title, m.id, this.ids.manga);
+		for (const g of (data.games as GamesData).games) note('Games', g.title, g.id, this.ids.game);
 		for (const e of data.history ?? []) {
 			if (!isRecord(e) || typeof e.message !== 'string') continue;
 			const timestamp = isoOf(e.timestamp);
-			if (timestamp) candidates.push({ ...e, timestamp });
+			if (!timestamp) continue;
+			const ids = typeof e.titleName === 'string' ? byName.get(`${e.source ?? 'Watchlist'}|${e.titleName}`) : undefined;
+			const titleId = e.titleId ?? (ids?.size === 1 ? [...ids][0] : undefined);
+			candidates.push({ ...e, timestamp, ...(titleId ? { titleId } : {}) });
 		}
 		const groupEvents = (groups: { id: string; name: string; dateAdded: string }[], source: HistoryEntry['source']): void => {
 			for (const g of groups) {

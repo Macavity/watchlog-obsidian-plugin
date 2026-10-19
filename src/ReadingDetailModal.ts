@@ -184,19 +184,19 @@ export class ReadingDetailModal extends Modal {
 				if (this.draft.wordsRead !== snap.wordsRead && book.totalWords > 0) {
 					void this.plugin.historyManager?.log(
 						`${item.title} (${typeLabel}) At word ${formatCount(this.draft.wordsRead)} / ${formatCount(book.totalWords)}`,
-						{ source: 'Reading', action: 'watched', titleName: item.title },
+						{ source: 'Reading', action: 'watched', titleName: item.title, titleId: item.id },
 					);
 				}
 			} else if (this.draft.pagesRead !== snap.pagesRead && book.totalPages > 0) {
 				void this.plugin.historyManager?.log(
 					`${item.title} (${typeLabel}) At page ${formatCount(this.draft.pagesRead)} / ${formatCount(book.totalPages)}`,
-					{ source: 'Reading', action: 'watched', titleName: item.title },
+					{ source: 'Reading', action: 'watched', titleName: item.title, titleId: item.id },
 				);
 			}
 			if (this.draft.chaptersRead !== snap.chaptersRead && book.totalChapters > 0) {
 				void this.plugin.historyManager?.log(
 					`${item.title} (${typeLabel}) At chapter ${this.draft.chaptersRead} / ${book.totalChapters}`,
-					{ source: 'Reading', action: 'watched', titleName: item.title },
+					{ source: 'Reading', action: 'watched', titleName: item.title, titleId: item.id },
 				);
 			}
 		} else {
@@ -204,13 +204,13 @@ export class ReadingDetailModal extends Modal {
 			if (this.draft.chaptersRead !== snap.chaptersRead && manga.totalChapters > 0) {
 				void this.plugin.historyManager?.log(
 					`${item.title} (${typeLabel}) At chapter ${this.draft.chaptersRead} / ${manga.totalChapters}`,
-					{ source: 'Reading', action: 'watched', titleName: item.title },
+					{ source: 'Reading', action: 'watched', titleName: item.title, titleId: item.id },
 				);
 			}
 			if (this.draft.volumesRead !== snap.volumesRead && manga.totalVolumes > 0) {
 				void this.plugin.historyManager?.log(
 					`${item.title} (${typeLabel}) At volume ${this.draft.volumesRead} / ${manga.totalVolumes}`,
-					{ source: 'Reading', action: 'watched', titleName: item.title },
+					{ source: 'Reading', action: 'watched', titleName: item.title, titleId: item.id },
 				);
 			}
 		}
