@@ -222,8 +222,8 @@ export default class WatchLogPlugin extends Plugin {
 			this.index.start();
 			await this.historyManager.start();
 			await this.dataManager.init();
-			await this.gameDataManager.init();
 			await this.readingDataManager.init();
+			await this.gameDataManager.init();
 			await this.dataManager.ensureFolders();
 		} catch (e) {
 			console.error('[WL] vault storage failed to start', e);
