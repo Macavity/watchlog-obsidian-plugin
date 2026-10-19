@@ -152,7 +152,7 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 				unmappedSkipped = outsideSeasons(refs, seasons);
 				for (const ref of refs) {
 					const season = seasons[ref.season - 1];
-					if (season) season.skippedEpisodes = [...(season.skippedEpisodes ?? []), ref.episode];
+					if (season && ref.episode <= season.episodes) season.skippedEpisodes = [...(season.skippedEpisodes ?? []), ref.episode];
 				}
 			}
 		}

@@ -43,6 +43,15 @@ describe('season refill', () => {
 		expect(f.files.get('W/TV Show/Dark.md')).toContain('watched: S01E02-E08, S02E01');
 	});
 
+	it('stale cache: episodes beyond the cached season length survive a toggle', async () => {
+		const { dm, f, local } = await setupDataManager({});
+		local.setCache('TV Show/Dark', { seasons: [{ name: 'Season 1', episodes: 8, offset: 0 }] });
+		f.externalWrite('W/TV Show/Dark.md', '---\ntitle: Dark\ntype: TV Show\nstatus: Watching\nexternalId: tmdb:tv:70523\nwatched: S01E01-E10\n---\n');
+		await tick();
+		await dm.markEpisodeWatched('TV Show/Dark', 3, false);
+		expect(f.files.get('W/TV Show/Dark.md')).toContain('watched: S01E01-E02, S01E04-E10');
+	});
+
 	it('full rewrite keeps output fields the cache does not know', async () => {
 		const note = '---\ntitle: Dune\ntype: Movie\nexternalId: tmdb:movie:438631\nposter: https://p/x.jpg\n'
 			+ 'trailer: https://youtu.be/x\ndirector: [Denis Villeneuve]\ncast: [Zendaya]\nstudio: [Legendary]\n'

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseEpisodeRange, formatEpisodeRange, toAbsolute, fromAbsolute } from '../../src/storage/episodeRange';
+import { parseEpisodeRange, formatEpisodeRange, toAbsolute, fromAbsolute, outsideSeasons } from '../../src/storage/episodeRange';
 
 const seasons = [{ name: 'Season 1', episodes: 12, offset: 0 }, { name: 'Season 2', episodes: 10, offset: 12 }];
 
@@ -29,12 +29,15 @@ describe('episodeRange', () => {
 		expect(fromAbsolute([12, 13], seasons)).toEqual(refs);
 	});
 
-	it('rejects episode numbers above 10000 or beyond a known season', () => {
+	it('rejects episode numbers above 10000', () => {
 		expect(parseEpisodeRange('S01E10001')).toBeNull();
 		expect(parseEpisodeRange('S01E01-E99999999')).toBeNull();
 		expect(parseEpisodeRange('S01E10000')).toEqual([{ season: 1, episode: 10000 }]);
-		expect(parseEpisodeRange('S01E13', seasons)).toBeNull();
-		expect(parseEpisodeRange('S01E01-E13', seasons)).toBeNull();
+		expect(parseEpisodeRange('S01E10001', seasons)).toBeNull();
+		// beyond a known season's length is kept (ongoing season, stale cache)
+		expect(parseEpisodeRange('S01E13', seasons)).toEqual([{ season: 1, episode: 13 }]);
+		expect(parseEpisodeRange('S01E11-E13', seasons)).toHaveLength(3);
+		expect(outsideSeasons([{ season: 1, episode: 13 }, { season: 1, episode: 12 }], seasons)).toEqual([{ season: 1, episode: 13 }]);
 		// a season the list does not know yet is not checked against a count
 		expect(parseEpisodeRange('S03E40', seasons)).toEqual([{ season: 3, episode: 40 }]);
 	});

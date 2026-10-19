@@ -58,7 +58,11 @@ describe('titleCodec', () => {
   });
   it('marks out-of-range episode numbers invalid', () => {
     const s1 = [{ name: 'Season 1', episodes: 8, offset: 0 }];
-    expect(decodeTitle('TV Show/A', { title: 'A', watched: 'S01E09' }, { seasons: s1 }).invalidFields).toContain('watched');
+    const beyond = decodeTitle('TV Show/A', { title: 'A', watched: 'S01E09', skipped: 'S01E10' }, { seasons: s1 });
+    expect(beyond.invalidFields).toEqual([]);
+    expect(beyond.entry.unmappedWatched).toEqual([{ season: 1, episode: 9 }]);
+    expect(beyond.entry.unmappedSkipped).toEqual([{ season: 1, episode: 10 }]);
+    expect(beyond.entry.seasons[0]?.skippedEpisodes).toEqual([]);
     expect(decodeTitle('TV Show/A', { title: 'A', watched: 'S01E10001' }, undefined).invalidFields).toContain('watched');
     expect(decodeTitle('TV Show/A', { title: 'A', seasons: ['Season 1: 12 (13)'] }, undefined).invalidFields).toContain('seasons');
     expect(decodeTitle('TV Show/A', { title: 'A', seasons: ['Season 1: 20000 (1-10001)'] }, undefined).invalidFields).toContain('seasons');

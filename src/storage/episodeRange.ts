@@ -9,13 +9,6 @@ const pad = (n: number): string => String(n).padStart(2, '0');
 /** Upper bound for any episode number; guards range expansion against absurd input. */
 export const MAX_EPISODE = 10_000;
 
-/** Episode number within bounds: ≤ MAX_EPISODE, and ≤ the season's count when that season is known. */
-function inBounds(season: number, episode: number, seasons?: Season[]): boolean {
-	if (episode > MAX_EPISODE) return false;
-	const known = seasons?.[season - 1];
-	return !known || episode <= known.episodes;
-}
-
 /** Sorts and dedupes refs. */
 function normalize(refs: EpisodeRef[]): EpisodeRef[] {
 	const sorted = [...refs].sort((a, b) => a.season - b.season || a.episode - b.episode);
@@ -36,8 +29,8 @@ function absOf(ref: EpisodeRef, seasons: Season[]): number | undefined {
 }
 
 /**
- * Parses "S01E01-E12, S02E05" into refs. Returns null on garbage, out-of-bounds episode numbers or
- * cross-season ranges without seasons. Seasons beyond the given list are not checked.
+ * Parses "S01E01-E12, S02E05" into refs. Returns null on garbage, episode numbers above MAX_EPISODE or
+ * cross-season ranges without (or beyond) seasons. Episodes beyond a known season's length parse fine.
  */
 export function parseEpisodeRange(input: string, seasons?: Season[]): EpisodeRef[] | null {
 	const out: EpisodeRef[] = [];
@@ -46,14 +39,14 @@ export function parseEpisodeRange(input: string, seasons?: Season[]): EpisodeRef
 		if (!m || m[1] === undefined || m[2] === undefined) return null;
 		const season = parseInt(m[1], 10);
 		const from = parseInt(m[2], 10);
-		if (!inBounds(season, from, seasons)) return null;
+		if (from > MAX_EPISODE) return null;
 		if (m[4] === undefined) {
 			out.push({ season, episode: from });
 			continue;
 		}
 		const to = parseInt(m[4], 10);
 		const endSeason = m[3] === undefined ? season : parseInt(m[3], 10);
-		if (!inBounds(endSeason, to, seasons)) return null;
+		if (to > MAX_EPISODE) return null;
 		if (endSeason === season) {
 			if (from > to) return null;
 			for (let e = from; e <= to; e++) out.push({ season, episode: e });
@@ -91,9 +84,9 @@ export function formatEpisodeRange(refs: EpisodeRef[]): string {
 	return runs.join(', ');
 }
 
-/** Refs whose season is not in the list (S02 while only S01 is known). */
+/** Refs the list cannot map: unknown season (S02 while only S01 is known) or episode beyond the season's length. */
 export function outsideSeasons(refs: EpisodeRef[], seasons: Season[]): EpisodeRef[] {
-	return refs.filter((r) => !seasons[r.season - 1]);
+	return refs.filter((r) => absOf(r, seasons) === undefined);
 }
 
 /** Maps refs to absolute episode numbers; refs outside the known seasons are dropped. */
