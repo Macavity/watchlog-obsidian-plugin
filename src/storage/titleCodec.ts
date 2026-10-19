@@ -372,6 +372,12 @@ export function encodeTitle(t: WatchLogTitle, progress: number, seasonsPending =
 	return out;
 }
 
+/** Cache keys splitCache owns; everything else in a cache entry (apiCheck, airing, …) is kept on sync. */
+export const TITLE_CACHE_KEYS = [
+	'posterUrl', 'trailerUrl', 'director', 'cast', 'studio', 'communityRating', 'communityVotes', 'communitySource',
+	'communityRatingLastFetched', 'collectionId', 'tmdbId', 'tmdbMediaType', 'malId', 'anilistId', 'seasons',
+] as const satisfies readonly (keyof EntryCache)[];
+
 /** API-derived fields that live in data.json (posters only as the 'none' marker); seasons only when not overridden in the note. */
 export function splitCache(t: WatchLogTitle): EntryCache {
 	const c: EntryCache = {};

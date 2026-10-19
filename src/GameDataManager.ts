@@ -3,7 +3,7 @@ import type WatchLogPlugin from './main';
 import type { HistoryManager } from './HistoryManager';
 import type { DataStores } from './DataManager';
 import type { EntryIndex } from './storage/EntryIndex';
-import { getBaseline, setBaseline } from './storage/baseline';
+import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { decodeGame, encodeGame } from './storage/gameCodec';
@@ -462,7 +462,7 @@ export class GameDataManager {
 			}
 			raw.coverUrl = url;
 			game.coverUrl = url;
-		});
+		}, true);
 	}
 
 	/**
@@ -611,12 +611,13 @@ export class GameDataManager {
 	/**
 	 * processFrontMatter, then the optimistic index update for `g` — inside the callback, so it lands
 	 * before the write's `changed` event can be seen. False (and a notice) on unreadable YAML.
+	 * `background` marks an automatic fill (no user write).
 	 */
-	private async processFrontMatter(file: TFile, g: Game, fn: (fm: Record<string, unknown>) => void): Promise<boolean> {
+	private async processFrontMatter(file: TFile, g: Game, fn: (fm: Record<string, unknown>) => void, background = false): Promise<boolean> {
 		try {
 			await this.plugin.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 				fn(fm);
-				this.afterWrite(g, { ...fm });
+				this.afterWrite(g, { ...fm }, background);
 			});
 			return true;
 		} catch (e) {
@@ -626,12 +627,25 @@ export class GameDataManager {
 		}
 	}
 
-	/** Cache + optimistic index update after an own write; `g` stays the UI's copy. */
-	private afterWrite(g: Game, fm: Record<string, unknown>): void {
+	/** True when `g` was made from the stored state of its note (or nothing is stored yet). */
+	private basedOnStored(g: Game): boolean {
+		const current = this.index.get(g.id);
+		if (current?.kind !== 'game') return true;
+		const base = getBaseline(g) ?? this.views.get(g.id)?.base;
+		return !!base && sameStoredState(base, this.normalized(current.entry));
+	}
+
+	/**
+	 * Cache + optimistic index update after an own write. `g` becomes the UI's copy only when it was
+	 * made from the stored state; for a stale copy the next read builds a fresh one.
+	 */
+	private afterWrite(g: Game, fm: Record<string, unknown>, background = false): void {
+		const fresh = this.basedOnStored(g);
 		this.dropLegacyCover(g.id);
 		const stored = decodeGame(g.id, fm).entry;
-		this.index.applyLocal({ kind: 'game', entry: stored });
+		this.index.applyLocal({ kind: 'game', entry: stored }, { background });
 		g.vaultPage = this.layout().pathFromId(g.id);
+		if (!fresh) return;
 		const base = this.normalized(stored);
 		this.views.set(g.id, { src: stored, base, view: g });
 		setBaseline(g, base);
@@ -698,9 +712,9 @@ export class GameDataManager {
 					else delete raw[key];
 				}
 			});
-			// the copy now holds what the note holds for every field it knows
-			if (ok) setBaseline(g, structuredClone(g));
-		} else {
+			// a stale copy (not taken as the view) holds what the note holds for every field it knows
+			if (ok && this.views.get(g.id)?.view !== g) setBaseline(g, structuredClone(g));
+		} else if (this.basedOnStored(g)) {
 			const slot = this.views.get(g.id);
 			if (slot) slot.view = g;
 		}

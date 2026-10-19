@@ -5,7 +5,7 @@ import type { HistoryManager } from './HistoryManager';
 import type { DataStores } from './DataManager';
 import type { EntryIndex } from './storage/EntryIndex';
 import type { LocalStore } from './storage/LocalStore';
-import { getBaseline, setBaseline } from './storage/baseline';
+import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { FOLDERS } from './storage/VaultLayout';
@@ -306,7 +306,7 @@ export class ReadingDataManager {
 			}
 			raw.coverUrl = url;
 			item.coverUrl = url;
-		});
+		}, true);
 	}
 
 	/**
@@ -718,14 +718,27 @@ export class ReadingDataManager {
 		}
 	}
 
-	/** Cache + optimistic index update after an own write; `item` stays the UI's copy. */
-	private afterWrite(kind: ReadingKind, item: Item, fm: Fm): void {
+	/** True when `item` was made from the stored state of its note (or nothing is stored yet). */
+	private basedOnStored(item: Item): boolean {
+		const current = this.index.get(item.id);
+		if (current?.kind !== 'book' && current?.kind !== 'manga') return true;
+		const base = getBaseline(item) ?? this.views.get(item.id)?.src;
+		return !!base && sameStoredState(base, current.entry);
+	}
+
+	/**
+	 * Cache + optimistic index update after an own write. `item` becomes the UI's copy only when it was
+	 * made from the stored state; for a stale copy the next read builds a fresh one.
+	 */
+	private afterWrite(kind: ReadingKind, item: Item, fm: Fm, background = false): void {
+		const fresh = this.basedOnStored(item);
 		this.dropLegacyCover(item.id);
 		const stored = kind === 'book' ? decodeBook(item.id, fm).entry : decodeManga(item.id, fm).entry;
 		this.index.applyLocal(kind === 'book'
 			? { kind: 'book', entry: stored as Book }
-			: { kind: 'manga', entry: stored as Manga });
+			: { kind: 'manga', entry: stored as Manga }, { background });
 		item.vaultPage = this.layout().pathFromId(item.id);
+		if (!fresh) return;
 		this.views.set(item.id, { src: stored, view: item });
 		setBaseline(item, stored);
 	}
@@ -733,17 +746,19 @@ export class ReadingDataManager {
 	/**
 	 * processFrontMatter, then the optimistic index update — inside the callback, so it lands before
 	 * the write's `changed` event can be seen. False (and a notice) on unreadable YAML.
+	 * `background` marks an automatic fill (no user write).
 	 */
 	private async processFrontMatter(
 		file: TFile,
 		kind: ReadingKind,
 		item: Item,
 		fn: (fm: Fm) => void,
+		background = false,
 	): Promise<boolean> {
 		try {
 			await this.app.fileManager.processFrontMatter(file, (fm: Fm) => {
 				fn(fm);
-				this.afterWrite(kind, item, { ...fm });
+				this.afterWrite(kind, item, { ...fm }, background);
 			});
 			return true;
 		} catch (e) {
@@ -814,10 +829,10 @@ export class ReadingDataManager {
 					else delete raw[key];
 				}
 			});
-			// the copy now holds what the note holds for every field it knows
-			if (ok) setBaseline(item, structuredClone(item));
-		} else {
-			if (src) this.views.set(item.id, { src, view: item });
+			// a stale copy (not taken as the view) holds what the note holds for every field it knows
+			if (ok && this.views.get(item.id)?.view !== item) setBaseline(item, structuredClone(item));
+		} else if (src && this.basedOnStored(item)) {
+			this.views.set(item.id, { src, view: item });
 		}
 	}
 

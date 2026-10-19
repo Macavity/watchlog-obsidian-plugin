@@ -12,3 +12,11 @@ export function setBaseline<T extends object>(view: T, base: T): void {
 export function getBaseline<T extends object>(view: T): T | undefined {
 	return (view as { [BASELINE]?: T })[BASELINE];
 }
+
+/**
+ * True when two copies hold the same stored state. The id is ignored: a rename keeps the state.
+ * A false mismatch (key order) only costs a rebuilt view.
+ */
+export function sameStoredState(a: object, b: object): boolean {
+	return a === b || JSON.stringify({ ...a, id: '' }) === JSON.stringify({ ...b, id: '' });
+}

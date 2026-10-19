@@ -1217,7 +1217,8 @@ export class AirtimeTab {
 				this.plugin.markAirtimeHandled(`${entry.id}-${todayStr}`);
 
 				if (isMovie) {
-					await this.dataManager.removeAirtimeEntry(entry.id);
+					// a derived premiere card goes with the status change; its release date stays
+					if (!this.dataManager.removeClearsReleaseDate(entry)) await this.dataManager.removeAirtimeEntry(entry.id);
 					await this.revertToBeReleasedStatus(entry, r);
 				} else if (isFinalEpisode) {
 					// final unit: remove from Upcoming, do NOT change status

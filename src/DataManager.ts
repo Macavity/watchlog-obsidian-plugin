@@ -6,14 +6,14 @@ import { formatHistoryDate } from './HistoryManager';
 import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso, GAME_AUTO_STATUS } from './types';
 import type { CreditsField } from './types';
 import type { AnyEntry, EntryIndex } from './storage/EntryIndex';
-import { getBaseline, setBaseline } from './storage/baseline';
+import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
 import type { ApiOutcome } from './ApiService';
 import { ApiCheckQueue } from './apiCheckQueue';
 import type { LocalStore } from './storage/LocalStore';
 import type { ApiCheckResult, EntryCache } from './storage/storageTypes';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
-import { decodeTitle, encodeTitle, isMovie, seasonsPending, splitCache } from './storage/titleCodec';
+import { TITLE_CACHE_KEYS, decodeTitle, encodeTitle, isMovie, seasonsPending, splitCache } from './storage/titleCodec';
 import { externalIdFromLink } from './storage/externalId';
 import { decodeBook, decodeManga, encodeAirtime } from './storage/readingCodec';
 import { decodeGame } from './storage/gameCodec';
@@ -122,7 +122,6 @@ export class DataManager {
 	// Mutable copies handed to the UI, one per id. `src` is the index entry the copy was made from:
 	// it is the default baseline a write diffs against; a copy carries its own (see storage/baseline.ts),
 	// so a stale or spread copy cannot revert a field changed elsewhere in between.
-	// it is the baseline a write diffs against, so only fields the user changed reach the note.
 	private views: Map<string, { src: WatchLogTitle; view: WatchLogTitle }> = new Map();
 	// `## Notes` body per id as last read from / written to the note
 	private notes: Map<string, string> = new Map();
@@ -308,13 +307,6 @@ export class DataManager {
 		return true;
 	}
 
-	/** Re-reads data.json (backup restore). */
-	async load(): Promise<void> {
-		await this.local.load();
-		this.views.clear();
-		this.notifyListeners();
-	}
-
 	// Rows-view daily recommendations
 
 	getRecommendedDaily(): RecommendedDaily {
@@ -363,7 +355,7 @@ export class DataManager {
 			raw.poster = url;
 			delete raw.manualPosterUrl;
 			title.posterUrl = url;
-		});
+		}, !overwrite);
 		const cached = this.local.getCache(titleId);
 		if (isLegacyCachedPoster(cached?.posterUrl)) {
 			const rest = { ...cached };
@@ -548,7 +540,8 @@ export class DataManager {
 			this.pendingSaveTimer = null;
 		}
 		await this.writePending();
-		for (const { view } of this.views.values()) this.syncCache(view);
+		// a copy from before a change underneath (season refill, external edit) holds outdated API data
+		for (const { view } of this.views.values()) if (this.basedOnStored(view)) this.syncCache(view);
 		this.notifyListeners();
 	}
 
@@ -1616,16 +1609,18 @@ export class DataManager {
 	/**
 	 * processFrontMatter, then the optimistic index update for `t` — inside the callback, so it lands
 	 * before the write's `changed` event can be seen. False (and a notice) on unreadable YAML.
+	 * `background` marks an automatic fill (no user write).
 	 */
 	private async processFrontMatter(
 		file: TFile,
 		t: WatchLogTitle,
 		fn: (fm: Record<string, unknown>) => void,
+		background = false,
 	): Promise<boolean> {
 		try {
 			await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 				fn(fm);
-				this.afterWrite(t, { ...fm });
+				this.afterWrite(t, { ...fm }, background);
 			});
 			return true;
 		} catch (e) {
@@ -1704,9 +1699,9 @@ export class DataManager {
 				}
 			});
 			if (!ok) return;
-			// the copy now holds what the note holds for every field it knows
-			setBaseline(t, structuredClone(t));
-		} else {
+			// a stale copy (not taken as the view) holds what the note holds for every field it knows
+			if (this.views.get(t.id)?.view !== t) setBaseline(t, structuredClone(t));
+		} else if (this.basedOnStored(t)) {
 			// nothing for the note; API data may still have changed
 			this.syncCache(t);
 			const slot = this.views.get(t.id);
@@ -1729,25 +1724,42 @@ export class DataManager {
 		return indexed?.kind === 'title' ? indexed.entry : undefined;
 	}
 
-	/** Cache + optimistic index update after an own write; `t` stays the UI's copy. */
-	private afterWrite(t: WatchLogTitle, fm: Record<string, unknown>): void {
-		this.syncCache(t);
+	/** True when `t` was made from the stored state of its note (or nothing is stored yet). */
+	private basedOnStored(t: WatchLogTitle): boolean {
+		const current = this.index.get(t.id);
+		if (current?.kind !== 'title') return true;
+		const base = getBaseline(t) ?? this.views.get(t.id)?.src;
+		return !!base && sameStoredState(base, current.entry);
+	}
+
+	/**
+	 * Cache + optimistic index update after an own write. `t` becomes the UI's copy only when it was
+	 * made from the stored state; a stale copy's fields and API data would hide what changed in between,
+	 * so the next read builds a fresh copy instead.
+	 */
+	private afterWrite(t: WatchLogTitle, fm: Record<string, unknown>, background = false): void {
+		const fresh = this.basedOnStored(t);
+		if (fresh) this.syncCache(t);
 		const stored = decodeTitle(t.id, fm, this.local.getCache(t.id)).entry;
-		this.index.applyLocal({ kind: 'title', entry: stored });
+		this.index.applyLocal({ kind: 'title', entry: stored }, { background });
+		if (!fresh) return;
 		this.views.set(t.id, { src: stored, view: t });
 		setBaseline(t, stored);
 	}
 
-	/** Stores the title's API-derived fields in data.json when they changed. */
+	/**
+	 * Stores the title's API-derived fields in data.json when they changed. Merges into the entry:
+	 * what is no title field (apiCheck, airing) and refilled seasons the title does not carry stay.
+	 */
 	private syncCache(t: WatchLogTitle): void {
-		const next = splitCache(t);
+		const prev = this.local.getCache(t.id) ?? {};
+		const next: EntryCache = { ...prev };
+		for (const key of TITLE_CACHE_KEYS) delete next[key];
+		Object.assign(next, splitCache(t));
+		if (!next.seasons && prev.seasons) next.seasons = prev.seasons;
 		// a legacy cached poster stays until the note holds the URL
-		const legacyPoster = this.local.getCache(t.id)?.posterUrl;
-		if (isLegacyCachedPoster(legacyPoster) && legacyPoster === t.posterUrl) next.posterUrl = legacyPoster;
-		// airing is not a title field; it lives only in the cache
-		const airing = this.local.getCache(t.id)?.airing;
-		if (airing) next.airing = airing;
-		if (sameJson(next, this.local.getCache(t.id) ?? {})) return;
+		if (isLegacyCachedPoster(prev.posterUrl) && prev.posterUrl === t.posterUrl) next.posterUrl = prev.posterUrl;
+		if (sameJson(next, prev)) return;
 		this.local.data.cache[t.id] = next;
 		this.local.queueSave();
 	}
