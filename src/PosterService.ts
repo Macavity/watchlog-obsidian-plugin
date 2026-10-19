@@ -2,6 +2,7 @@ import { requestUrl } from 'obsidian';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogPluginSettings } from './types';
 import { getApiGroupForType } from './types';
+import { httpsOrEmpty } from './httpsUrl';
 import { ApiError, apiSourceFromUrl, readApiResponse } from './ApiService';
 
 const JIKAN_BASE = 'https://api.jikan.moe/v4';
@@ -196,20 +197,20 @@ export class PosterService {
 				variables: { id: title.anilistId },
 			})) as AniListPosterResponse | null;
 			const cover = data?.data?.Media?.coverImage;
-			return cover?.large ?? cover?.medium ?? null;
+			return httpsOrEmpty(cover?.large ?? cover?.medium) || null;
 		}
 		if (title.malId) {
 			const url = `${JIKAN_BASE}/anime/${title.malId}`;
 			const data = (await this.fetchJson(url)) as JikanImagesShape | null;
 			const jpg = data?.data?.images?.jpg;
-			return jpg?.large_image_url ?? jpg?.image_url ?? null;
+			return httpsOrEmpty(jpg?.large_image_url ?? jpg?.image_url) || null;
 		}
 		const q = encodeURIComponent(this.cleanTitleForSearch(title.title));
 		const url = `${JIKAN_BASE}/anime?q=${q}&limit=1`;
 		const data = (await this.fetchJson(url)) as JikanSearchShape | null;
 		const first = data?.data?.[0];
 		const jpg = first?.images?.jpg;
-		return jpg?.large_image_url ?? jpg?.image_url ?? null;
+		return httpsOrEmpty(jpg?.large_image_url ?? jpg?.image_url) || null;
 	}
 
 	/** Extracts an IMDb id (`tt…`) from an external link, or '' when absent. */
@@ -322,7 +323,7 @@ export class PosterService {
 				const url = `${OMDB_BASE}/?i=${encodeURIComponent(imdbId)}&apikey=${key}`;
 				const data = (await this.fetchJson(url)) as OmdbResult | null;
 				const poster = data?.Poster;
-				if (poster && poster !== 'N/A') return poster;
+				if (poster && httpsOrEmpty(poster)) return poster;
 				// no poster on the exact match — fall through to a typed/legacy search
 			}
 			const q = encodeURIComponent(searchName);
@@ -339,14 +340,14 @@ export class PosterService {
 					const data = (await this.fetchJson(base)) as OmdbResult | null;
 					poster = data?.Poster;
 				}
-				if (poster && poster !== 'N/A') return poster;
+				if (poster && httpsOrEmpty(poster)) return poster;
 				return null;
 			}
 			// safety net: no type signal → legacy untyped lookup
 			const url = `${OMDB_BASE}/?t=${q}&apikey=${key}`;
 			const data = (await this.fetchJson(url)) as OmdbResult | null;
 			const poster = data?.Poster;
-			if (poster && poster !== 'N/A') return poster;
+			if (poster && httpsOrEmpty(poster)) return poster;
 			return null;
 		}
 	}

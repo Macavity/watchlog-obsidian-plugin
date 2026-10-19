@@ -1,4 +1,5 @@
 import { requestUrl } from 'obsidian';
+import { httpsOrEmpty } from './httpsUrl';
 import type {
 	AnimeSearchResult,
 	MediaSearchResult,
@@ -819,7 +820,7 @@ export class ApiService {
 			description,
 			averageScore: media.averageScore ?? undefined,
 			genres: media.genres ?? undefined,
-			posterUrl: media.coverImage?.large ?? media.coverImage?.medium ?? undefined,
+			posterUrl: httpsOrEmpty(media.coverImage?.large ?? media.coverImage?.medium) || undefined,
 			trailerUrl:
 				media.trailer?.site === 'youtube' && media.trailer.id
 					? youtubeWatchUrl(media.trailer.id)
@@ -943,9 +944,9 @@ export class ApiService {
 			episodes,
 			duration,
 			releaseDate: anime.aired?.from ? (anime.aired.from.split('T')[0] ?? '') : '',
-			url: anime.url,
+			url: httpsOrEmpty(anime.url),
 			seasons,
-			posterUrl: anime.images?.jpg?.large_image_url ?? anime.images?.jpg?.image_url ?? anime.images?.jpg?.small_image_url ?? undefined,
+			posterUrl: httpsOrEmpty(anime.images?.jpg?.large_image_url ?? anime.images?.jpg?.image_url ?? anime.images?.jpg?.small_image_url) || undefined,
 			trailerUrl: this.jikanTrailerUrl(anime.trailer),
 		};
 	}
@@ -988,7 +989,7 @@ export class ApiService {
 				releaseDate: startYear ?? '',
 				url: `https://www.imdb.com/title/${item.imdbID}`,
 				seasons: [],
-				posterUrl: item.Poster && item.Poster !== 'N/A' ? item.Poster : undefined,
+				posterUrl: item.Poster !== 'N/A' ? httpsOrEmpty(item.Poster) || undefined : undefined,
 			};
 		});
 	}
@@ -1793,10 +1794,12 @@ export class ApiService {
 		if (!raw) return '';
 		// bump Google's default cover (thumbnail is zoom=1 ≈ 128px, blurry on a card) to zoom=2 ≈
 		// 300px — sharp yet light. Only thumbnail-class URLs carry a zoom param.
-		return raw
-			.replace(/^http:/, 'https:')
-			.replace(/&edge=curl/g, '')
-			.replace(/([?&]zoom=)\d+/, (_m, p1: string) => `${p1}2`);
+		return httpsOrEmpty(
+			raw
+				.replace(/^http:/, 'https:')
+				.replace(/&edge=curl/g, '')
+				.replace(/([?&]zoom=)\d+/, (_m, p1: string) => `${p1}2`),
+		);
 	}
 
 	/** Normalizes Google's `publishedDate` (YYYY | YYYY-MM | YYYY-MM-DD) to YYYY-MM-DD. */
@@ -1821,7 +1824,7 @@ export class ApiService {
 			coverUrl: this.googleCoverUrl(info),
 			googleBooksId: item.id ?? '',
 			releaseDate: this.googleReleaseDate(published),
-			url: info.infoLink ?? info.canonicalVolumeLink ?? '',
+			url: httpsOrEmpty(info.infoLink ?? info.canonicalVolumeLink),
 		};
 	}
 
@@ -1879,9 +1882,9 @@ export class ApiService {
 			year,
 			totalChapters: m.chapters ?? 0,
 			totalVolumes: m.volumes ?? 0,
-			coverUrl: m.images?.jpg?.large_image_url ?? m.images?.jpg?.image_url ?? '',
+			coverUrl: httpsOrEmpty(m.images?.jpg?.large_image_url ?? m.images?.jpg?.image_url),
 			releaseDate: m.published?.from ? (m.published.from.split('T')[0] ?? '') : '',
-			url: m.url ?? `https://myanimelist.net/manga/${m.mal_id}`,
+			url: httpsOrEmpty(m.url) || `https://myanimelist.net/manga/${m.mal_id}`,
 		};
 	}
 
@@ -1946,7 +1949,7 @@ export class ApiService {
 			id: g.id,
 			title: g.name ?? '',
 			releaseDate: g.released ?? '',
-			coverUrl: g.background_image ?? '',
+			coverUrl: httpsOrEmpty(g.background_image),
 			platforms: (g.platforms ?? [])
 				.map((p) => p.platform?.name ?? '')
 				.filter((n) => n !== ''),
@@ -1978,7 +1981,7 @@ export class ApiService {
 		]);
 		if (typeof detail.id !== 'number' || !detail.name) return null;
 
-		const storeLinks = (stores.results ?? []).filter((s) => !!s.url);
+		const storeLinks = (stores.results ?? []).filter((s) => !!httpsOrEmpty(s.url));
 		let storeUrl = '';
 		for (const storeId of RAWG_STORE_PRIORITY) {
 			const hit = storeLinks.find((s) => s.store_id === storeId);
@@ -2096,7 +2099,7 @@ export class ApiService {
 				? `https://images.igdb.com/igdb/image/upload/t_cover_big/${g.cover.image_id}.jpg`
 				: '',
 			platforms: (g.platforms ?? []).map((p) => p.name ?? '').filter((n) => n !== ''),
-			url: g.url ?? '',
+			url: httpsOrEmpty(g.url),
 		};
 	}
 
@@ -2128,7 +2131,7 @@ export class ApiService {
 			[...new Set(list.map((c) => c.company?.name ?? '').filter(Boolean))].join(', ');
 
 		const modes = new Set((g.game_modes ?? []).map((m) => m.name ?? ''));
-		const siteUrls = (g.websites ?? []).map((w) => w.url ?? '').filter(Boolean);
+		const siteUrls = (g.websites ?? []).map((w) => httpsOrEmpty(w.url)).filter(Boolean);
 		let storeUrl = '';
 		for (const domain of IGDB_STORE_DOMAINS) {
 			const hit = siteUrls.find((u) => u.includes(domain));
