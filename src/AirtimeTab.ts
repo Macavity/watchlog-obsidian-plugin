@@ -1193,7 +1193,9 @@ export class AirtimeTab {
 			? `"${r.title}" has been released.\nRemove from Upcoming and set status to ${r.planStatus}?`
 			: isFinalEpisode
 				? `Final ${r.unitNoun} of "${r.title}".\nRemove from Upcoming? (status unchanged)`
-				: `${r.unitNounCap} ${entry.currentEpisode ?? ''} of "${r.title}".\nMark and track next ${r.unitNoun}?`;
+				: this.dataManager.isAiringTracked(entry)
+					? `${r.unitNounCap} ${entry.currentEpisode ?? ''} of "${r.title}" is out.\nMark as seen in Upcoming?`
+					: `${r.unitNounCap} ${entry.currentEpisode ?? ''} of "${r.title}".\nMark and track next ${r.unitNoun}?`;
 
 		// single releases get an escape hatch: a due title that turns out to be a serial jumps into the
 		// schedule modal in Recurring mode instead of being removed. Games have no recurring units.

@@ -44,8 +44,21 @@ describe('backup/restore', () => {
 		expect(b.dataManager.getTitle('TV Show/Dark')).toBeDefined();
 		expect(b.f.adapterFiles.has('.obsidian/plugins/watchlog/data.v1-backup.json')).toBe(false);
 		expect(b.local.data.schemaVersion).toBe(schema);
-		expect(b.local.data.settings.tmdbApiKey).toBeUndefined();
+		expect(b.local.data.settings.tmdbApiKey).toBe('tmdb-SecretValue');
 		for (const [path, content] of b.f.files) expect(content, path).not.toMatch(/SecretValue/);
+	});
+
+	it('restores legacy API keys only where the local value is missing', async () => {
+		const { reading, games, history, ...watch } = legacy as Record<string, unknown>;
+		const settings = { ...(watch.settings as Record<string, unknown>), tmdbApiKey: 'K1', omdbApiKey: 'K2' };
+		const parsed = parseBackup(JSON.stringify({ version: 3, exportedAt: 'x', watch: { ...watch, settings }, reading, games, history }));
+		if (!('legacy' in parsed)) throw new Error('expected a legacy backup');
+		const b = await setupBackup({});
+		b.local.data.settings = { omdbApiKey: 'LOCAL', tmdbApiKey: '' };
+		await restoreLegacyBackup(b, parsed.legacy);
+		expect(b.local.data.settings.tmdbApiKey).toBe('K1');
+		expect(b.local.data.settings.omdbApiKey).toBe('LOCAL');
+		for (const [path, content] of b.f.files) expect(content, path).not.toContain('K1');
 	});
 
 	it('maps v1 and v2 files and validates them', () => {

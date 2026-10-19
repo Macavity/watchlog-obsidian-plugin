@@ -75,8 +75,8 @@ export async function migrateV1(ctx: MigrationContext): Promise<MigrationReport>
 /**
  * Imports a legacy data object (a restored v1-v3 backup) into the vault: notes are created or
  * only filled, groups, airtime and history are applied, the base is filled when empty and the
- * cache is merged. Writes no data.v1-backup.json, moves no folders, leaves schemaVersion and
- * device-local settings alone.
+ * cache is merged. Writes no data.v1-backup.json, moves no folders, leaves schemaVersion alone and
+ * only fills missing device-local settings.
  */
 export async function importLegacy(legacy: WatchLogData, ctx: ImportContext): Promise<MigrationReport> {
 	const report: MigrationReport = { notesCreated: 0, notesFilled: 0, foldersMoved: [], skipped: [], errors: [] };
@@ -124,6 +124,12 @@ class Migration {
 		const { local } = this.ctx;
 		for (const [id, cache] of Object.entries(this.cache)) {
 			local.data.cache[id] = { ...cache, ...local.data.cache[id] };
+		}
+		// device-local settings (API keys): fill what is missing, never overwrite, never into vault files
+		for (const [k, v] of Object.entries(data.settings)) {
+			if (SHARED_SETTING_KEYS.includes(k) || REMOVED_SETTINGS.includes(k)) continue;
+			const cur = local.data.settings[k];
+			if (cur === undefined || cur === null || cur === '') local.data.settings[k] = v;
 		}
 		local.queueSave();
 	}
