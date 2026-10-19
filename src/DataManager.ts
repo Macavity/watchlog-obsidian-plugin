@@ -126,7 +126,7 @@ export class DataManager {
 	// ids already handed to the poster queue this session
 	private posterRequested: Set<string> = new Set();
 	// background API checks (airing, seasons) share one throttled queue; results persist in the cache
-	private apiQueue = new ApiCheckQueue();
+	readonly apiQueue = new ApiCheckQueue();
 	private seasonsInFlight: Set<string> = new Set();
 	private seasonsRunning = 0;
 	private seasonsChanged = false;

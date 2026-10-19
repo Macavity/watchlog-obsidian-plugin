@@ -110,6 +110,7 @@ import { ReadingCsvModal } from './ReadingCsvModal';
 import { WatchLogView } from './WatchLogView';
 import { CustomListManager, DefaultColumnsModal } from './CustomListsTab';
 import { ConfirmModal } from './ConfirmModal';
+import { refreshAllCovers } from './coverRefresh';
 import { apiErrorMessage, apiErrorShort } from './ApiService';
 import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup } from './backup';
 
@@ -448,16 +449,16 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('Re-fetch all posters')
-			.setDesc('Clears all cached poster, reading cover and game cover URLs. Watch posters and game covers reload lazily when you scroll their cards; reading covers can be re-fetched from each card\'s ⋮ menu.')
+			.setName('Replace all images with API images')
+			.setDesc('Replaces the image of every entry with the one from its API, including images you entered by hand. Entries without an ID and failed fetches keep their image.')
 			.addButton((b) =>
-				b.setButtonText('Re-fetch posters').onClick(() => {
+				b.setButtonText('Replace images').onClick(() => {
 					const titles = this.plugin.dataManager.getTitles();
 					const readingCount = this.plugin.readingDataManager.getBooks().length + this.plugin.readingDataManager.getMangaList().length;
 					const gameCount = this.plugin.gameDataManager.getGames().length;
 					new ConfirmModal(
 						this.app,
-						`This will clear cached images for all ${titles.length} watch titles, ${readingCount} reading entries and ${gameCount} games. Items without API access will show placeholder cards. Continue?`,
+						`This replaces the image of all ${titles.length} watch titles, ${readingCount} reading entries and ${gameCount} games with the image from the API, including images you entered by hand. Entries without an API id or match keep their image. This makes many API requests and can take a while. Continue?`,
 						() => { void this.refetchAllPosters(); },
 					).open();
 				}),
@@ -692,22 +693,18 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 	}
 
 	private async refetchAllPosters(): Promise<void> {
-		const titles = this.plugin.dataManager.getTitles();
-		for (const t of titles) t.posterUrl = '';
-		await this.plugin.dataManager.save();
-
-		// also clear cached Reading cover URLs so they can be re-fetched
-		const reading = this.plugin.readingDataManager;
-		for (const b of reading.getBooks()) b.coverUrl = '';
-		for (const m of reading.getMangaList()) m.coverUrl = '';
-		await reading.saveAndNotify();
-
-		// games clear the same way; their cards re-fetch lazily on scroll
-		const gameData = this.plugin.gameDataManager;
-		for (const g of gameData.getGames()) g.coverUrl = '';
-		await gameData.saveAndNotify();
-
-		new Notice('Cached posters and covers cleared. Watch posters and game covers reload as you browse; refresh reading covers from each card\'s ⋮ menu.');
+		const p = this.plugin;
+		const res = await refreshAllCovers({
+			api: p.apiService,
+			gamesApiSource: p.settings.gamesApiSource ?? 'rawg',
+			dataManager: p.dataManager,
+			posterService: p.posterService,
+			readingData: p.readingDataManager,
+			gameData: p.gameDataManager,
+			queue: p.dataManager.apiQueue,
+			onStart: (n) => new Notice(`Re-fetching ${n} images…`),
+		});
+		new Notice(`Images re-fetched: ${res.updated} updated, ${res.unchanged} unchanged or failed.`);
 	}
 
 	/**

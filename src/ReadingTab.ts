@@ -1,5 +1,6 @@
 import { Notice, setIcon } from 'obsidian';
 import { apiErrorMessage } from './ApiService';
+import { fetchReadingCoverById } from './coverRefresh';
 import type WatchLogPlugin from './main';
 import type { ReadingDataManager, ReadingKind } from './ReadingDataManager';
 import { Book, Manga, ReadingStatus, ReadingCustomColumn, ReadingSavedFilterPreset, READING_STATUSES, SELECTABLE_READING_STATUSES, DEFAULT_READING_STATUS_COLORS, normalizeRowsLayout, READING_ROWS_SHELVES, bookUnitProgress, formatCount, sortByFavorited } from './types';
@@ -1555,14 +1556,14 @@ export class ReadingTab {
 			}
 			void (async () => {
 				try {
-					const result = await this.plugin.apiService.getGoogleBookById(book.googleBooksId);
-					if (!result || !result.coverUrl) {
+					const coverUrl = await fetchReadingCoverById(this.plugin.apiService, 'book', book);
+					if (!coverUrl) {
 						new Notice('Could not fetch cover from API.');
 						return;
 					}
 					const fresh = this.readingData.getBook(book.id);
 					if (!fresh) return;
-					await this.readingData.updateBook({ ...fresh, coverUrl: result.coverUrl });
+					await this.readingData.updateBook({ ...fresh, coverUrl });
 					new Notice('Cover refreshed.');
 				} catch (err) {
 					new Notice(apiErrorMessage(err));
@@ -1576,14 +1577,14 @@ export class ReadingTab {
 			}
 			void (async () => {
 				try {
-					const result = await this.plugin.apiService.getMangaByMalId(Number(manga.malId));
-					if (!result || !result.coverUrl) {
+					const coverUrl = await fetchReadingCoverById(this.plugin.apiService, 'manga', manga);
+					if (!coverUrl) {
 						new Notice('Could not fetch cover from API.');
 						return;
 					}
 					const fresh = this.readingData.getManga(manga.id);
 					if (!fresh) return;
-					await this.readingData.updateManga({ ...fresh, coverUrl: result.coverUrl });
+					await this.readingData.updateManga({ ...fresh, coverUrl });
 					new Notice('Cover refreshed.');
 				} catch {
 					new Notice('Failed to refresh cover.');

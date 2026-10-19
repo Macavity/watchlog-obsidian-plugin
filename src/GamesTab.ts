@@ -16,7 +16,8 @@ import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard'
 import { renderGroupCollage } from './CollageUtil';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
-import { rawgResizedCover, type GameSearchResult } from './ApiService';
+import { rawgResizedCover } from './ApiService';
+import { resolveGameCover, type GameCover } from './coverRefresh';
 import { toggleFilterPanel, FilterSection } from './FilterPanel';
 import { toggleSortPopover } from './SortPopover';
 import { ConfirmModal } from './ConfirmModal';
@@ -1508,38 +1509,8 @@ export class GamesTab {
 		}
 	}
 
-	/**
-	 * Resolves a cover through the games APIs: by stored id when the game has one, otherwise a title
-	 * search whose first result is taken — returning that result's source + id so the caller can
-	 * persist them. `source` is '' when there is nothing new to store.
-	 */
-	private async resolveCover(game: Game): Promise<{ url: string; source: '' | 'rawg' | 'igdb'; apiId: string }> {
-		const none = { url: '', source: '' as const, apiId: '' };
-		const api = this.plugin.apiService;
-		try {
-			if (game.apiSource && game.apiId) {
-				const details = game.apiSource === 'igdb'
-					? await api.getIgdbGameDetails(Number(game.apiId))
-					: await api.getRawgGameDetails(Number(game.apiId));
-				return details?.coverUrl ? { url: details.coverUrl, source: '' as const, apiId: '' } : none;
-			}
-
-			// no stored id (added manually or before the field existed) — search by title
-			const source = this.plugin.settings.gamesApiSource ?? 'rawg';
-			let results: GameSearchResult[] = [];
-			if (source === 'igdb') {
-				if (!api.hasIgdbCredentials()) return none;
-				results = await api.searchIgdbGames(game.title);
-			} else {
-				if (!api.hasRawgKey()) return none;
-				results = await api.searchRawgGames(game.title);
-			}
-			const first = results[0];
-			if (!first || !first.coverUrl) return none;
-			return { url: first.coverUrl, source: first.source, apiId: String(first.id) };
-		} catch {
-			return none;
-		}
+	private resolveCover(game: Game): Promise<GameCover> {
+		return resolveGameCover(this.plugin.apiService, this.plugin.settings.gamesApiSource ?? 'rawg', game);
 	}
 
 	private applyCoverToCard(card: HTMLElement, url: string): void {
