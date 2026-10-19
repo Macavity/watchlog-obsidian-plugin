@@ -198,13 +198,13 @@ export default class WatchLogPlugin extends Plugin {
 		this.dataManager.flushPendingSaveSync();
 		this.dataManager.flushPosterSaveSync();
 		this.dataManager.flushQueuedSaveSync();
-		void this.readingDataManager?.flushPending();
-		void this.gameDataManager?.flushPending();
+		const flushes = [this.readingDataManager?.flushPending(), this.gameDataManager?.flushPending()];
 		this.posterService?.destroy();
 		this.widgetRenderer?.cleanup();
 		this.index.stop();
 		this.shared.stop();
-		void this.local.flush();
+		// local state last: the note flushes above may still touch it
+		void Promise.allSettled(flushes).then(() => this.local.flush());
 	}
 
 	/**
@@ -229,7 +229,7 @@ export default class WatchLogPlugin extends Plugin {
 					},
 					appeared: () => this.adoptSyncedBase(),
 				});
-				this.index.onLocalWrite(() => void this.shared.ensureBase());
+				this.index.onLocalWrite(() => void this.shared.ensureBase().catch((e) => console.error('[WL] could not create the base', e)));
 			}
 			await this.shared.load();
 			await this.applySharedSettings();

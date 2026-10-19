@@ -110,4 +110,35 @@ describe('SharedConfigStore', () => {
 		await s.update({ halfStarRatings: true });
 		expect(create).not.toHaveBeenCalled();
 	});
+	it('adopts instead of failing when the base already exists on create', async () => {
+		const { f, s } = mk({});
+		const appeared = vi.fn();
+		const create = vi.fn(async () => {
+			f.externalWrite('W/WatchLog.base', 'watchlog:\n  version: 1\n');
+			throw new Error('File already exists.');
+		});
+		s.deferBase({ create, appeared });
+		await s.ensureBase();
+		expect(appeared).toHaveBeenCalledTimes(1);
+	});
+	it('keeps the deferred base when create fails otherwise', async () => {
+		const { s } = mk({});
+		const create = vi.fn().mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(undefined);
+		s.deferBase({ create, appeared: vi.fn() });
+		await expect(s.ensureBase()).rejects.toThrow('boom');
+		await s.ensureBase();
+		expect(create).toHaveBeenCalledTimes(2);
+	});
+	it('does not update config when the block is unreadable, and retries on the next save', async () => {
+		const bad = 'watchlog:\n  : [\n';
+		const { f, s } = mk({ 'W/WatchLog.base': bad });
+		await s.load();
+		await s.update({ halfStarRatings: true });
+		expect(s.get().settings.halfStarRatings).toBeUndefined();
+		expect(s.diff({ halfStarRatings: true })).toEqual({ halfStarRatings: true });
+		f.files.set('W/WatchLog.base', 'watchlog:\n  version: 1\n');
+		await s.update({ halfStarRatings: true });
+		expect(f.files.get('W/WatchLog.base')).toContain('halfStarRatings: true');
+		expect(s.get().settings.halfStarRatings).toBe(true);
+	});
 });

@@ -114,5 +114,8 @@ describe('EntryIndex edge cases', () => {
 		const cb = vi.fn(); idx.onLocalWrite(cb);
 		idx.applyLocal(idx.get('Anime/A')!);
 		expect(cb).toHaveBeenCalledTimes(1);
+		idx.applyLocal(idx.get('Anime/A')!, { background: true });
+		expect(cb).toHaveBeenCalledTimes(1);
+		expect(idx.get('Anime/A')).toBeDefined();
 	});
 });

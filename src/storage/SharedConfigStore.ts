@@ -1,4 +1,4 @@
-import { TFile, type App, type EventRef } from 'obsidian';
+import { Notice, TFile, type App, type EventRef } from 'obsidian';
 import type { SharedConfig, YamlIO } from './storageTypes';
 import type { VaultLayout } from './VaultLayout';
 import {
@@ -113,14 +113,16 @@ export class SharedConfigStore {
 	async update(patch: Record<string, unknown>): Promise<void> {
 		const changes = pick(patch);
 		if (Object.keys(changes).length === 0) return;
-		this.config = { version: this.config.version, settings: { ...this.config.settings, ...changes } };
+		const next: SharedConfig = { version: this.config.version, settings: { ...this.config.settings, ...changes } };
 		const f = this.file();
 		if (!f) {
 			// no base yet: memory only, until the first write creates it
+			this.config = next;
 			await this.ensureBase();
 			return;
 		}
-		const version = this.config.version;
+		const version = next.version;
+		let written = true;
 		await this.app.vault.process(f, (src) => {
 			let current: Record<string, unknown> | null = null;
 			if (hasWatchlogKey(src)) {
@@ -130,12 +132,19 @@ export class SharedConfigStore {
 					current = null;
 				}
 				if (!current) {
-					console.warn('[WL] unreadable watchlog block in the base; settings not written');
+					written = false;
 					return src;
 				}
 			}
 			return writeWatchlogBlock(src, { version, ...current, ...changes }, this.yaml);
 		});
+		if (!written) {
+			console.warn('[WL] unreadable watchlog block in the base; settings not written');
+			new Notice('Watchlog: the settings block in WatchLog.base is unreadable; settings were not saved.');
+			return;
+		}
+		// only after a successful write, so the next save diffs against the file state and retries
+		this.config = next;
 	}
 
 	/** Without a base and with a deferred creator: creates the base now (first write). */
@@ -143,7 +152,18 @@ export class SharedConfigStore {
 		const d = this.deferred;
 		if (!d || this.file()) return;
 		this.deferred = null;
-		await d.create();
+		try {
+			await d.create();
+		} catch (e) {
+			// another device created the base meanwhile (sync): adopt it
+			const f = this.file();
+			if (f && hasWatchlogKey(await this.app.vault.read(f))) {
+				await d.appeared();
+				return;
+			}
+			this.deferred = d;
+			throw e;
+		}
 	}
 
 	/** Marks the base as missing: created on the first write, or adopted when one syncs in. */

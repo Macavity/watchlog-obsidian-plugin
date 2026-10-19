@@ -91,9 +91,12 @@ export class EntryIndex {
 		return this.entries.get(id)?.invalid ?? [];
 	}
 
-	/** Optimistic update after an own write; the echo `changed` event then finds no difference. */
-	applyLocal(e: AnyEntry): void {
-		for (const cb of this.localWriteCbs) cb();
+	/**
+	 * Optimistic update after an own write; the echo `changed` event then finds no difference.
+	 * `background` marks automatic fills (cover/poster reload): they must not fire `onLocalWrite`.
+	 */
+	applyLocal(e: AnyEntry, opts: { background?: boolean } = {}): void {
+		if (!opts.background) for (const cb of this.localWriteCbs) cb();
 		this.entries.set(e.entry.id, { value: e, invalid: this.invalidFields(e.entry.id) });
 	}
 
@@ -101,7 +104,7 @@ export class EntryIndex {
 		this.entries.delete(id);
 	}
 
-	/** Fires on every own entry write (before the optimistic update). */
+	/** Fires on every user-initiated entry write (not `background` fills; before the optimistic update). */
 	onLocalWrite(cb: () => void): void {
 		this.localWriteCbs.push(cb);
 	}
