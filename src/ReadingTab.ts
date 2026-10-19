@@ -1562,7 +1562,7 @@ export class ReadingTab {
 					}
 					const fresh = this.readingData.getBook(book.id);
 					if (!fresh) return;
-					await this.readingData.updateBook({ ...fresh, coverUrl: result.coverUrl });
+					await this.readingData.updateBook({ ...fresh, coverUrl: result.coverUrl, coverOverride: false });
 					new Notice('Cover refreshed.');
 				} catch (err) {
 					new Notice(apiErrorMessage(err));
@@ -1583,7 +1583,7 @@ export class ReadingTab {
 					}
 					const fresh = this.readingData.getManga(manga.id);
 					if (!fresh) return;
-					await this.readingData.updateManga({ ...fresh, coverUrl: result.coverUrl });
+					await this.readingData.updateManga({ ...fresh, coverUrl: result.coverUrl, coverOverride: false });
 					new Notice('Cover refreshed.');
 				} catch {
 					new Notice('Failed to refresh cover.');

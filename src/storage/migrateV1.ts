@@ -1,5 +1,8 @@
 import { TFile, TFolder, normalizePath, type App } from 'obsidian';
-import { DEFAULT_READING_SETTINGS, GAME_TBA_STATUS, defaultGamesSettings, parsePlaytimeInput } from '../types';
+import {
+	DEFAULT_READING_SETTINGS, GAME_TBA_STATUS, defaultGamesSettings, getDisplayPoster, getDisplayTrailer, getTitleCredits,
+	parsePlaytimeInput,
+} from '../types';
 import type {
 	AirtimeEntry, Book, EntryAirtime, Game, GamesData, GamesSettings, Manga, ReadingData, ReadingStatus,
 	RecommendedDaily, TagDefinition, WatchLogData, WatchLogTitle,
@@ -54,6 +57,13 @@ const ON_HOLD = 'On Hold';
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
 	typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Frontmatter value equality across YAML scalars and lists (7.5 and "7.5" alike). */
+const sameValue = (a: unknown, b: unknown): boolean => {
+	const scalar = (v: unknown): unknown => (typeof v === 'number' || typeof v === 'boolean' ? String(v) : v ?? null);
+	const norm = (v: unknown): string => JSON.stringify(Array.isArray(v) ? v.map(scalar) : scalar(v));
+	return norm(a) === norm(b);
+};
 
 /** Root folder of a schema-1 install: the old `rootFolder` setting. */
 export function legacyRoot(legacy: WatchLogData): string {
@@ -370,29 +380,37 @@ class Migration {
 			await this.writeTitle(path, title);
 		}
 		for (const b of reading.books) {
-			if (this.joined) break;
 			const path = this.claim(layout.notePath('book', b.title));
 			const id = layout.idFromPath(path);
 			this.ids.book.set(b.id, id);
 			const book = extras({ ...b, id, vaultPage: `${id}.md` }, `book:${b.id}`);
-			await this.writeNote(path, encodeBook(book), '## Notes\n\n\n## Quotes\n');
+			await this.writeEntry(path, id, encodeBook(book), b.coverUrl, '## Notes\n\n\n## Quotes\n');
 		}
 		for (const m of reading.manga) {
-			if (this.joined) break;
 			const path = this.claim(layout.notePath('manga', m.title));
 			const id = layout.idFromPath(path);
 			this.ids.manga.set(m.id, id);
 			const manga = extras({ ...m, id, vaultPage: `${id}.md` }, `manga:${m.id}`);
-			await this.writeNote(path, encodeManga(manga), '## Notes\n\n\n## Quotes\n');
+			await this.writeEntry(path, id, encodeManga(manga), m.coverUrl, '## Notes\n\n\n## Quotes\n');
 		}
 		for (const g of games.games) {
-			if (this.joined) break;
 			const path = this.claim(layout.notePath('game', g.title));
 			const id = layout.idFromPath(path);
 			this.ids.game.set(g.id, id);
 			const game = extras({ ...g, id, vaultPage: `${id}.md` }, `game:${g.id}`);
-			await this.writeNote(path, encodeGame(game), '## Notes\n');
+			await this.writeEntry(path, id, encodeGame(game), g.coverUrl, '## Notes\n');
 		}
+	}
+
+	/**
+	 * Book, manga or game: the legacy cover goes to the cache (E9). On a second device only the cover
+	 * the original plugin wrote is removed from an existing note; no note is created or filled.
+	 */
+	private async writeEntry(path: string, id: string, fm: Fm, coverUrl: string, body: string): Promise<void> {
+		const legacy: Fm = coverUrl ? { coverUrl } : {};
+		if (coverUrl) this.cache[id] = { coverUrl };
+		if (!this.joined) await this.writeNote(path, fm, body, legacy);
+		else if (this.ctx.app.vault.getAbstractFileByPath(path) instanceof TFile) await this.writeNote(path, {}, body, legacy);
 	}
 
 	private async writeTitle(path: string, title: WatchLogTitle): Promise<void> {
@@ -410,11 +428,15 @@ class Migration {
 		}
 		const cache = splitCache(title);
 		if (Object.keys(cache).length > 0) this.cache[title.id] = cache;
-		await this.writeNote(path, fm, `## Notes\n\n${title.notes}\n`);
+		await this.writeNote(path, fm, `## Notes\n\n${title.notes}\n`, legacyApiValues(title));
 	}
 
-	/** Creates the note, or adds only the keys it lacks; existing values are never touched. */
-	private async writeNote(path: string, fm: Fm, body: string): Promise<void> {
+	/**
+	 * Creates the note, or adds only the keys it lacks; existing values are never overwritten. A key
+	 * of `legacy` (API values the original plugin wrote) is removed when the note still holds exactly
+	 * that value: it lives in the cache now, and a differing value stays as the user's override (E9).
+	 */
+	private async writeNote(path: string, fm: Fm, body: string, legacy: Fm = {}): Promise<void> {
 		const { vault, fileManager } = this.ctx.app;
 		const file = vault.getAbstractFileByPath(path);
 		if (!file) {
@@ -434,9 +456,12 @@ class Migration {
 			this.report.skipped.push(`${path}: frontmatter is not valid YAML`);
 			return;
 		}
-		const missing = Object.keys(fm).filter((k) => !(k in current));
-		if (missing.length === 0) return;
+		const written = (k: string): boolean => sameValue(current[k], legacy[k]) && !(k in fm && sameValue(current[k], fm[k]));
+		const stale = Object.keys(legacy).filter((k) => k in current && written(k));
+		const missing = Object.keys(fm).filter((k) => !(k in current) || stale.includes(k));
+		if (missing.length === 0 && stale.length === 0) return;
 		await fileManager.processFrontMatter(file, (raw: Fm) => {
+			for (const k of stale) if (sameValue(raw[k], legacy[k])) delete raw[k];
 			for (const k of missing) if (!(k in raw)) raw[k] = fm[k];
 		});
 		this.report.notesFilled++;
@@ -544,6 +569,23 @@ function toEntryAirtime(e: AirtimeEntry): EntryAirtime {
 	if (e.currentEpisode !== undefined) a.episode = e.currentEpisode;
 	if (e.lastAcknowledgedDate) a.acknowledged = e.lastAcknowledgedDate;
 	return a;
+}
+
+/** API-derived keys the original plugin wrote into a title note, with the values it wrote. */
+function legacyApiValues(t: WatchLogTitle): Fm {
+	const out: Fm = {};
+	if (t.communityRating !== undefined) out.communityRating = t.communityRating;
+	if (t.communityVotes !== undefined) out.communityVotes = t.communityVotes;
+	if (t.communitySource) out.communitySource = t.communitySource;
+	for (const field of ['director', 'cast', 'studio'] as const) {
+		const names = getTitleCredits(t, field);
+		if (names.length > 0) out[field] = names;
+	}
+	const poster = getDisplayPoster(t);
+	if (poster && poster !== 'none') out.poster = poster;
+	const trailer = getDisplayTrailer(t);
+	if (trailer) out.trailer = trailer;
+	return out;
 }
 
 function progressOf(t: WatchLogTitle): number {

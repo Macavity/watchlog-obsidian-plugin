@@ -1559,7 +1559,8 @@ export class GamesTab {
 		}
 		const fresh = this.gameData.getGame(game.id);
 		if (!fresh) return;
-		const updated: Game = { ...fresh, coverUrl: res.url };
+		// an API cover replaces a note override (E9)
+		const updated: Game = { ...fresh, coverUrl: res.url, coverOverride: false };
 		if (res.source) {
 			updated.apiSource = res.source;
 			updated.apiId = res.apiId;

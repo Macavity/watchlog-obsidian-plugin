@@ -27,7 +27,7 @@ const AIRTIME_KEYS: readonly string[] = [
 	'airtimeRecurrence', 'airtimeDay', 'airtimeTime', 'airtimeSeason', 'airtimeEpisode', 'airtimeAcknowledged',
 ];
 
-/** Every frontmatter key encodeTitle can emit; the full rewrite deletes the ones it omits. */
+/** Every frontmatter key encodeTitle can emit (plus the older manual*Url names); the full rewrite deletes the ones it omits. */
 const TITLE_KEYS: readonly string[] = [
 	'title', 'type', 'status', 'priority', 'review', 'rating', 'progress', 'totalEpisodes', 'episodeDuration',
 	'dateStarted', 'dateFinished', 'dateAdded', 'dateModified', 'releaseDate', 'malId', 'anilistId',
@@ -36,12 +36,6 @@ const TITLE_KEYS: readonly string[] = [
 	'seasons', 'manualPosterUrl', 'manualTrailerUrl', 'manualDirector', 'manualCast', 'manualStudio',
 	...AIRTIME_KEYS,
 ];
-
-/** Output-only keys and the cache field they are derived from; kept on a full rewrite while uncached. */
-const OUTPUT_CACHE_FIELDS: Readonly<Record<string, keyof EntryCache>> = {
-	poster: 'posterUrl', trailer: 'trailerUrl', director: 'director', cast: 'cast', studio: 'studio',
-	communityRating: 'communityRating', communityVotes: 'communityVotes', communitySource: 'communitySource',
-};
 
 /** The note-side schedule of an Upcoming entry; the 'once' date lives in the note's releaseDate. */
 function toEntryAirtime(e: AirtimeEntry): EntryAirtime {
@@ -330,25 +324,20 @@ export class DataManager {
 	}
 
 	/**
-	 * Persists a director/cast backfill: cache AND the note's merged credit fields. Deliberately does
-	 * not stamp dateModified — a background backfill is not a user edit and must not reshuffle
-	 * "recently modified" sorts.
-	 *
-	 * Only the fetched fields are touched; user-added credits live in their own arrays. Manual
-	 * entries the fetch now returns are pruned, so no name is stored twice.
+	 * Persists a director/cast backfill to the cache only: API values never reach the note (E9), and
+	 * a background backfill is no user edit (no dateModified stamp). User-added credits stay as they
+	 * are; the merged view drops names the fetch now returns.
 	 */
 	async updateCredits(titleId: string, director: string[], cast: string[]): Promise<void> {
 		const title = this.getTitle(titleId);
 		if (!title) return;
 		title.director = director;
 		title.cast = cast;
-		title.manualDirector = pruneManualCredits(title.manualDirector ?? [], director);
-		title.manualCast = pruneManualCredits(title.manualCast ?? [], cast);
-		await this.writeTitle(title);
+		this.syncCache(title);
 		this.notifyListeners();
 	}
 
-	/** Studio backfill; same no-dateModified rules as updateCredits. Caches the TMDB id it resolved. */
+	/** Studio backfill; cache only, like updateCredits. Caches the TMDB id it resolved. */
 	async updateStudio(
 		titleId: string,
 		studio: string[],
@@ -358,12 +347,11 @@ export class DataManager {
 		const title = this.getTitle(titleId);
 		if (!title) return;
 		title.studio = studio;
-		title.manualStudio = pruneManualCredits(title.manualStudio ?? [], studio);
 		if (tmdbId && tmdbMediaType) {
 			title.tmdbId = tmdbId;
 			title.tmdbMediaType = tmdbMediaType;
 		}
-		await this.writeTitle(title);
+		this.syncCache(title);
 		this.notifyListeners();
 	}
 
@@ -1491,10 +1479,9 @@ export class DataManager {
 
 	/**
 	 * Rewrites every plugin-owned frontmatter key of an existing title note, body verbatim. Keys the
-	 * encoder omits are removed, except progress text kept while seasons are unknown, output fields
-	 * (poster, credits, community rating) the cache does not know yet and fields the decoder could not
-	 * read. Does NOT create the file — returns false then. Powers the bulk
-	 * "Rewrite all frontmatter" action.
+	 * encoder omits are removed, except progress text kept while seasons are unknown and fields the
+	 * decoder could not read. API overrides in the note are encoded, so they stay. Does NOT create the
+	 * file — returns false then. Powers the bulk "Rewrite all frontmatter" action.
 	 */
 	async rewriteFrontmatterIfExists(title: WatchLogTitle): Promise<boolean> {
 		const file = this.fileOf(title.id);
@@ -1506,10 +1493,6 @@ export class DataManager {
 			keep.add('skipped');
 			// derived from the unreadable watched text: 0% would be wrong
 			if (!isMovie(title.seasons, title.totalEpisodes)) keep.add('progress');
-		}
-		const cache = this.local.getCache(title.id) ?? {};
-		for (const [key, field] of Object.entries(OUTPUT_CACHE_FIELDS)) {
-			if (!(key in out) && cache[field] === undefined) keep.add(key);
 		}
 		return this.processFrontMatter(file, title, (raw) => {
 			for (const key of TITLE_KEYS) {

@@ -91,10 +91,6 @@ export class GameDataManager {
 	private dirty = new Set<string>();
 	private settingsCache: GamesSettings | null = null;
 
-	private coverSaveTimer: number | null = null;
-	private pendingCoverIds = new Set<string>();
-	private readonly COVER_SAVE_DEBOUNCE_MS = 5000;
-
 	constructor(plugin: WatchLogPlugin, stores: DataStores) {
 		this.plugin = plugin;
 		this.index = stores.index;
@@ -293,6 +289,7 @@ export class GameDataManager {
 	private normalized(src: Game): Game {
 		const g = structuredClone(src);
 		if (!g.status) g.status = this.getSettings().defaultStatus || 'Not started';
+		if (!g.coverOverride) g.coverUrl = this.local.getCache(g.id)?.coverUrl ?? '';
 		g.vaultPage = this.layout().pathFromId(g.id);
 		return g;
 	}
@@ -442,57 +439,35 @@ export class GameDataManager {
 	// Cover updates
 
 	/**
-	 * Silent cover URL update for the lazy Cards re-fetch: memory now, debounced note write (5s), no
-	 * notify — the card that triggered the fetch swaps its own <img>, so the grid is not rebuilt and
+	 * Silent cover URL update for the lazy Cards re-fetch: memory and cache only, never the note (E9),
+	 * no notify — the card that triggered the fetch swaps its own <img>, so the grid is not rebuilt and
 	 * the scroll position survives.
 	 */
 	updateCoverUrl(id: string, url: string): void {
 		const game = this.getGame(id);
 		if (!game) return;
-		game.coverUrl = url;
-		this.pendingCoverIds.add(id);
-		if (this.coverSaveTimer !== null) return;
-		this.coverSaveTimer = window.setTimeout(() => {
-			this.coverSaveTimer = null;
-			void this.flushPendingCovers();
-		}, this.COVER_SAVE_DEBOUNCE_MS);
+		if (!game.coverOverride) game.coverUrl = url;
+		this.local.setCache(id, { coverUrl: url });
 	}
 
-	/** Silent cover update that also stores the API source + id a title-based lookup resolved. */
-	updateCoverAndSource(id: string, url: string, source: 'rawg' | 'igdb', apiId: string): void {
-		const game = this.getGame(id);
-		if (!game) return;
-		game.apiSource = source;
-		game.apiId = apiId;
+	/**
+	 * Cover found by a title-based lookup. The resolved API source + id are identity data of the note,
+	 * which a background fetch does not write; only the cover is kept.
+	 */
+	updateCoverAndSource(id: string, url: string, _source: 'rawg' | 'igdb', _apiId: string): void {
 		this.updateCoverUrl(id, url);
 	}
 
-	/** Flush a pending debounced cover save now (e.g. on plugin unload). */
-	flushCoverSave(): void {
-		if (this.coverSaveTimer !== null) {
-			window.clearTimeout(this.coverSaveTimer);
-			this.coverSaveTimer = null;
-		}
-		void this.flushPendingCovers();
-	}
-
-	/** Writes pending silent edits and cover saves now, without notifying (plugin unload). */
+	/** Writes pending silent edits now, without notifying (plugin unload). */
 	async flushPending(): Promise<void> {
-		if (this.coverSaveTimer !== null) {
-			window.clearTimeout(this.coverSaveTimer);
-			this.coverSaveTimer = null;
-		}
 		await this.flushViews();
-		await this.flushPendingCovers();
 	}
 
-	private async flushPendingCovers(): Promise<void> {
-		const ids = [...this.pendingCoverIds];
-		this.pendingCoverIds.clear();
-		for (const id of ids) {
-			const g = this.views.get(id)?.view;
-			if (g) await this.writeGame(g).catch((e) => console.warn('[WL] cover write failed:', e));
-		}
+	/** A cover that is not a note override is API data and lives in the cache only (E9). */
+	private syncCover(g: Game): void {
+		if (g.coverOverride) return;
+		if ((this.local.getCache(g.id)?.coverUrl ?? '') === g.coverUrl) return;
+		this.local.setCache(g.id, { coverUrl: g.coverUrl });
 	}
 
 	// Groups — derived from the `groups` property of the game notes (id = name); an empty group does not exist.
@@ -633,8 +608,9 @@ export class GameDataManager {
 		}
 	}
 
-	/** Optimistic index update after an own write; `g` stays the UI's copy. */
+	/** Cache + optimistic index update after an own write; `g` stays the UI's copy. */
 	private afterWrite(g: Game, fm: Record<string, unknown>): void {
+		this.syncCover(g);
 		const stored = decodeGame(g.id, fm).entry;
 		this.index.applyLocal({ kind: 'game', entry: stored });
 		g.vaultPage = this.layout().pathFromId(g.id);
@@ -707,6 +683,7 @@ export class GameDataManager {
 			// the copy now holds what the note holds for every field it knows
 			if (ok) setBaseline(g, structuredClone(g));
 		} else {
+			this.syncCover(g);
 			const slot = this.views.get(g.id);
 			if (slot) slot.view = g;
 		}
@@ -718,7 +695,6 @@ export class GameDataManager {
 		this.index.removeLocal(id);
 		this.views.delete(id);
 		this.dirty.delete(id);
-		this.pendingCoverIds.delete(id);
 	}
 
 	async ensureGameNote(game: Game): Promise<string> {

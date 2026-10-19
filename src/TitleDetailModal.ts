@@ -328,8 +328,8 @@ export class TitleDetailModal extends Modal {
 	}
 
 	/**
-	 * One-time credits backfill for titles predating the fields. Fetches from the stored IMDb link,
-	 * then persists through the normal path (data.json + frontmatter). A failed or empty fetch marks
+	 * One-time credits backfill for titles predating the fields. Fetches from the stored IMDb link and
+	 * stores the result in the cache only; the note is never written. A failed or empty fetch marks
 	 * the fields 'none' so no later open retries.
 	 */
 	private maybeBackfillCredits(): void {

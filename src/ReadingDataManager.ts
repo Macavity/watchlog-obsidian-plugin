@@ -4,6 +4,7 @@ import type WatchLogPlugin from './main';
 import type { HistoryManager } from './HistoryManager';
 import type { DataStores } from './DataManager';
 import type { EntryIndex } from './storage/EntryIndex';
+import type { LocalStore } from './storage/LocalStore';
 import { getBaseline, setBaseline } from './storage/baseline';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
@@ -59,6 +60,7 @@ export class ReadingDataManager {
 	private plugin: WatchLogPlugin;
 	private app: App;
 	private index: EntryIndex;
+	private local: LocalStore;
 	private shared: SharedConfigStore;
 	private layout: () => VaultLayout;
 	private changeListeners: Array<() => void> = [];
@@ -78,6 +80,7 @@ export class ReadingDataManager {
 		this.plugin = plugin;
 		this.app = plugin.app;
 		this.index = stores.index;
+		this.local = stores.local;
 		this.shared = stores.shared;
 		this.layout = stores.layout;
 	}
@@ -215,14 +218,9 @@ export class ReadingDataManager {
 		}
 	}
 
-	/** Writes pending silent edits and cover saves now, without notifying (plugin unload). */
+	/** Writes pending silent edits now, without notifying (plugin unload). */
 	async flushPending(): Promise<void> {
-		if (this.coverSaveTimer !== null) {
-			window.clearTimeout(this.coverSaveTimer);
-			this.coverSaveTimer = null;
-		}
 		await this.writeDirty();
-		await this.writePendingCovers();
 	}
 
 	/**
@@ -285,61 +283,31 @@ export class ReadingDataManager {
 
 	// Silent cover updates
 
-	private coverSaveTimer: number | null = null;
-	private pendingCover: Map<string, ReadingKind> = new Map();
-	private readonly COVER_SAVE_DEBOUNCE_MS = 5000;
-
 	/**
-	 * Silent cover URL update for the lazy Cards re-fetch: memory now, debounced note write (5s), no
-	 * notify — the card swaps its own <img>, so the grid is not rebuilt and scroll survives.
+	 * Silent cover URL update for the lazy Cards re-fetch: memory and cache only, never the note (E9),
+	 * no notify — the card swaps its own <img>, so the grid is not rebuilt and scroll survives.
 	 */
 	updateCoverUrl(kind: ReadingKind, id: string, url: string): void {
 		const item = kind === 'book' ? this.getBook(id) : this.getManga(id);
 		if (!item) return;
-		item.coverUrl = url;
-		this.scheduleCoverSave(kind, id);
+		if (!item.coverOverride) item.coverUrl = url;
+		this.local.setCache(id, { coverUrl: url });
 	}
 
 	/**
-	 * Like updateCoverUrl, but also persists a source ID just resolved by a title-based lookup (for
-	 * CSV-imported entries that arrived with neither cover nor ID). Stores googleBooksId / malId so
-	 * later loads take the cheap ID path. Same silent, debounced contract.
+	 * Like updateCoverUrl, for a cover found by a title-based lookup (CSV-imported entries without
+	 * cover or ID). The resolved source ID is identity data of the note, which a background fetch does
+	 * not write; only the cover is kept.
 	 */
-	updateCoverAndSource(kind: ReadingKind, id: string, url: string, sourceId: string): void {
-		const item = kind === 'book' ? this.getBook(id) : this.getManga(id);
-		if (!item) return;
-		item.coverUrl = url;
-		if (kind === 'book') (item as Book).googleBooksId = sourceId;
-		else (item as Manga).malId = sourceId;
-		this.scheduleCoverSave(kind, id);
+	updateCoverAndSource(kind: ReadingKind, id: string, url: string, _sourceId: string): void {
+		this.updateCoverUrl(kind, id, url);
 	}
 
-	private scheduleCoverSave(kind: ReadingKind, id: string): void {
-		this.pendingCover.set(id, kind);
-		if (this.coverSaveTimer !== null) return;
-		this.coverSaveTimer = window.setTimeout(() => {
-			this.coverSaveTimer = null;
-			void this.writePendingCovers();
-		}, this.COVER_SAVE_DEBOUNCE_MS);
-	}
-
-	private async writePendingCovers(): Promise<void> {
-		const pending = [...this.pendingCover];
-		this.pendingCover.clear();
-		for (const [id, kind] of pending) {
-			const slot = this.views.get(id);
-			if (!slot) continue;
-			try { await this.writeItem(kind, slot.view); } catch (e) { console.warn('[WL] cover write failed:', e); }
-		}
-	}
-
-	/** Flush a pending debounced cover save now (e.g. on plugin unload). */
-	flushCoverSave(): void {
-		if (this.coverSaveTimer !== null) {
-			window.clearTimeout(this.coverSaveTimer);
-			this.coverSaveTimer = null;
-		}
-		if (this.pendingCover.size > 0) void this.writePendingCovers();
+	/** A cover that is not a note override is API data and lives in the cache only (E9). */
+	private syncCover(item: Item): void {
+		if (item.coverOverride) return;
+		if ((this.local.getCache(item.id)?.coverUrl ?? '') === item.coverUrl) return;
+		this.local.setCache(item.id, { coverUrl: item.coverUrl });
 	}
 
 	// Reading → Upcoming and release status
@@ -393,6 +361,7 @@ export class ReadingDataManager {
 			...(src.groups ? { groups: [...src.groups] } : {}),
 			vaultPage: this.layout().pathFromId(src.id),
 		} as Item;
+		if (!view.coverOverride) view.coverUrl = this.local.getCache(src.id)?.coverUrl ?? '';
 		this.applyReleaseStatus(view);
 		this.views.set(src.id, { src, view });
 		setBaseline(view, src);
@@ -732,6 +701,7 @@ export class ReadingDataManager {
 
 	/** Cache + optimistic index update after an own write; `item` stays the UI's copy. */
 	private afterWrite(kind: ReadingKind, item: Item, fm: Fm): void {
+		this.syncCover(item);
 		const stored = kind === 'book' ? decodeBook(item.id, fm).entry : decodeManga(item.id, fm).entry;
 		this.index.applyLocal(kind === 'book'
 			? { kind: 'book', entry: stored as Book }
@@ -827,8 +797,9 @@ export class ReadingDataManager {
 			});
 			// the copy now holds what the note holds for every field it knows
 			if (ok) setBaseline(item, structuredClone(item));
-		} else if (src) {
-			this.views.set(item.id, { src, view: item });
+		} else {
+			this.syncCover(item);
+			if (src) this.views.set(item.id, { src, view: item });
 		}
 	}
 
@@ -838,7 +809,6 @@ export class ReadingDataManager {
 		this.index.removeLocal(id);
 		this.views.delete(id);
 		this.dirty.delete(id);
-		this.pendingCover.delete(id);
 	}
 
 	/** Writes (creates or updates) the note file. Returns its path. */

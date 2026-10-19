@@ -35,6 +35,8 @@ export interface EntryCache {
 	tmdbMediaType?: 'movie' | 'tv';
 	malId?: number;
 	anilistId?: number;
+	/** book, manga and game cover from the API */
+	coverUrl?: string;
 	/** next/last aired episode from TMDB or AniList; season-relative episode numbers */
 	airing?: {
 		nextSeason?: number;

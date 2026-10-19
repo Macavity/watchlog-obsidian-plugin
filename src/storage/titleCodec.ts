@@ -1,10 +1,10 @@
-import type { AirtimeRecurrence, EntryAirtime, Season, WatchLogTitle } from '../types';
-import { getDisplayPoster, getDisplayTrailer, getTitleCredits } from '../types';
+import type { AirtimeRecurrence, EntryAirtime, Season, TitleOverrides, WatchLogTitle } from '../types';
 import type { Decoded, EntryCache, EpisodeRef, ExternalId } from './storageTypes';
 import { MAX_EPISODE, formatEpisodeRange, fromAbsolute, outsideSeasons, parseEpisodeRange, toAbsolute } from './episodeRange';
 import { externalIdFromLink, formatExternalId, parseExternalId } from './externalId';
 
 const RECURRENCES: readonly AirtimeRecurrence[] = ['once', 'daily', 'weekly', 'monthly'];
+const CREDIT_FIELDS = ['director', 'cast', 'studio'] as const;
 
 /** Movie = a single "Movie" season, or no seasons and exactly one episode. */
 export function isMovie(seasons: Season[], totalEpisodes: number): boolean {
@@ -219,11 +219,25 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 	const groups = nonEmpty(r.list('groups'));
 	if (groups) title.groups = groups;
 
-	// manual overrides and credits
-	const manualPoster = r.str('manualPosterUrl');
+	// API fields in the note are user overrides (E9); `manualPosterUrl`/`manualTrailerUrl` are older names
+	const manualPoster = r.str('poster') || r.str('manualPosterUrl');
 	if (manualPoster) title.manualPosterUrl = manualPoster;
-	const manualTrailer = r.str('manualTrailerUrl');
+	const manualTrailer = r.str('trailer') || r.str('manualTrailerUrl');
 	if (manualTrailer) title.manualTrailerUrl = manualTrailer;
+	const overrides: TitleOverrides = {};
+	for (const field of CREDIT_FIELDS) {
+		const names = nonEmpty(r.list(field));
+		if (names) overrides[field] = names;
+	}
+	const communityRating = r.num('communityRating');
+	if (communityRating !== undefined) overrides.communityRating = communityRating;
+	const communityVotes = r.num('communityVotes');
+	if (communityVotes !== undefined) overrides.communityVotes = communityVotes;
+	const communitySource = r.str('communitySource');
+	if (communitySource) overrides.communitySource = communitySource as TitleOverrides['communitySource'];
+	if (Object.keys(overrides).length > 0) title.overrides = overrides;
+
+	// user-added credits
 	const manualDirector = nonEmpty(r.list('manualDirector'));
 	if (manualDirector) title.manualDirector = manualDirector;
 	const manualCast = nonEmpty(r.list('manualCast'));
@@ -286,18 +300,17 @@ export function encodeTitle(t: WatchLogTitle, progress: number): Record<string, 
 	if (t.releaseDate) out.releaseDate = t.releaseDate;
 	if (t.malId !== undefined) out.malId = t.malId;
 	if (t.anilistId !== undefined) out.anilistId = t.anilistId;
-	if (t.communityRating !== undefined) out.communityRating = t.communityRating;
-	if (t.communityVotes !== undefined) out.communityVotes = t.communityVotes;
-	if (t.communitySource) out.communitySource = t.communitySource;
-	// merged views, output-only
-	for (const field of ['director', 'cast', 'studio'] as const) {
-		const names = getTitleCredits(t, field);
-		if (names.length > 0) out[field] = names;
+	// API values live in the cache; only the user's overrides are written (E9)
+	const o = t.overrides;
+	if (o?.communityRating !== undefined) out.communityRating = o.communityRating;
+	if (o?.communityVotes !== undefined) out.communityVotes = o.communityVotes;
+	if (o?.communitySource) out.communitySource = o.communitySource;
+	for (const field of CREDIT_FIELDS) {
+		const names = o?.[field];
+		if (names && names.length > 0) out[field] = names;
 	}
-	const poster = getDisplayPoster(t);
-	if (poster && poster !== 'none') out.poster = poster;
-	const trailer = getDisplayTrailer(t);
-	if (trailer) out.trailer = trailer;
+	if (t.manualPosterUrl?.trim()) out.poster = t.manualPosterUrl;
+	if (t.manualTrailerUrl?.trim()) out.trailer = t.manualTrailerUrl;
 	if (t.externalLink) out.externalLink = t.externalLink;
 	if (t.pinned) out.pinned = true;
 	if (t.favorite) out.favorite = true;
@@ -319,8 +332,6 @@ export function encodeTitle(t: WatchLogTitle, progress: number): Record<string, 
 	}
 	if (t.seasonsOverride) out.seasons = t.seasons.map((s) => `${s.name}: ${s.episodes}`);
 
-	if (t.manualPosterUrl) out.manualPosterUrl = t.manualPosterUrl;
-	if (t.manualTrailerUrl) out.manualTrailerUrl = t.manualTrailerUrl;
 	if (t.manualDirector?.length) out.manualDirector = t.manualDirector;
 	if (t.manualCast?.length) out.manualCast = t.manualCast;
 	if (t.manualStudio?.length) out.manualStudio = t.manualStudio;

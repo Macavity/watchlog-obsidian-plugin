@@ -75,6 +75,18 @@ export interface WatchLogTitle {
 	groups?: string[];
 	/** manual Upcoming schedule (frontmatter airtime* keys); absent = none or derived from releaseDate */
 	airtime?: EntryAirtime;
+	/** API fields set in the note by the user; they win over the cached API values and are written back */
+	overrides?: TitleOverrides;
+}
+
+/** Note-side overrides of API data; poster and trailer overrides are manualPosterUrl / manualTrailerUrl. */
+export interface TitleOverrides {
+	director?: string[];
+	cast?: string[];
+	studio?: string[];
+	communityRating?: number;
+	communityVotes?: number;
+	communitySource?: WatchLogTitle['communitySource'];
 }
 
 // TMDB collections
@@ -143,8 +155,10 @@ export type CreditsField = 'director' | 'cast' | 'studio';
 /** names shown inline on the studio line before the rest collapse behind "+N more" */
 export const STUDIO_INLINE_LIMIT = 3;
 
-/** fetched names for a field, before the manual merge */
+/** fetched names for a field (a note override wins), before the manual merge */
 function fetchedCredits(title: WatchLogTitle, field: CreditsField): string[] | undefined {
+	const override = title.overrides?.[field];
+	if (override) return override;
 	if (field === 'director') return title.director;
 	if (field === 'cast') return title.cast;
 	return title.studio;
@@ -563,6 +577,8 @@ export interface Book {
 	chaptersRead: number;
 	totalChapters: number;
 	coverUrl: string;
+	/** the note holds its own coverUrl: a user override written back; otherwise coverUrl is the cached API cover */
+	coverOverride?: boolean;
 	googleBooksId: string;
 	externalLink?: string;
 	vaultPage: string;
@@ -591,6 +607,8 @@ export interface Manga {
 	volumesRead: number;
 	totalVolumes: number;
 	coverUrl: string;
+	/** the note holds its own coverUrl: a user override written back; otherwise coverUrl is the cached API cover */
+	coverOverride?: boolean;
 	malId: string;
 	externalLink?: string;
 	vaultPage: string;
@@ -741,6 +759,8 @@ export interface Game {
 	coop: boolean;
 	multiplayer: boolean;
 	coverUrl: string;
+	/** the note holds its own coverUrl: a user override written back; otherwise coverUrl is the cached API cover */
+	coverOverride?: boolean;
 	/**
 	 * Which games API resolved this entry ('' = manual or pre-field) and its id there,
 	 * stored as a string. Lets a cover be re-fetched by id instead of by title.
@@ -1376,6 +1396,20 @@ export function getApiGroupForType(
 	if (type === 'Anime') return 'anime';
 	if (type === 'Movie' || type === 'TV Show' || type === 'TvShow') return 'movie';
 	return mapping?.[type] ?? '';
+}
+
+/** Community rating to render: each field of a note override wins over the cached API value. */
+export function getCommunityRating(title: WatchLogTitle): {
+	rating: number | undefined;
+	votes: number | undefined;
+	source: WatchLogTitle['communitySource'];
+} {
+	const o = title.overrides;
+	return {
+		rating: o?.communityRating ?? title.communityRating,
+		votes: o?.communityVotes ?? title.communityVotes,
+		source: o?.communitySource ?? title.communitySource,
+	};
 }
 
 /** Poster URL to render — a non-empty `manualPosterUrl` wins over `posterUrl`. */

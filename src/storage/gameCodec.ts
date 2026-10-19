@@ -88,6 +88,7 @@ export function decodeGame(id: string, fm: Fm): Decoded<Game> {
 		groups: r.list('groups'),
 		airtime: decodeAirtime(r),
 	};
+	if (entry.coverUrl) entry.coverOverride = true;
 	if (!entry.dateFavorited) delete entry.dateFavorited;
 	if (!entry.groups?.length) delete entry.groups;
 	if (!entry.airtime) delete entry.airtime;
@@ -119,7 +120,8 @@ export function encodeGame(g: Game): Fm {
 	out.releaseDate = g.releaseDate ?? null;
 	out.dateAdded = g.dateAdded;
 	out.dateModified = g.dateModified;
-	if (g.coverUrl) out.coverUrl = g.coverUrl;
+	// a cover only in the cache is the API's; one from the note is the user's (E9)
+	if (g.coverOverride && g.coverUrl) out.coverUrl = g.coverUrl;
 	if (g.storeUrl) out.storeUrl = g.storeUrl;
 	if (g.externalLink) out.externalLink = g.externalLink;
 	if (g.apiSource && g.apiId) out.externalId = formatExternalId({ source: g.apiSource, id: g.apiId });
