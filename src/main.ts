@@ -20,6 +20,7 @@ import { VaultLayout } from './storage/VaultLayout';
 import { LocalStore } from './storage/LocalStore';
 import { SharedConfigStore } from './storage/SharedConfigStore';
 import { EntryIndex } from './storage/EntryIndex';
+import { HistoryStore } from './storage/HistoryStore';
 import { hasWatchlogKey } from './storage/baseFile';
 
 /** Root folder created on a fresh install (no `.base` with a `watchlog:` key found). */
@@ -50,7 +51,12 @@ export default class WatchLogPlugin extends Plugin {
 	readingDataManager: ReadingDataManager = new ReadingDataManager(this);
 	gameDataManager: GameDataManager = new GameDataManager(this);
 	apiService: ApiService = new ApiService('', '');
-	historyManager: HistoryManager = new HistoryManager(this);
+	historyManager: HistoryManager = new HistoryManager(this, new HistoryStore(
+		this.app,
+		() => this.layout,
+		(name) => this.dataManager.getTitles().some((t) => t.title === name),
+		(ref) => this.registerEvent(ref),
+	));
 	posterService!: PosterService;
 	widgetRenderer?: WidgetRenderer;
 
@@ -92,7 +98,6 @@ export default class WatchLogPlugin extends Plugin {
 		);
 		this.readingDataManager = new ReadingDataManager(this);
 		this.gameDataManager = new GameDataManager(this);
-		this.historyManager = new HistoryManager(this);
 		this.dataManager.setHistoryManager(this.historyManager);
 		this.readingDataManager.setHistoryManager(this.historyManager);
 		this.gameDataManager.setHistoryManager(this.historyManager);
@@ -209,6 +214,7 @@ export default class WatchLogPlugin extends Plugin {
 			this.shared.start();
 			await this.index.build();
 			this.index.start();
+			await this.historyManager.start();
 			await this.dataManager.init();
 			await this.dataManager.ensureFolders();
 		} catch (e) {
