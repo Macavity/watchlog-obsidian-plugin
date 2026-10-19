@@ -54,7 +54,12 @@ export default class WatchLogPlugin extends Plugin {
 		shared: this.shared,
 		layout: () => this.layout,
 	});
-	gameDataManager: GameDataManager = new GameDataManager(this);
+	gameDataManager: GameDataManager = new GameDataManager(this, {
+		index: this.index,
+		local: this.local,
+		shared: this.shared,
+		layout: () => this.layout,
+	});
 	apiService: ApiService = new ApiService('', '');
 	historyManager: HistoryManager = new HistoryManager(this, new HistoryStore(
 		this.app,
@@ -101,13 +106,11 @@ export default class WatchLogPlugin extends Plugin {
 			this.settings.steamApiKey,
 			this.settings.steamId,
 		);
-		this.gameDataManager = new GameDataManager(this);
 		this.dataManager.setHistoryManager(this.historyManager);
 		this.readingDataManager.setHistoryManager(this.historyManager);
 		this.gameDataManager.setHistoryManager(this.historyManager);
 		// history binds first so any reading-load logging has a live target
 		await this.historyManager.load();
-		await this.gameDataManager.load();
 
 		this.posterService = new PosterService(
 			this.dataManager,
@@ -219,6 +222,7 @@ export default class WatchLogPlugin extends Plugin {
 			this.index.start();
 			await this.historyManager.start();
 			await this.dataManager.init();
+			await this.gameDataManager.init();
 			await this.readingDataManager.init();
 			await this.dataManager.ensureFolders();
 		} catch (e) {
