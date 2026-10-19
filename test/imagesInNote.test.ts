@@ -20,7 +20,7 @@ describe('images are note fields (E12)', () => {
 		expect(fromNote.posterUrl).toBe('https://mine');
 		expect(encodeTitle(fromNote, 0).poster).toBe('https://mine');
 		expect(decodeTitle('Movie/A', { title: 'A', manualPosterUrl: 'https://old' }, undefined).entry.posterUrl).toBe('https://old');
-		expect(decodeTitle('Movie/A', { title: 'A' }, { posterUrl: 'https://cache' }).entry.posterUrl).toBe('https://cache');
+		expect(decodeTitle('Movie/A', { title: 'A' }, { posterUrl: 'https://cache' }).entry.posterUrl).toBeUndefined();
 		const none = decodeTitle('Movie/A', { title: 'A' }, { posterUrl: 'none' }).entry;
 		expect(none.posterUrl).toBe('none');
 		expect(encodeTitle(none, 0)).not.toHaveProperty('poster');

@@ -170,8 +170,8 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 	if (seasonsOverride) title.seasonsOverride = true;
 
 	// cache fields
-	// the note's poster wins (set below); a cached URL is legacy, 'none' the fetch-failed marker
-	if (c.posterUrl !== undefined) title.posterUrl = c.posterUrl;
+	// the note's poster wins (set below); the cache only marks 'none' (the API has no poster)
+	if (c.posterUrl === 'none') title.posterUrl = 'none';
 	if (c.trailerUrl !== undefined) title.trailerUrl = c.trailerUrl;
 	if (c.director) title.director = c.director;
 	if (c.cast) title.cast = c.cast;
