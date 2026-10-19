@@ -13,7 +13,7 @@ import type { LocalStore } from './storage/LocalStore';
 import type { ApiCheckResult, EntryCache } from './storage/storageTypes';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
-import { decodeTitle, encodeTitle, isMovie, splitCache } from './storage/titleCodec';
+import { decodeTitle, encodeTitle, isMovie, seasonsPending, splitCache } from './storage/titleCodec';
 import { externalIdFromLink } from './storage/externalId';
 import { decodeBook, decodeManga, encodeAirtime } from './storage/readingCodec';
 import { decodeGame } from './storage/gameCodec';
@@ -134,7 +134,9 @@ export class DataManager {
 	private apiQueue = new ApiCheckQueue();
 	private seasonsInFlight: Set<string> = new Set();
 	private seasonsRunning = 0;
-	private seasonsFilled = false;
+	private seasonsChanged = false;
+	/** Titles whose "API key needed" notice was shown this session. */
+	private noKeyNoticeShown: Set<string> = new Set();
 
 	// debounced save for high-frequency edits (rapid episode clicks): memory now, note coalesced
 	private pendingSaveTimer: number | null = null;
@@ -202,24 +204,31 @@ export class DataManager {
 
 	/**
 	 * Seasons not known yet: an API identity, no seasons in note or cache, not a movie (a fresh device,
-	 * a note from elsewhere). Episode toggles wait for the refill.
+	 * a note from elsewhere), and the fetch has not found nothing or lacked a key (those use an implicit
+	 * S01). Episode toggles wait for the refill.
 	 */
 	private seasonsPending(t: WatchLogTitle): boolean {
-		if (t.seasonsOverride || t.seasons.length > 0 || t.tmdbMediaType === 'movie') return false;
-		if (isMovie(t.seasons, t.totalEpisodes)) return false;
-		return !!t.tmdbId || !!t.malId || !!t.anilistId || externalIdFromLink(t.externalLink) !== null;
+		return seasonsPending(t, this.local.getCache(t.id)?.apiCheck?.seasons?.result);
+	}
+
+	/** Seasons not known for a series with an API identity, whatever the last fetch returned. */
+	private seasonsMissing(t: WatchLogTitle): boolean {
+		return seasonsPending(t, undefined);
 	}
 
 	/** Queues a season fetch for titles that lack seasons and whose last check is past its deadline. */
 	private queueMissingSeasons(titles: WatchLogTitle[]): void {
 		if (!this.plugin.apiService) return;
 		for (const t of titles) {
-			if (t.maybe || this.seasonsInFlight.has(t.id) || !this.seasonsPending(t) || !this.apiCheckDue(t.id, 'seasons', false)) continue;
+			if (t.maybe || this.seasonsInFlight.has(t.id) || !this.seasonsMissing(t) || !this.apiCheckDue(t.id, 'seasons', false)) continue;
 			void this.refillSeasons(t);
 		}
 	}
 
-	/** Stores fetched seasons in the cache only (no note write); the notes are re-decoded once the queue is idle. */
+	/**
+	 * Stores fetched seasons in the cache only (no note write); the notes are re-decoded once the queue is
+	 * idle, also after "not found" or "no key" (the implicit S01 applies then).
+	 */
 	private async refillSeasons(t: WatchLogTitle): Promise<void> {
 		this.seasonsInFlight.add(t.id);
 		this.seasonsRunning++;
@@ -233,13 +242,14 @@ export class DataManager {
 			if (!this.index.get(t.id)) return;
 			const seasons = outcome.status === 'ok' ? outcome.value.map((x) => ({ name: x.name, episodes: x.episodes, offset: x.offset })) : [];
 			const filled = seasons.length > 0;
-			this.recordApiCheck(t.id, 'seasons', outcome.status === 'ok' && !filled ? 'notfound' : outcome.status, filled ? { seasons } : {});
-			if (filled) this.seasonsFilled = true;
+			const result = outcome.status === 'ok' && !filled ? 'notfound' : outcome.status;
+			this.recordApiCheck(t.id, 'seasons', result, filled ? { seasons } : {});
+			if (result !== 'transient') this.seasonsChanged = true;
 		} finally {
 			this.seasonsInFlight.delete(t.id);
 			// decoding happens in the index; a rebuild picks up the new cache and emits the changed ids
-			if (--this.seasonsRunning === 0 && this.seasonsFilled) {
-				this.seasonsFilled = false;
+			if (--this.seasonsRunning === 0 && this.seasonsChanged) {
+				this.seasonsChanged = false;
 				await this.index.rebuild();
 			}
 		}
@@ -275,13 +285,24 @@ export class DataManager {
 			}
 		}
 		if (!changed) return;
+		this.noKeyNoticeShown.clear();
 		this.local.queueSave();
 		this.queueMissingSeasons(this.index.titles());
 	}
 
-	/** True (and a notice) when an episode toggle must wait for the season refill. */
+	/**
+	 * True (and a notice) when an episode toggle must wait for the season refill. Without an API key the
+	 * toggle goes on the implicit S01, with a one-time hint.
+	 */
 	private blockedBySeasonRefill(t: WatchLogTitle): boolean {
-		if (!this.seasonsPending(t)) return false;
+		if (!this.seasonsPending(t)) {
+			const noKey = this.local.getCache(t.id)?.apiCheck?.seasons?.result === 'nokey';
+			if (noKey && this.seasonsMissing(t) && !this.noKeyNoticeShown.has(t.id)) {
+				this.noKeyNoticeShown.add(t.id);
+				new Notice('API key needed to load episodes');
+			}
+			return false;
+		}
 		new Notice(`Episodes of "${t.title}" are still loading.`);
 		this.queueMissingSeasons([t]);
 		return true;
@@ -1552,9 +1573,9 @@ export class DataManager {
 	async rewriteFrontmatterIfExists(title: WatchLogTitle): Promise<boolean> {
 		const file = this.fileOf(title.id);
 		if (!file) return false;
-		const out = encodeTitle(title, this.getProgress(title));
+		const out = encodeTitle(title, this.getProgress(title), this.seasonsPending(title));
 		const keep = new Set(this.index.invalidFields(title.id));
-		if (title.seasons.length === 0) {
+		if (!('watched' in out)) {
 			keep.add('watched');
 			keep.add('skipped');
 			// derived from the unreadable watched text: 0% would be wrong
@@ -1623,7 +1644,7 @@ export class DataManager {
 		if (!fetchable && title.seasons.length > 0) title.seasonsOverride = true;
 		const path = this.freePath(layout.notePath('title', title.title, title.type));
 		await this.ensureFolder(this.parentOf(path));
-		const fm = encodeTitle(title, this.getProgress(title));
+		const fm = encodeTitle(title, this.getProgress(title), this.seasonsPending(title));
 		const notes = title.notes ?? '';
 		title.id = layout.idFromPath(path);
 		this.notes.set(title.id, notes);
@@ -1667,8 +1688,12 @@ export class DataManager {
 			}
 		}
 
-		const before = src ? encodeTitle(src, this.getProgress(src)) : {};
-		const after = encodeTitle(t, this.getProgress(t));
+		// edited seasons belong in the note, so they reach other devices (the cache stays per device)
+		const seasonList = (x: WatchLogTitle): string[] => x.seasons.map((s) => `${s.name}: ${s.episodes}`);
+		if (src && t.seasons.length > 0 && !sameJson(seasonList(src), seasonList(t))) t.seasonsOverride = true;
+		const pending = this.seasonsPending(t);
+		const before = src ? encodeTitle(src, this.getProgress(src), pending) : {};
+		const after = encodeTitle(t, this.getProgress(t), pending);
 		const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
 			.filter((k) => !sameJson(before[k], after[k]));
 		if (changed.length > 0) {

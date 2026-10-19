@@ -33,7 +33,11 @@ export class TFolder extends TAbstractFile {
 }
 
 export class Notice {
-	constructor(public message: string, public timeout?: number) {}
+	/** Messages of every notice shown, for assertions. */
+	static shown: string[] = [];
+	constructor(public message: string, public timeout?: number) {
+		Notice.shown.push(message);
+	}
 }
 
 export const Platform = { isMobile: false, isDesktop: true };

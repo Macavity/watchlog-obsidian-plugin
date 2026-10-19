@@ -1,5 +1,5 @@
 import type { AirtimeRecurrence, EntryAirtime, Season, TitleOverrides, WatchLogTitle } from '../types';
-import type { Decoded, EntryCache, EpisodeRef, ExternalId } from './storageTypes';
+import type { ApiCheckResult, Decoded, EntryCache, EpisodeRef, ExternalId } from './storageTypes';
 import { MAX_EPISODE, formatEpisodeRange, fromAbsolute, outsideSeasons, parseEpisodeRange, toAbsolute } from './episodeRange';
 import { externalIdFromLink, formatExternalId, parseExternalId } from './externalId';
 
@@ -10,6 +10,23 @@ const CREDIT_FIELDS = ['director', 'cast', 'studio'] as const;
 export function isMovie(seasons: Season[], totalEpisodes: number): boolean {
 	if (seasons.length === 1) return seasons[0]?.name === 'Movie';
 	return seasons.length === 0 && totalEpisodes === 1;
+}
+
+/**
+ * A series with an API identity but no seasons in note or cache, whose season fetch has not yet ended
+ * in "not found" or "no key": its episodes cannot be mapped until the seasons arrive.
+ */
+export function seasonsPending(t: WatchLogTitle, seasonsCheck: ApiCheckResult | undefined): boolean {
+	if (t.seasonsOverride || t.seasons.length > 0 || t.tmdbMediaType === 'movie') return false;
+	if (isMovie(t.seasons, t.totalEpisodes)) return false;
+	if (seasonsCheck === 'notfound' || seasonsCheck === 'nokey') return false;
+	return !!t.tmdbId || !!t.malId || !!t.anilistId || externalIdFromLink(t.externalLink) !== null;
+}
+
+/** Seasons episodes map onto: the known ones, else one implicit "S01" of `totalEpisodes`. */
+function mappingSeasons(t: WatchLogTitle): Season[] {
+	if (t.seasons.length > 0) return t.seasons;
+	return t.totalEpisodes > 0 ? [{ name: 'Season 1', episodes: t.totalEpisodes, offset: 0 }] : [];
 }
 
 /**
@@ -130,34 +147,6 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 	const total = r.num('totalEpisodes') ?? seasons.reduce((n, s) => n + s.episodes, 0);
 	const movie = isMovie(seasons, total);
 
-	let watchedEpisodes: number[] = [];
-	let unmappedWatched: EpisodeRef[] = [];
-	let unmappedSkipped: EpisodeRef[] = [];
-	if (movie) {
-		if (status === 'Completed') watchedEpisodes = [1];
-	} else {
-		const watchedText = r.str('watched');
-		if (watchedText?.trim()) {
-			const refs = parseEpisodeRange(watchedText, seasons);
-			if (refs) {
-				watchedEpisodes = toAbsolute(refs, seasons);
-				unmappedWatched = outsideSeasons(refs, seasons);
-			} else r.invalid.push('watched');
-		}
-		const skippedText = r.str('skipped');
-		if (skippedText?.trim()) {
-			const refs = parseEpisodeRange(skippedText, seasons);
-			if (!refs) r.invalid.push('skipped');
-			else {
-				unmappedSkipped = outsideSeasons(refs, seasons);
-				for (const ref of refs) {
-					const season = seasons[ref.season - 1];
-					if (season && ref.episode <= season.episodes) season.skippedEpisodes = [...(season.skippedEpisodes ?? []), ref.episode];
-				}
-			}
-		}
-	}
-
 	const title: WatchLogTitle = {
 		id,
 		title: r.str('title') ?? id.split('/').pop() ?? id,
@@ -176,11 +165,9 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 		releaseDate: r.date('releaseDate'),
 		externalLink,
 		seasons,
-		watchedEpisodes,
+		watchedEpisodes: [],
 	};
 	if (seasonsOverride) title.seasonsOverride = true;
-	if (unmappedWatched.length > 0) title.unmappedWatched = unmappedWatched;
-	if (unmappedSkipped.length > 0) title.unmappedSkipped = unmappedSkipped;
 
 	// cache fields
 	// the note's poster wins (set below); a cached URL is legacy, 'none' the fetch-failed marker
@@ -209,6 +196,40 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 		} else if (ext.source === 'mal' && !isNaN(n)) title.malId = n;
 		else if (ext.source === 'anilist' && !isNaN(n)) title.anilistId = n;
 		else if (ext.source === 'imdb' && !externalLink) title.externalLink = `https://www.imdb.com/title/${ext.id}`;
+	}
+
+	// progress: movies are carried by status; without seasons an implicit S01 unless a refill is pending
+	if (movie) {
+		if (status === 'Completed') title.watchedEpisodes = [1];
+	} else {
+		// a pending refill maps nothing: every ref stays unmapped and the note's text untouched
+		const mapping = seasonsPending(title, c.apiCheck?.seasons?.result) ? seasons : mappingSeasons(title);
+		const implicit = mapping !== seasons;
+		const watchedText = r.str('watched');
+		if (watchedText?.trim()) {
+			const refs = parseEpisodeRange(watchedText, mapping);
+			if (refs) {
+				title.watchedEpisodes = toAbsolute(refs, mapping);
+				const unmapped = outsideSeasons(refs, mapping);
+				if (unmapped.length > 0) title.unmappedWatched = unmapped;
+			} else r.invalid.push('watched');
+		}
+		const skippedText = r.str('skipped');
+		if (skippedText?.trim()) {
+			const refs = parseEpisodeRange(skippedText, mapping);
+			if (!refs) r.invalid.push('skipped');
+			else {
+				// the implicit season is not stored on the title: its skips ride along unmapped
+				const unmapped = implicit ? refs : outsideSeasons(refs, seasons);
+				if (unmapped.length > 0) title.unmappedSkipped = unmapped;
+				if (!implicit) {
+					for (const ref of refs) {
+						const season = seasons[ref.season - 1];
+						if (season && ref.episode <= season.episodes) season.skippedEpisodes = [...(season.skippedEpisodes ?? []), ref.episode];
+					}
+				}
+			}
+		}
 	}
 
 	if (r.bool('pinned')) title.pinned = true;
@@ -284,7 +305,7 @@ function identityFor(t: WatchLogTitle): ExternalId | null {
 }
 
 /** Frontmatter fields for a title; keys keep the original plugin's names. `notes` is not included. */
-export function encodeTitle(t: WatchLogTitle, progress: number): Record<string, unknown> {
+export function encodeTitle(t: WatchLogTitle, progress: number, seasonsPending = false): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
 	out.title = t.title;
 	out.type = t.type;
@@ -323,9 +344,10 @@ export function encodeTitle(t: WatchLogTitle, progress: number): Record<string, 
 	if (t.groups && t.groups.length > 0) out.groups = t.groups;
 	if (t.maybe) out.maybe = true;
 
-	// progress: movies are carried by status; without known seasons the note's text is left alone
-	if (!isMovie(t.seasons, t.totalEpisodes) && t.seasons.length > 0) {
-		out.watched = formatEpisodeRange([...fromAbsolute(t.watchedEpisodes, t.seasons), ...(t.unmappedWatched ?? [])]);
+	// progress: movies are carried by status; while a season refill is pending the note's text is left alone
+	const mapping = mappingSeasons(t);
+	if (!isMovie(t.seasons, t.totalEpisodes) && !seasonsPending && mapping.length > 0) {
+		out.watched = formatEpisodeRange([...fromAbsolute(t.watchedEpisodes, mapping), ...(t.unmappedWatched ?? [])]);
 		const skipped: EpisodeRef[] = [...(t.unmappedSkipped ?? [])];
 		t.seasons.forEach((s, i) => {
 			for (const episode of s.skippedEpisodes ?? []) skipped.push({ season: i + 1, episode });

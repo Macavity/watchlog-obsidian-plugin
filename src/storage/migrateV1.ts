@@ -1,6 +1,6 @@
 import { TFile, TFolder, normalizePath, type App } from 'obsidian';
 import {
-	DEFAULT_READING_SETTINGS, GAME_TBA_STATUS, defaultGamesSettings, getDisplayPoster, getDisplayTrailer, getTitleCredits,
+	DEFAULT_READING_SETTINGS, GAME_TBA_STATUS, defaultGamesSettings, getDisplayPoster, getTitleCredits,
 	parsePlaytimeInput,
 } from '../types';
 import type {
@@ -415,6 +415,9 @@ class Migration {
 		title.posterUrl = getDisplayPoster(title);
 		delete title.manualPosterUrl;
 		const fm = encodeTitle(title, progressOf(title));
+		// a note value the user set (manual trailer, overrides) is never stale, even where it equals the API's
+		const legacy = legacyApiValues(title);
+		for (const k of Object.keys(legacy)) if (k in fm && sameValue(fm[k], legacy[k])) delete legacy[k];
 		if (this.joined && !title.maybe) {
 			// another device migrated: only progress for notes that exist, the cache for those
 			if (!(this.ctx.app.vault.getAbstractFileByPath(path) instanceof TFile)) {
@@ -425,7 +428,7 @@ class Migration {
 		}
 		const cache = splitCache(title);
 		if (Object.keys(cache).length > 0) this.cache[title.id] = cache;
-		await this.writeNote(path, fm, `## Notes\n\n${title.notes}\n`, legacyApiValues(title));
+		await this.writeNote(path, fm, `## Notes\n\n${title.notes}\n`, legacy);
 	}
 
 	/**
@@ -578,8 +581,8 @@ function legacyApiValues(t: WatchLogTitle): Fm {
 		const names = getTitleCredits(t, field);
 		if (names.length > 0) out[field] = names;
 	}
-	const trailer = getDisplayTrailer(t);
-	if (trailer) out.trailer = trailer;
+	// the fetched trailer only: a manual one in the note is the user's
+	if (t.trailerUrl && t.trailerUrl !== 'none') out.trailer = t.trailerUrl;
 	return out;
 }
 

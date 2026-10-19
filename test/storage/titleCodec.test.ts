@@ -68,5 +68,42 @@ describe('titleCodec', () => {
     expect(decodeTitle('TV Show/A', { title: 'A', seasons: ['Season 1: 20000 (1-10001)'] }, undefined).invalidFields).toContain('seasons');
     expect(decodeTitle('TV Show/A', { title: 'A', seasons: ['Season 1: 12 (3, 5-6)'] }, undefined).invalidFields).toEqual([]);
   });
-});
 
+  describe('series without a season list', () => {
+    const fm = { title: 'N', type: 'TV Show', totalEpisodes: 10, watched: 'S01E01-E05, S02E01', skipped: 'S01E09' };
+
+    it('maps progress onto an implicit S01 of totalEpisodes', () => {
+      const { entry, invalidFields } = decodeTitle('TV Show/N', fm, undefined);
+      expect(invalidFields).toEqual([]);
+      expect(entry.seasons).toEqual([]);
+      expect(entry.watchedEpisodes).toEqual([1, 2, 3, 4, 5]);
+      entry.watchedEpisodes.push(7);
+      const out = encodeTitle(entry, 60);
+      expect(out.watched).toBe('S01E01-E05, S01E07, S02E01');
+      expect(out.skipped).toBe('S01E09');
+      expect(splitCache(entry)).not.toHaveProperty('seasons');
+    });
+
+    it('waits while a season refill is pending', () => {
+      const pending = { ...fm, externalId: 'tmdb:tv:1' };
+      const { entry } = decodeTitle('TV Show/N', pending, undefined);
+      expect(entry.watchedEpisodes).toEqual([]);
+      expect(encodeTitle(entry, 0, true)).not.toHaveProperty('watched');
+    });
+
+    it('uses the implicit season once the refill found nothing or lacks a key', () => {
+      const pending = { ...fm, externalId: 'tmdb:tv:1' };
+      for (const result of ['notfound', 'nokey'] as const) {
+        const { entry } = decodeTitle('TV Show/N', pending, { apiCheck: { seasons: { at: '2026-01-01T00:00:00Z', result } } });
+        expect(entry.watchedEpisodes).toEqual([1, 2, 3, 4, 5]);
+      }
+      const transient = decodeTitle('TV Show/N', pending, { apiCheck: { seasons: { at: '2026-01-01T00:00:00Z', result: 'transient' } } });
+      expect(transient.entry.watchedEpisodes).toEqual([]);
+    });
+
+    it('keeps movies without watched', () => {
+      const { entry } = decodeTitle('Movie/M', { title: 'M', type: 'Movie', totalEpisodes: 1, status: 'Completed' }, undefined);
+      expect(encodeTitle(entry, 100)).not.toHaveProperty('watched');
+    });
+  });
+});
