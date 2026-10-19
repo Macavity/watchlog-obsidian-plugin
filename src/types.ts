@@ -64,6 +64,14 @@ export interface WatchLogTitle {
 	studio?: string[];
 	/** user-added, appended after the fetched ones; a refresh never overwrites */
 	manualStudio?: string[];
+	/** considered, not yet in the library (frontmatter `maybe`) */
+	maybe?: boolean;
+	/** seasons were set by hand; frontmatter `seasons` wins over the API cache */
+	seasonsOverride?: boolean;
+	/** group names (frontmatter `groups`) */
+	groups?: string[];
+	/** manual Upcoming schedule (frontmatter airtime* keys); absent = none or derived from releaseDate */
+	airtime?: EntryAirtime;
 }
 
 // TMDB collections
@@ -563,6 +571,10 @@ export interface Book {
 	dateAdded: string;
 	dateModified: string;
 	customFields: Record<string, string | number>;
+	/** group names (frontmatter `groups`) */
+	groups?: string[];
+	/** manual Upcoming schedule (frontmatter airtime* keys); absent = none or derived from releaseDate */
+	airtime?: EntryAirtime;
 }
 
 export interface Manga {
@@ -587,6 +599,10 @@ export interface Manga {
 	dateAdded: string;
 	dateModified: string;
 	customFields: Record<string, string | number>;
+	/** group names (frontmatter `groups`) */
+	groups?: string[];
+	/** manual Upcoming schedule (frontmatter airtime* keys); absent = none or derived from releaseDate */
+	airtime?: EntryAirtime;
 }
 
 /** the book's unit, tolerating records written before the field existed */
@@ -749,6 +765,10 @@ export interface Game {
 	dateFinished: string | null;
 	dateAdded: string;
 	dateModified: string;
+	/** group names (frontmatter `groups`) */
+	groups?: string[];
+	/** manual Upcoming schedule (frontmatter airtime* keys); absent = none or derived from releaseDate */
+	airtime?: EntryAirtime;
 }
 
 export interface GamesSettings {
@@ -887,6 +907,19 @@ export const DEFAULT_READING_STATUS_COLORS: Record<ReadingStatus, string> = {
 // Airtime types
 
 export type AirtimeRecurrence = 'once' | 'daily' | 'weekly' | 'monthly';
+
+/** Manual Upcoming schedule stored on the entry's note. Reading reuses season/episode for volume/chapter. */
+export interface EntryAirtime {
+	recurrence: AirtimeRecurrence;
+	/** 0–6 for weekly, 1–31 for monthly */
+	day?: number;
+	/** HH:MM */
+	time?: string;
+	season?: number;
+	episode?: number;
+	/** YYYY-MM-DD */
+	acknowledged?: string;
+}
 
 export interface AirtimeSchedule {
 	recurrence: AirtimeRecurrence;
