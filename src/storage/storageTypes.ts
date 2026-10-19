@@ -19,6 +19,8 @@ export interface ExternalId {
 }
 
 /** API-derived data per entry; regenerable, so it lives in data.json only. */
+export type ApiCheckResult = 'ok' | 'transient' | 'nokey' | 'notfound';
+
 export interface EntryCache {
 	posterUrl?: string;
 	trailerUrl?: string;
@@ -37,6 +39,8 @@ export interface EntryCache {
 	anilistId?: number;
 	/** book, manga and game cover from the API */
 	coverUrl?: string;
+	/** last background API check per kind: when, and how it ended (drives the retry deadline) */
+	apiCheck?: Partial<Record<'airing' | 'seasons', { at: string; result: ApiCheckResult }>>;
 	/** next/last aired episode from TMDB or AniList; season-relative episode numbers */
 	airing?: {
 		nextSeason?: number;

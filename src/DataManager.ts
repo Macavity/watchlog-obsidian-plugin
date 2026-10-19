@@ -7,8 +7,10 @@ import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayI
 import type { CreditsField } from './types';
 import type { AnyEntry, EntryIndex } from './storage/EntryIndex';
 import { getBaseline, setBaseline } from './storage/baseline';
+import type { ApiOutcome } from './ApiService';
+import { ApiCheckQueue } from './apiCheckQueue';
 import type { LocalStore } from './storage/LocalStore';
-import type { EntryCache } from './storage/storageTypes';
+import type { ApiCheckResult, EntryCache } from './storage/storageTypes';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { decodeTitle, encodeTitle, isMovie, splitCache } from './storage/titleCodec';
@@ -62,7 +64,9 @@ function scheduleOf(a: EntryAirtime, releaseDate: string | null): AirtimeSchedul
 const NOTES_RE = /(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/;
 
 /** Minimum gap between two API refreshes of a title's airing pointer, unless forced. */
-const AIRING_REFRESH_MS = 6 * 60 * 60 * 1000;
+/** Retry deadline per outcome of a background API check; a missing key waits until a key changes. */
+const API_CHECK_TTL_MS = { ok: 6 * 3_600_000, transient: 3_600_000, notfound: 7 * 24 * 3_600_000 };
+type ApiCheckKind = 'airing' | 'seasons';
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
@@ -122,10 +126,11 @@ export class DataManager {
 	private dirty: Set<string> = new Set();
 	// ids already handed to the poster queue this session
 	private posterRequested: Set<string> = new Set();
-	/** ids whose seasons were requested this session; the queue fetches one at a time */
-	private seasonsRequested: Set<string> = new Set();
-	private seasonQueue: WatchLogTitle[] = [];
-	private seasonQueueRunning = false;
+	// background API checks (airing, seasons) share one throttled queue; results persist in the cache
+	private apiQueue = new ApiCheckQueue();
+	private seasonsInFlight: Set<string> = new Set();
+	private seasonsRunning = 0;
+	private seasonsFilled = false;
 
 	// debounced save for high-frequency edits (rapid episode clicks): memory now, note coalesced
 	private pendingSaveTimer: number | null = null;
@@ -136,8 +141,6 @@ export class DataManager {
 	private posterSaveTimer: number | null = null;
 	private readonly POSTER_SAVE_DEBOUNCE_MS = 5000;
 
-	// airing refresh: last attempt per id (also failed ones) and requests still running
-	private airingAttempts: Map<string, number> = new Map();
 	private airingInFlight: Set<string> = new Set();
 
 	setHistoryManager(hm: HistoryManager): void {
@@ -202,41 +205,73 @@ export class DataManager {
 		return !!t.tmdbId || !!t.malId || !!t.anilistId || externalIdFromLink(t.externalLink) !== null;
 	}
 
-	/** Fetches seasons for titles that lack them, once per id and session, one request at a time. */
+	/** Queues a season fetch for titles that lack seasons and whose last check is past its deadline. */
 	private queueMissingSeasons(titles: WatchLogTitle[]): void {
 		if (!this.plugin.apiService) return;
 		for (const t of titles) {
-			if (t.maybe || this.seasonsRequested.has(t.id) || !this.seasonsPending(t)) continue;
-			this.seasonsRequested.add(t.id);
-			this.seasonQueue.push(t);
+			if (t.maybe || this.seasonsInFlight.has(t.id) || !this.seasonsPending(t) || !this.apiCheckDue(t.id, 'seasons', false)) continue;
+			void this.refillSeasons(t);
 		}
-		if (!this.seasonQueueRunning && this.seasonQueue.length > 0) void this.drainSeasonQueue();
 	}
 
-	/** Stores fetched seasons in the cache only (no note write), then re-decodes the notes. */
-	private async drainSeasonQueue(): Promise<void> {
-		this.seasonQueueRunning = true;
-		let filled = false;
+	/** Stores fetched seasons in the cache only (no note write); the notes are re-decoded once the queue is idle. */
+	private async refillSeasons(t: WatchLogTitle): Promise<void> {
+		this.seasonsInFlight.add(t.id);
+		this.seasonsRunning++;
 		try {
-			for (let t = this.seasonQueue.shift(); t; t = this.seasonQueue.shift()) {
-				let seasons: Season[] | null = null;
-				try {
-					seasons = await this.plugin.apiService.fetchSeasons(t);
-				} catch {
-					// stays pending; no retry this session
-				}
-				if (!seasons || seasons.length === 0 || !this.index.get(t.id)) continue;
-				const cached = seasons.map((x) => ({ name: x.name, episodes: x.episodes, offset: x.offset }));
-				this.local.data.cache[t.id] = { ...this.local.getCache(t.id), seasons: cached };
-				filled = true;
+			let outcome: ApiOutcome<Season[]> = { status: 'transient' };
+			try {
+				outcome = await this.apiQueue.enqueue(() => this.plugin.apiService.fetchSeasons(t));
+			} catch {
+				// stays pending until the deadline
 			}
+			if (!this.index.get(t.id)) return;
+			const seasons = outcome.status === 'ok' ? outcome.value.map((x) => ({ name: x.name, episodes: x.episodes, offset: x.offset })) : [];
+			const filled = seasons.length > 0;
+			this.recordApiCheck(t.id, 'seasons', outcome.status === 'ok' && !filled ? 'notfound' : outcome.status, filled ? { seasons } : {});
+			if (filled) this.seasonsFilled = true;
 		} finally {
-			this.seasonQueueRunning = false;
+			this.seasonsInFlight.delete(t.id);
+			// decoding happens in the index; a rebuild picks up the new cache and emits the changed ids
+			if (--this.seasonsRunning === 0 && this.seasonsFilled) {
+				this.seasonsFilled = false;
+				await this.index.rebuild();
+			}
 		}
-		if (!filled) return;
+	}
+
+	/** True when the last check of this kind is past its deadline (never checked, or forced). */
+	private apiCheckDue(id: string, kind: ApiCheckKind, force: boolean): boolean {
+		if (force) return true;
+		const cache = this.local.getCache(id);
+		const check = cache?.apiCheck?.[kind];
+		if (!check) {
+			const legacy = kind === 'airing' ? Date.parse(cache?.airing?.refreshedAt ?? '') : NaN;
+			return isNaN(legacy) || Date.now() - legacy >= API_CHECK_TTL_MS.ok;
+		}
+		if (check.result === 'nokey') return false;
+		const at = Date.parse(check.at);
+		return isNaN(at) || Date.now() - at >= API_CHECK_TTL_MS[check.result];
+	}
+
+	private recordApiCheck(id: string, kind: ApiCheckKind, result: ApiCheckResult, patch: Partial<EntryCache> = {}): void {
+		const apiCheck = { ...this.local.getCache(id)?.apiCheck, [kind]: { at: new Date().toISOString(), result } };
+		this.local.setCache(id, { ...patch, apiCheck });
+	}
+
+	/** An API key changed: checks that failed for want of a key may run again. */
+	resetNoKeyChecks(): void {
+		let changed = false;
+		for (const entry of Object.values(this.local.data.cache)) {
+			for (const kind of ['airing', 'seasons'] as const) {
+				if (entry.apiCheck?.[kind]?.result !== 'nokey') continue;
+				delete entry.apiCheck[kind];
+				changed = true;
+			}
+		}
+		if (!changed) return;
 		this.local.queueSave();
-		// decoding happens in the index; a rebuild picks up the new cache and emits the changed ids
-		await this.index.rebuild();
+		this.queueMissingSeasons(this.index.titles());
 	}
 
 	/** True (and a notice) when an episode toggle must wait for the season refill. */
@@ -947,22 +982,18 @@ export class DataManager {
 	}
 
 	/**
-	 * Reloads the airing pointer of a title from its API into the cache, at most every
-	 * AIRING_REFRESH_MS unless forced. Never writes the note.
+	 * Reloads the airing pointer of a title from its API into the cache through the shared queue.
+	 * The persisted last check (apiCheck.airing) sets the deadline; `force` skips only that. Never writes the note.
 	 */
 	async refreshAiring(id: string, force = false): Promise<void> {
 		const e = this.index.get(id);
-		if (e?.kind !== 'title' || this.airingInFlight.has(id)) return;
-		const refreshed = Date.parse(this.local.getCache(id)?.airing?.refreshedAt ?? '');
-		const last = Math.max(isNaN(refreshed) ? 0 : refreshed, this.airingAttempts.get(id) ?? 0);
-		if (!force && Date.now() - last < AIRING_REFRESH_MS) return;
-		this.airingAttempts.set(id, Date.now());
+		if (e?.kind !== 'title' || this.airingInFlight.has(id) || !this.apiCheckDue(id, 'airing', force)) return;
 		this.airingInFlight.add(id);
 		try {
-			const airing = await this.plugin.apiService.fetchAiring(e.entry);
-			if (!airing || this.index.get(id)?.kind !== 'title') return;
-			this.local.setCache(id, { airing });
-			this.notifyListeners();
+			const outcome = await this.apiQueue.enqueue(() => this.plugin.apiService.fetchAiring(e.entry));
+			if (this.index.get(id)?.kind !== 'title') return;
+			this.recordApiCheck(id, 'airing', outcome.status, outcome.status === 'ok' ? { airing: outcome.value } : {});
+			if (outcome.status === 'ok') this.notifyListeners();
 		} catch (err) {
 			console.warn(`WatchLog: could not refresh airing data of ${id}`, err);
 		} finally {

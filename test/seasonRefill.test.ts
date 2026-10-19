@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { setupDataManager, tick } from './helpers/setupDataManager';
+import type { ApiOutcome } from '../src/ApiService';
 import type { Season } from '../src/types';
 
 const DARK = '---\ntitle: Dark\ntype: TV Show\nstatus: Completed\nexternalId: tmdb:tv:70523\ntotalEpisodes: 16\n'
@@ -9,7 +10,7 @@ const TWO: Season[] = [{ name: 'Season 1', episodes: 8, offset: 0 }, { name: 'Se
 describe('season refill', () => {
 	it('second device: refills seasons, blocks toggles until then', async () => {
 		let release!: (s: Season[]) => void;
-		const fetchSeasons = vi.fn(() => new Promise<Season[]>((r) => { release = r; }));
+		const fetchSeasons = vi.fn(() => new Promise<ApiOutcome<Season[]>>((r) => { release = (value) => r({ status: 'ok', value }); }));
 		const { dm, f, local } = await setupDataManager({ 'W/TV Show/Dark.md': DARK }, { apiService: { fetchSeasons } });
 		expect(fetchSeasons).toHaveBeenCalledTimes(1);
 

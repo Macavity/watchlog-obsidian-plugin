@@ -67,6 +67,8 @@ export default class WatchLogPlugin extends Plugin {
 		layout: () => this.layout,
 	});
 	apiService: ApiService = new ApiService('', '');
+	/** TMDB/OMDb key snapshot of the last settings save; null before onload set it */
+	private apiKeys: string | null = null;
 	historyManager: HistoryManager = new HistoryManager(this, new HistoryStore(
 		this.app,
 		() => this.layout,
@@ -109,6 +111,7 @@ export default class WatchLogPlugin extends Plugin {
 			this.settings.steamApiKey,
 			this.settings.steamId,
 		);
+		this.apiKeys = [this.settings.tmdbApiKey, this.settings.omdbApiKey].join('\n');
 		this.dataManager.setHistoryManager(this.historyManager);
 		this.readingDataManager.setHistoryManager(this.historyManager);
 		this.gameDataManager.setHistoryManager(this.historyManager);
@@ -455,6 +458,10 @@ export default class WatchLogPlugin extends Plugin {
 		// keep the date formatters in step with the setting on every save
 		setActiveDateFormat(this.settings.dateFormat);
 		this.syncTypeNames();
+		// a changed key makes "no key" checks worth repeating
+		const keys = [this.settings.tmdbApiKey, this.settings.omdbApiKey].join('\n');
+		if (this.apiKeys !== null && keys !== this.apiKeys) this.dataManager.resetNoKeyChecks();
+		this.apiKeys = keys;
 		await persistSettings(this.settings, this.local, this.shared);
 	}
 

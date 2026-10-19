@@ -569,6 +569,20 @@ export function isAuthFailure(err: unknown): boolean {
 	return err instanceof ApiError && (err.reason === 'auth' || err.reason === 'not-enabled');
 }
 
+/**
+ * Result of a background check: transient = worth retrying soon (timeout, 429, network, 5xx),
+ * nokey = no usable credential, notfound = the source has nothing for this identity.
+ */
+export type ApiOutcome<T> = { status: 'ok'; value: T } | { status: 'transient' | 'nokey' | 'notfound' };
+
+function outcomeOfError(err: unknown): { status: 'transient' | 'nokey' | 'notfound' } {
+	if (err instanceof ApiError) {
+		if (err.reason === 'no-key' || err.reason === 'auth' || err.reason === 'not-enabled') return { status: 'nokey' };
+		if (err.reason === 'not-found') return { status: 'notfound' };
+	}
+	return { status: 'transient' };
+}
+
 /** Status check + JSON parse for a throw:false response. Throws ApiError on either failure. */
 export function readApiResponse(source: ApiSource, r: { status: number; text: string; json: unknown }): unknown {
 	if (r.status < 200 || r.status >= 300) {
@@ -864,6 +878,15 @@ export class ApiService {
 	}
 
 	async getAniListById(anilistId: number): Promise<AniListMedia | null> {
+		try {
+			return await this.queryAniListById(anilistId);
+		} catch {
+			return null;
+		}
+	}
+
+	/** Like getAniListById, but failures throw (background checks tell them apart). */
+	private async queryAniListById(anilistId: number): Promise<AniListMedia | null> {
 		const gql = `
 			query ($id: Int) {
 				Media(id: $id, type: ANIME) {
@@ -885,15 +908,11 @@ export class ApiService {
 				}
 			}
 		`;
-		try {
-			const res = await this.throttleAniList(() =>
-				this.postJsonWithTimeout(ANILIST_ENDPOINT, { query: gql, variables: { id: anilistId } }),
-			);
-			const data = res as AniListMediaResponse;
-			return data.data?.Media ?? null;
-		} catch {
-			return null;
-		}
+		const res = await this.throttleAniList(() =>
+			this.postJsonWithTimeout(ANILIST_ENDPOINT, { query: gql, variables: { id: anilistId } }),
+		);
+		const data = res as AniListMediaResponse;
+		return data.data?.Media ?? null;
 	}
 
 	// Jikan / MAL
@@ -1219,73 +1238,86 @@ export class ApiService {
 	async getTmdbTvDetails(tmdbId: string): Promise<MediaSearchResult | null> {
 		if (!this.tmdbApiKey) return null;
 		try {
-			const [detailData, extData] = await Promise.all([
-				this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}?append_to_response=videos,credits`, this.tmdbHeaders()),
-				this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}/external_ids`, this.tmdbHeaders()),
-			]);
-			const detail = detailData as TmdbTvDetail;
-			const ext = extData as TmdbExternalIds;
-			const imdbId = ext.imdb_id ?? '';
-
-			const rawSeasons = (detail.seasons ?? []).filter((s) => s.season_number !== 0);
-			let offset = 0;
-			const seasons: Season[] = rawSeasons.map((s) => {
-				const season: Season = { name: s.name, episodes: s.episode_count, offset };
-				offset += s.episode_count;
-				return season;
-			});
-			const totalEpisodes = seasons.reduce((sum, s) => sum + s.episodes, 0) || (detail.number_of_episodes ?? 0);
-
-			return {
-				imdbId: String(detail.id),
-				title: detail.name,
-				mediaType: 'tv',
-				episodes: totalEpisodes,
-				episodeDuration: (detail.episode_run_time ?? [])[0] ?? 45,
-				releaseDate: detail.first_air_date ?? '',
-				url: imdbId ? `https://www.imdb.com/title/${imdbId}` : '',
-				seasons,
-				trailerUrl: this.pickTmdbTrailer(detail.videos?.results),
-				// networks lead — HBO/Netflix is the brand; production_companies is shells
-				studio: tmdbCompanyNames([...(detail.networks ?? []), ...(detail.production_companies ?? [])]),
-				director: tmdbSeriesDirectorCredits(detail),
-				cast: tmdbCreditsToStored(detail.credits).cast,
-			};
+			return await this.loadTmdbTvDetails(tmdbId);
 		} catch (e) {
 			rethrowAuth(e);
 			return null;
 		}
 	}
 
+	/** TMDB tv details; failures throw. */
+	private async loadTmdbTvDetails(tmdbId: string): Promise<MediaSearchResult> {
+		const [detailData, extData] = await Promise.all([
+			this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}?append_to_response=videos,credits`, this.tmdbHeaders()),
+			this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}/external_ids`, this.tmdbHeaders()),
+		]);
+		const detail = detailData as TmdbTvDetail;
+		const ext = extData as TmdbExternalIds;
+		const imdbId = ext.imdb_id ?? '';
+
+		const rawSeasons = (detail.seasons ?? []).filter((s) => s.season_number !== 0);
+		let offset = 0;
+		const seasons: Season[] = rawSeasons.map((s) => {
+			const season: Season = { name: s.name, episodes: s.episode_count, offset };
+			offset += s.episode_count;
+			return season;
+		});
+		const totalEpisodes = seasons.reduce((sum, s) => sum + s.episodes, 0) || (detail.number_of_episodes ?? 0);
+
+		return {
+			imdbId: String(detail.id),
+			title: detail.name,
+			mediaType: 'tv',
+			episodes: totalEpisodes,
+			episodeDuration: (detail.episode_run_time ?? [])[0] ?? 45,
+			releaseDate: detail.first_air_date ?? '',
+			url: imdbId ? `https://www.imdb.com/title/${imdbId}` : '',
+			seasons,
+			trailerUrl: this.pickTmdbTrailer(detail.videos?.results),
+			// networks lead — HBO/Netflix is the brand; production_companies is shells
+			studio: tmdbCompanyNames([...(detail.networks ?? []), ...(detail.production_companies ?? [])]),
+			director: tmdbSeriesDirectorCredits(detail),
+			cast: tmdbCreditsToStored(detail.credits).cast,
+		};
+	}
+
 	// Season refill (a note from another device, no cached seasons)
 
 	/**
 	 * Season list by identity, from the same sources the add flow uses: AniList/Jikan episode count
-	 * (one season), TMDB tv details, or OMDb/TMDB for an IMDb link. null = movie, no source, no
-	 * seasons or the request failed.
+	 * (one season), TMDB tv details, or OMDb/TMDB for an IMDb link. notfound = movie, no source or
+	 * no seasons there; transient = the request failed; nokey = the needed key is missing or rejected.
 	 */
 	async fetchSeasons(
 		title: Pick<WatchLogTitle, 'anilistId' | 'malId' | 'tmdbId' | 'tmdbMediaType' | 'externalLink'>,
-	): Promise<Season[] | null> {
-		const single = (episodes: number | null | undefined): Season[] | null =>
-			episodes ? [{ name: 'Season 1', episodes, offset: 0 }] : null;
+	): Promise<ApiOutcome<Season[]>> {
+		const single = (episodes: number | null | undefined): ApiOutcome<Season[]> =>
+			episodes ? { status: 'ok', value: [{ name: 'Season 1', episodes, offset: 0 }] } : { status: 'notfound' };
+		const multi = (seasons: Season[] | undefined): ApiOutcome<Season[]> => {
+			const found = nonEmptySeasons(seasons);
+			return found ? { status: 'ok', value: found } : { status: 'notfound' };
+		};
 		try {
-			if (title.anilistId !== undefined) return single((await this.getAniListById(title.anilistId))?.episodes);
+			if (title.anilistId !== undefined) return single((await this.queryAniListById(title.anilistId))?.episodes);
 			if (title.malId !== undefined) {
 				const url = `${JIKAN_BASE}/anime/${title.malId}`;
 				const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanAnime };
 				return single(data.data?.episodes);
 			}
 			if (title.tmdbId !== undefined) {
-				if (title.tmdbMediaType !== 'tv') return null;
-				return nonEmptySeasons((await this.getTmdbTvDetails(String(title.tmdbId)))?.seasons);
+				if (title.tmdbMediaType !== 'tv') return { status: 'notfound' };
+				if (!this.tmdbApiKey) return { status: 'nokey' };
+				return multi((await this.loadTmdbTvDetails(String(title.tmdbId))).seasons);
 			}
 			const imdbId = imdbIdFromLink(title.externalLink);
-			if (!imdbId) return null;
+			if (!imdbId) return { status: 'notfound' };
+			if (!this.omdbApiKey && !this.tmdbApiKey) return { status: 'nokey' };
 			const full = this.omdbApiKey ? await this.getOmdbTvDetails(imdbId) : await this.getTmdbByImdbId(imdbId);
-			return full?.mediaType === 'tv' ? nonEmptySeasons(full.seasons) : null;
-		} catch {
-			return null;
+			// those lookups fold failures into null: retry soon rather than call it missing
+			if (!full) return { status: 'transient' };
+			return full.mediaType === 'tv' ? multi(full.seasons) : { status: 'notfound' };
+		} catch (err) {
+			return outcomeOfError(err);
 		}
 	}
 
@@ -1293,19 +1325,24 @@ export class ApiService {
 
 	/**
 	 * Next / last aired episode: AniList by `anilistId`, else TMDB tv by `tmdbId` (needs the key).
-	 * null = no source or the request failed; nothing is fetched without an id.
+	 * notfound = no source or no such title; nothing is fetched without an id.
 	 */
-	async fetchAiring(title: Pick<WatchLogTitle, 'anilistId' | 'tmdbId' | 'tmdbMediaType'>): Promise<Airing | null> {
-		if (title.anilistId !== undefined) return this.fetchAniListAiring(title.anilistId);
-		if (title.tmdbId !== undefined && title.tmdbMediaType === 'tv' && this.tmdbApiKey) {
-			return this.fetchTmdbAiring(title.tmdbId);
+	async fetchAiring(title: Pick<WatchLogTitle, 'anilistId' | 'tmdbId' | 'tmdbMediaType'>): Promise<ApiOutcome<Airing>> {
+		try {
+			if (title.anilistId !== undefined) return await this.fetchAniListAiring(title.anilistId);
+			if (title.tmdbId !== undefined && title.tmdbMediaType === 'tv') {
+				if (!this.tmdbApiKey) return { status: 'nokey' };
+				return await this.fetchTmdbAiring(title.tmdbId);
+			}
+			return { status: 'notfound' };
+		} catch (err) {
+			return outcomeOfError(err);
 		}
-		return null;
 	}
 
-	private async fetchAniListAiring(anilistId: number): Promise<Airing | null> {
-		const media = await this.getAniListById(anilistId);
-		if (!media) return null;
+	private async fetchAniListAiring(anilistId: number): Promise<ApiOutcome<Airing>> {
+		const media = await this.queryAniListById(anilistId);
+		if (!media) return { status: 'notfound' };
 		const airing: Airing = { refreshedAt: new Date().toISOString() };
 		const next = media.nextAiringEpisode;
 		if (typeof next?.episode === 'number') {
@@ -1315,28 +1352,24 @@ export class ApiService {
 		} else if (media.status === 'FINISHED' && typeof media.episodes === 'number' && media.episodes > 0) {
 			airing.lastEpisode = media.episodes;
 		}
-		return airing;
+		return { status: 'ok', value: airing };
 	}
 
-	private async fetchTmdbAiring(tmdbId: number): Promise<Airing | null> {
-		try {
-			const detail = await this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}`, this.tmdbHeaders()) as TmdbTvDetail;
-			const airing: Airing = { refreshedAt: new Date().toISOString() };
-			const next = detail.next_episode_to_air;
-			if (typeof next?.episode_number === 'number') {
-				airing.nextEpisode = next.episode_number;
-				if (typeof next.season_number === 'number') airing.nextSeason = next.season_number;
-				if (next.air_date) airing.nextAirDate = next.air_date;
-			}
-			const last = detail.last_episode_to_air;
-			if (typeof last?.episode_number === 'number') {
-				airing.lastEpisode = last.episode_number;
-				if (typeof last.season_number === 'number') airing.lastSeason = last.season_number;
-			}
-			return airing;
-		} catch {
-			return null;
+	private async fetchTmdbAiring(tmdbId: number): Promise<ApiOutcome<Airing>> {
+		const detail = await this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}`, this.tmdbHeaders()) as TmdbTvDetail;
+		const airing: Airing = { refreshedAt: new Date().toISOString() };
+		const next = detail.next_episode_to_air;
+		if (typeof next?.episode_number === 'number') {
+			airing.nextEpisode = next.episode_number;
+			if (typeof next.season_number === 'number') airing.nextSeason = next.season_number;
+			if (next.air_date) airing.nextAirDate = next.air_date;
 		}
+		const last = detail.last_episode_to_air;
+		if (typeof last?.episode_number === 'number') {
+			airing.lastEpisode = last.episode_number;
+			if (typeof last.season_number === 'number') airing.lastSeason = last.season_number;
+		}
+		return { status: 'ok', value: airing };
 	}
 
 	hasTmdbKey(): boolean {
