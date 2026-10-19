@@ -65,7 +65,7 @@ describe('migrateV1', () => {
 		expect('statuses' in data.settings).toBe(false);
 		expect(data.settings.gamesFilters).toMatchObject({ statusExclude: ['Dropped'] });
 		for (const [path, content] of f.files) expect(content, path).not.toMatch(/SecretValue|76561190000000000/);
-		expect(data.cache['Movie/A']).toMatchObject({ posterUrl: 'https://img.example/a.jpg', tmdbId: 1, director: ['Some Director'] });
+		expect(data.cache['Movie/A']).toMatchObject({ tmdbId: 1, director: ['Some Director'] });
 		expect(data.cache['TV Show/Dark']?.seasons).toHaveLength(2);
 		expect(data.ui.pinnedGroup).toBe('Marvel');
 		expect(data.ui.collapsedSeasons).toEqual({ 'TV Show/Dark': [0] });

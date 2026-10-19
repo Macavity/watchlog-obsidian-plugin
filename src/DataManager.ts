@@ -39,6 +39,10 @@ const TITLE_KEYS: readonly string[] = [
 	...AIRTIME_KEYS,
 ];
 
+function isLegacyCachedPoster(url: string | undefined): boolean {
+	return !!url && url !== 'none';
+}
+
 /** The note-side schedule of an Upcoming entry; the 'once' date lives in the note's releaseDate. */
 function toEntryAirtime(e: AirtimeEntry): EntryAirtime {
 	const s = e.schedule;
@@ -187,7 +191,8 @@ export class DataManager {
 		if (!service) return;
 		for (const t of titles) {
 			if (t.maybe || this.posterRequested.has(t.id)) continue;
-			if (t.manualPosterUrl?.trim() || this.local.getCache(t.id)?.posterUrl) continue;
+			// a cached URL is legacy (posters live in the note): queue it so the note gets it
+			if (t.posterUrl && !isLegacyCachedPoster(this.local.getCache(t.id)?.posterUrl)) continue;
 			const identified = !!t.tmdbId || !!t.malId || !!t.anilistId || externalIdFromLink(t.externalLink) !== null;
 			if (!identified) continue;
 			this.posterRequested.add(t.id);
@@ -305,15 +310,46 @@ export class DataManager {
 	}
 
 	/**
-	 * Silent poster URL update: memory now, debounced cache save (5s). No notify — the card that
-	 * triggered the fetch updates its own <img>.
+	 * Silent poster update, no notify — the card that triggered the fetch updates its own <img>.
+	 * A URL goes into the note's `poster` field, but only when it is empty (E12), unless `overwrite`
+	 * (the explicit refresh). 'none' (nothing found) is a cache marker for a title without a poster.
 	 */
-	updatePosterUrl(titleId: string, url: string): void {
+	async updatePosterUrl(titleId: string, url: string, overwrite = false): Promise<void> {
 		const title = this.getTitle(titleId);
 		if (!title) return;
-		title.posterUrl = url;
-		this.local.data.cache[titleId] = { ...this.local.getCache(titleId), posterUrl: url };
-		this.schedulePosterSave();
+		const hasPoster = !!title.posterUrl && title.posterUrl !== 'none';
+		if (url === 'none') {
+			if (hasPoster) return;
+			title.posterUrl = url;
+			this.local.data.cache[titleId] = { ...this.local.getCache(titleId), posterUrl: url };
+			this.schedulePosterSave();
+			return;
+		}
+		if (!url || (hasPoster && !overwrite && !isLegacyCachedPoster(this.local.getCache(titleId)?.posterUrl))) return;
+		if (this.dirty.has(titleId) || this.pendingMdTitleIds.has(titleId)) {
+			// the pending write carries it
+			title.posterUrl = url;
+			return;
+		}
+		const file = this.fileOf(titleId);
+		if (!file) return;
+		await this.processFrontMatter(file, title, (raw) => {
+			const own = [raw.poster, raw.manualPosterUrl].find((v): v is string => typeof v === 'string' && v.trim() !== '');
+			if (own && !overwrite) {
+				title.posterUrl = own;
+				return;
+			}
+			raw.poster = url;
+			delete raw.manualPosterUrl;
+			title.posterUrl = url;
+		});
+		const cached = this.local.getCache(titleId);
+		if (isLegacyCachedPoster(cached?.posterUrl)) {
+			const rest = { ...cached };
+			delete rest.posterUrl;
+			this.local.data.cache[titleId] = rest;
+			this.local.queueSave();
+		}
 	}
 
 	/** Silent TMDB id + collection cache. tmdbId null = not a movie, keep the verdict only. */
@@ -1680,6 +1716,9 @@ export class DataManager {
 	/** Stores the title's API-derived fields in data.json when they changed. */
 	private syncCache(t: WatchLogTitle): void {
 		const next = splitCache(t);
+		// a legacy cached poster stays until the note holds the URL
+		const legacyPoster = this.local.getCache(t.id)?.posterUrl;
+		if (isLegacyCachedPoster(legacyPoster) && legacyPoster === t.posterUrl) next.posterUrl = legacyPoster;
 		// airing is not a title field; it lives only in the cache
 		const airing = this.local.getCache(t.id)?.airing;
 		if (airing) next.airing = airing;

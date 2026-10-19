@@ -44,9 +44,9 @@ export interface WatchLogTitle {
 	favorite?: boolean;
 	/** ISO stamp of the last favorite toggle-on; absent on pre-field favorites */
 	dateFavorited?: string;
-	/** '' = unfetched, 'none' = nothing found, else a URL */
+	/** note field `poster`. '' = unfetched, 'none' = nothing found (cache only), else a URL */
 	posterUrl?: string;
-	/** override — wins over posterUrl when non-empty */
+	/** legacy (schema 1 data, migration only): wins over posterUrl; v2 notes use `poster` */
 	manualPosterUrl?: string;
 	/** '' = unfetched, 'none' = source has no trailer (e.g. OMDb), else a YouTube URL */
 	trailerUrl?: string;
@@ -79,7 +79,7 @@ export interface WatchLogTitle {
 	overrides?: TitleOverrides;
 }
 
-/** Note-side overrides of API data; poster and trailer overrides are manualPosterUrl / manualTrailerUrl. */
+/** Note-side overrides of API data; the trailer override is manualTrailerUrl. */
 export interface TitleOverrides {
 	director?: string[];
 	cast?: string[];
@@ -577,8 +577,6 @@ export interface Book {
 	chaptersRead: number;
 	totalChapters: number;
 	coverUrl: string;
-	/** the note holds its own coverUrl: a user override written back; otherwise coverUrl is the cached API cover */
-	coverOverride?: boolean;
 	googleBooksId: string;
 	externalLink?: string;
 	vaultPage: string;
@@ -607,8 +605,6 @@ export interface Manga {
 	volumesRead: number;
 	totalVolumes: number;
 	coverUrl: string;
-	/** the note holds its own coverUrl: a user override written back; otherwise coverUrl is the cached API cover */
-	coverOverride?: boolean;
 	malId: string;
 	externalLink?: string;
 	vaultPage: string;
@@ -759,8 +755,6 @@ export interface Game {
 	coop: boolean;
 	multiplayer: boolean;
 	coverUrl: string;
-	/** the note holds its own coverUrl: a user override written back; otherwise coverUrl is the cached API cover */
-	coverOverride?: boolean;
 	/**
 	 * Which games API resolved this entry ('' = manual or pre-field) and its id there,
 	 * stored as a string. Lets a cover be re-fetched by id instead of by title.
@@ -1412,7 +1406,7 @@ export function getCommunityRating(title: WatchLogTitle): {
 	};
 }
 
-/** Poster URL to render — a non-empty `manualPosterUrl` wins over `posterUrl`. */
+/** Poster URL to render; a legacy `manualPosterUrl` (schema 1 data) wins over `posterUrl`. */
 export function getDisplayPoster(title: WatchLogTitle): string {
 	if (title.manualPosterUrl && title.manualPosterUrl.trim() !== '') {
 		return title.manualPosterUrl;

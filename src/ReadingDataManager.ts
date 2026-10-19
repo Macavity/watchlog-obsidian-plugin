@@ -284,14 +284,29 @@ export class ReadingDataManager {
 	// Silent cover updates
 
 	/**
-	 * Silent cover URL update for the lazy Cards re-fetch: memory and cache only, never the note (E9),
-	 * no notify — the card swaps its own <img>, so the grid is not rebuilt and scroll survives.
+	 * Silent cover URL update for the lazy Cards re-fetch: written to the note's `coverUrl` only when
+	 * that is empty (E12), no notify — the card swaps its own <img>, so the grid is not rebuilt and
+	 * scroll survives.
 	 */
-	updateCoverUrl(kind: ReadingKind, id: string, url: string): void {
+	async updateCoverUrl(kind: ReadingKind, id: string, url: string): Promise<void> {
 		const item = kind === 'book' ? this.getBook(id) : this.getManga(id);
-		if (!item) return;
-		if (!item.coverOverride) item.coverUrl = url;
-		this.local.setCache(id, { coverUrl: url });
+		if (!item || !url || item.coverUrl) return;
+		if (this.dirty.has(id)) {
+			// the pending write carries it
+			item.coverUrl = url;
+			return;
+		}
+		const file = this.fileOf(id);
+		if (!file) return;
+		await this.processFrontMatter(file, kind, item, (raw) => {
+			const own = typeof raw.coverUrl === 'string' ? raw.coverUrl.trim() : '';
+			if (own) {
+				item.coverUrl = own;
+				return;
+			}
+			raw.coverUrl = url;
+			item.coverUrl = url;
+		});
 	}
 
 	/**
@@ -299,15 +314,18 @@ export class ReadingDataManager {
 	 * cover or ID). The resolved source ID is identity data of the note, which a background fetch does
 	 * not write; only the cover is kept.
 	 */
-	updateCoverAndSource(kind: ReadingKind, id: string, url: string, _sourceId: string): void {
-		this.updateCoverUrl(kind, id, url);
+	updateCoverAndSource(kind: ReadingKind, id: string, url: string, _sourceId: string): Promise<void> {
+		return this.updateCoverUrl(kind, id, url);
 	}
 
-	/** A cover that is not a note override is API data and lives in the cache only (E9). */
-	private syncCover(item: Item): void {
-		if (item.coverOverride) return;
-		if ((this.local.getCache(item.id)?.coverUrl ?? '') === item.coverUrl) return;
-		this.local.setCache(item.id, { coverUrl: item.coverUrl });
+	/** Covers live in the note (E12); a cached one is legacy and goes once the note has been written. */
+	private dropLegacyCover(id: string): void {
+		const cached = this.local.getCache(id);
+		if (cached?.coverUrl === undefined) return;
+		const rest = { ...cached };
+		delete rest.coverUrl;
+		this.local.data.cache[id] = rest;
+		this.local.queueSave();
 	}
 
 	// Reading → Upcoming and release status
@@ -361,7 +379,8 @@ export class ReadingDataManager {
 			...(src.groups ? { groups: [...src.groups] } : {}),
 			vaultPage: this.layout().pathFromId(src.id),
 		} as Item;
-		if (!view.coverOverride) view.coverUrl = this.local.getCache(src.id)?.coverUrl ?? '';
+		// a cover cached by an earlier version shows until the note is written with it
+		if (!view.coverUrl) view.coverUrl = this.local.getCache(src.id)?.coverUrl ?? '';
 		this.applyReleaseStatus(view);
 		this.views.set(src.id, { src, view });
 		setBaseline(view, src);
@@ -701,7 +720,7 @@ export class ReadingDataManager {
 
 	/** Cache + optimistic index update after an own write; `item` stays the UI's copy. */
 	private afterWrite(kind: ReadingKind, item: Item, fm: Fm): void {
-		this.syncCover(item);
+		this.dropLegacyCover(item.id);
 		const stored = kind === 'book' ? decodeBook(item.id, fm).entry : decodeManga(item.id, fm).entry;
 		this.index.applyLocal(kind === 'book'
 			? { kind: 'book', entry: stored as Book }
@@ -798,7 +817,6 @@ export class ReadingDataManager {
 			// the copy now holds what the note holds for every field it knows
 			if (ok) setBaseline(item, structuredClone(item));
 		} else {
-			this.syncCover(item);
 			if (src) this.views.set(item.id, { src, view: item });
 		}
 	}

@@ -183,6 +183,7 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 	if (unmappedSkipped.length > 0) title.unmappedSkipped = unmappedSkipped;
 
 	// cache fields
+	// the note's poster wins (set below); a cached URL is legacy, 'none' the fetch-failed marker
 	if (c.posterUrl !== undefined) title.posterUrl = c.posterUrl;
 	if (c.trailerUrl !== undefined) title.trailerUrl = c.trailerUrl;
 	if (c.director) title.director = c.director;
@@ -219,9 +220,10 @@ export function decodeTitle(id: string, fm: Record<string, unknown>, cache: Entr
 	const groups = nonEmpty(r.list('groups'));
 	if (groups) title.groups = groups;
 
-	// API fields in the note are user overrides (E9); `manualPosterUrl`/`manualTrailerUrl` are older names
-	const manualPoster = r.str('poster') || r.str('manualPosterUrl');
-	if (manualPoster) title.manualPosterUrl = manualPoster;
+	// the poster is a plain note field (E12; `manualPosterUrl` is the older name); other API fields in the
+	// note are user overrides (E9; `manualTrailerUrl` is an older name)
+	const poster = r.str('poster') || r.str('manualPosterUrl');
+	if (poster) title.posterUrl = poster;
 	const manualTrailer = r.str('trailer') || r.str('manualTrailerUrl');
 	if (manualTrailer) title.manualTrailerUrl = manualTrailer;
 	const overrides: TitleOverrides = {};
@@ -309,7 +311,7 @@ export function encodeTitle(t: WatchLogTitle, progress: number): Record<string, 
 		const names = o?.[field];
 		if (names && names.length > 0) out[field] = names;
 	}
-	if (t.manualPosterUrl?.trim()) out.poster = t.manualPosterUrl;
+	if (t.posterUrl && t.posterUrl !== 'none') out.poster = t.posterUrl;
 	if (t.manualTrailerUrl?.trim()) out.trailer = t.manualTrailerUrl;
 	if (t.externalLink) out.externalLink = t.externalLink;
 	if (t.pinned) out.pinned = true;
@@ -348,10 +350,10 @@ export function encodeTitle(t: WatchLogTitle, progress: number): Record<string, 
 	return out;
 }
 
-/** API-derived fields that live in data.json; seasons only when not overridden in the note. */
+/** API-derived fields that live in data.json (posters only as the 'none' marker); seasons only when not overridden in the note. */
 export function splitCache(t: WatchLogTitle): EntryCache {
 	const c: EntryCache = {};
-	if (t.posterUrl !== undefined) c.posterUrl = t.posterUrl;
+	if (t.posterUrl === 'none') c.posterUrl = t.posterUrl;
 	if (t.trailerUrl !== undefined) c.trailerUrl = t.trailerUrl;
 	if (t.director) c.director = t.director;
 	if (t.cast) c.cast = t.cast;

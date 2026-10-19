@@ -1410,12 +1410,11 @@ export class AirtimeTab {
 			if (title) {
 				cell.dataset.titleId = title.id;
 				const display = getDisplayPoster(title);
-				const isManual = !!(title.manualPosterUrl && title.manualPosterUrl.trim() !== '');
-				const needsPoster = !isManual && !title.posterUrl && title.posterUrl !== 'none';
+				const needsPoster = !title.posterUrl;
 				if (display && display.startsWith('http')) {
 					img.onerror = () => {
 						card.removeClass('has-poster');
-						if (!isManual) this.dataManager.updatePosterUrl(title.id, 'none');
+						void this.dataManager.updatePosterUrl(title.id, 'none');
 					};
 					card.addClass('has-poster');
 					img.src = display;
@@ -1539,9 +1538,8 @@ export class AirtimeTab {
 
 			const title = this.dataManager.getTitle(titleId);
 			if (!title) continue;
-			// same gates as the Watchlist cards: manual override wins; 'none' means tried, nothing found
-			if (title.manualPosterUrl && title.manualPosterUrl.trim() !== '') continue;
-			if (title.posterUrl || title.posterUrl === 'none') continue;
+			// same gate as the Watchlist cards: a poster is set, or 'none' means tried, nothing found
+			if (title.posterUrl) continue;
 
 			const placeholder = cell.querySelector('.wl-card-poster-placeholder');
 			placeholder?.addClass('is-loading');
@@ -1553,7 +1551,7 @@ export class AirtimeTab {
 				const img = cell.querySelector<HTMLImageElement>('.wl-card-poster');
 				if (!card || !img) return;
 				img.onload = () => card.addClass('has-poster');
-				img.onerror = () => this.dataManager.updatePosterUrl(titleId, 'none');
+				img.onerror = () => void this.dataManager.updatePosterUrl(titleId, 'none');
 				img.src = url;
 			});
 		}

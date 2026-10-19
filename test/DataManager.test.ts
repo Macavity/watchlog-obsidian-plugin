@@ -70,21 +70,11 @@ describe('DataManager on vault storage', () => {
 
 	it('removes the note and its cache entry', async () => {
 		const { dm, f, local } = await setupDataManager({ 'W/Movie/A.md': '---\ntitle: A\ntype: Movie\n---\n' });
-		dm.updatePosterUrl('Movie/A', 'p');
+		await dm.updatePosterUrl('Movie/A', 'https://p');
 		await dm.removeTitle('Movie/A');
 		expect(f.files.has('W/Movie/A.md')).toBe(false);
 		expect(local.getCache('Movie/A')).toBeUndefined();
 		expect(dm.getTitles()).toEqual([]);
-	});
-
-	it('keeps API data in the cache, not the note', async () => {
-		const { dm, f, local } = await setupDataManager({ 'W/Movie/A.md': '---\ntitle: A\ntype: Movie\n---\n' });
-		dm.updatePosterUrl('Movie/A', 'https://img/p.jpg');
-		dm.flushPosterSave();
-		await local.flush();
-		expect(local.getCache('Movie/A')?.posterUrl).toBe('https://img/p.jpg');
-		expect(f.files.get('W/Movie/A.md')).not.toContain('img/p.jpg');
-		expect(dm.getTitle('Movie/A')?.posterUrl).toBe('https://img/p.jpg');
 	});
 
 	it('picks up external edits and notifies listeners', async () => {

@@ -121,8 +121,7 @@ function encodeTail(e: Book | Manga, kind: 'book' | 'manga', out: Fm): void {
 	out.releaseDate = e.releaseDate ?? null;
 	out.dateAdded = e.dateAdded;
 	out.dateModified = e.dateModified;
-	// a cover only in the cache is the API's; one from the note is the user's (E9)
-	if (e.coverOverride && e.coverUrl) out.coverUrl = e.coverUrl;
+	if (e.coverUrl) out.coverUrl = e.coverUrl;
 	if (e.externalLink) out.externalLink = e.externalLink;
 	if (e.groups?.length) out.groups = [...e.groups];
 	encodeAirtime(e.airtime, out);
@@ -162,7 +161,6 @@ export function decodeBook(id: string, fm: Fm): Decoded<Book> {
 		groups: r.list('groups'),
 		airtime: decodeAirtime(r),
 	};
-	if (entry.coverUrl) entry.coverOverride = true;
 	if (!entry.favorite) delete entry.favorite;
 	if (!entry.dateFavorited) delete entry.dateFavorited;
 	if (!entry.externalLink) delete entry.externalLink;
@@ -221,7 +219,6 @@ export function decodeManga(id: string, fm: Fm): Decoded<Manga> {
 		groups: r.list('groups'),
 		airtime: decodeAirtime(r),
 	};
-	if (entry.coverUrl) entry.coverOverride = true;
 	if (!entry.favorite) delete entry.favorite;
 	if (!entry.dateFavorited) delete entry.dateFavorited;
 	if (!entry.externalLink) delete entry.externalLink;

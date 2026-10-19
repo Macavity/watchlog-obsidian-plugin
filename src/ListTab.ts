@@ -755,9 +755,8 @@ export class ListTab {
 			}
 			const title = titleById.get(titleId);
 			if (!title) continue;
-			// skip manual overrides and resolved posters ('none' = tried, nothing found)
-			if (title.manualPosterUrl && title.manualPosterUrl.trim() !== '') continue;
-			if (title.posterUrl || title.posterUrl === 'none') continue;
+			// skip titles with a poster and resolved ones ('none' = tried, nothing found)
+			if (title.posterUrl) continue;
 
 			const placeholder = card.querySelector('.wl-card-poster-placeholder');
 			placeholder?.addClass('is-loading');
@@ -780,7 +779,7 @@ export class ListTab {
 		img.onerror = () => {
 			const titleId = card.dataset.titleId;
 			if (titleId) {
-				this.dataManager.updatePosterUrl(titleId, 'none');
+				void this.dataManager.updatePosterUrl(titleId, 'none');
 			}
 		};
 		img.src = url;
@@ -816,9 +815,8 @@ export class ListTab {
 			: '#888780';
 
 		const display = getDisplayPoster(title);
-		const isManual = !!(title.manualPosterUrl && title.manualPosterUrl.trim() !== '');
 		// missing (undefined / null / "") needs a fetch; the 'none' sentinel does not
-		const needsPoster = !isManual && !title.posterUrl && title.posterUrl !== 'none';
+		const needsPoster = !title.posterUrl;
 
 		// no bar when episodes are unknown
 		const total = title.totalEpisodes;
@@ -846,9 +844,9 @@ export class ListTab {
 			year: title.releaseDate?.match(/^(\d{4})/)?.[1],
 			progressRatio,
 			textUnder: this.plugin.isCardTextUnder('watchlist'),
-			// only mark the auto-fetched URL 'none' — leave a manual choice alone
+			// marks only a title without a poster in its note 'none'
 			onPosterError: () => {
-				if (!isManual) this.dataManager.updatePosterUrl(title.id, 'none');
+				void this.dataManager.updatePosterUrl(title.id, 'none');
 			},
 			menuItems: [
 				{ label: 'Edit title', onClick: () => this.openEditModalForTitle(title.id) },
@@ -868,7 +866,6 @@ export class ListTab {
 	private refreshPosterForCard(card: HTMLElement, titleId: string): void {
 		const fresh = this.dataManager.getTitle(titleId);
 		if (!fresh) return;
-		this.dataManager.updatePosterUrl(titleId, '');
 		card.dataset.needsPoster = 'true';
 
 		const img = card.querySelector<HTMLImageElement>('.wl-card-poster');
@@ -883,7 +880,8 @@ export class ListTab {
 			placeholder.addClass('is-loading');
 		}
 
-		void this.plugin.posterService.enqueue(fresh).then((url) => {
+		// the explicit refresh replaces the poster in the note
+		void this.plugin.posterService.enqueue(fresh, true).then((url) => {
 			placeholder?.removeClass('is-loading');
 			if (url) this.applyPosterToCard(card, url);
 		});

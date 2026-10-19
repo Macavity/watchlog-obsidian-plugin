@@ -384,39 +384,36 @@ class Migration {
 			const id = layout.idFromPath(path);
 			this.ids.book.set(b.id, id);
 			const book = extras({ ...b, id, vaultPage: `${id}.md` }, `book:${b.id}`);
-			await this.writeEntry(path, id, encodeBook(book), b.coverUrl, '## Notes\n\n\n## Quotes\n');
+			await this.writeEntry(path, encodeBook(book), '## Notes\n\n\n## Quotes\n');
 		}
 		for (const m of reading.manga) {
 			const path = this.claim(layout.notePath('manga', m.title));
 			const id = layout.idFromPath(path);
 			this.ids.manga.set(m.id, id);
 			const manga = extras({ ...m, id, vaultPage: `${id}.md` }, `manga:${m.id}`);
-			await this.writeEntry(path, id, encodeManga(manga), m.coverUrl, '## Notes\n\n\n## Quotes\n');
+			await this.writeEntry(path, encodeManga(manga), '## Notes\n\n\n## Quotes\n');
 		}
 		for (const g of games.games) {
 			const path = this.claim(layout.notePath('game', g.title));
 			const id = layout.idFromPath(path);
 			this.ids.game.set(g.id, id);
 			const game = extras({ ...g, id, vaultPage: `${id}.md` }, `game:${g.id}`);
-			await this.writeEntry(path, id, encodeGame(game), g.coverUrl, '## Notes\n');
+			await this.writeEntry(path, encodeGame(game), '## Notes\n');
 		}
 	}
 
-	/**
-	 * Book, manga or game: the legacy cover goes to the cache (E9). On a second device only the cover
-	 * the original plugin wrote is removed from an existing note; no note is created or filled.
-	 */
-	private async writeEntry(path: string, id: string, fm: Fm, coverUrl: string, body: string): Promise<void> {
-		const legacy: Fm = coverUrl ? { coverUrl } : {};
-		if (coverUrl) this.cache[id] = { coverUrl };
-		if (!this.joined) await this.writeNote(path, fm, body, legacy);
-		else if (this.ctx.app.vault.getAbstractFileByPath(path) instanceof TFile) await this.writeNote(path, {}, body, legacy);
+	/** Book, manga or game; the cover stays a note field (E12). On a second device nothing is created or filled. */
+	private async writeEntry(path: string, fm: Fm, body: string): Promise<void> {
+		if (!this.joined) await this.writeNote(path, fm, body);
 	}
 
 	private async writeTitle(path: string, title: WatchLogTitle): Promise<void> {
 		// without an API identity nothing can refetch the seasons: they belong in the note
 		const fetchable = !!title.tmdbId || !!title.malId || !!title.anilistId || externalIdFromLink(title.externalLink) !== null;
 		if (!fetchable && title.seasons.length > 0) title.seasonsOverride = true;
+		// the poster is a note field (E12): the legacy manual one wins over the fetched one
+		title.posterUrl = getDisplayPoster(title);
+		delete title.manualPosterUrl;
 		const fm = encodeTitle(title, progressOf(title));
 		if (this.joined && !title.maybe) {
 			// another device migrated: only progress for notes that exist, the cache for those
@@ -581,8 +578,6 @@ function legacyApiValues(t: WatchLogTitle): Fm {
 		const names = getTitleCredits(t, field);
 		if (names.length > 0) out[field] = names;
 	}
-	const poster = getDisplayPoster(t);
-	if (poster && poster !== 'none') out.poster = poster;
 	const trailer = getDisplayTrailer(t);
 	if (trailer) out.trailer = trailer;
 	return out;

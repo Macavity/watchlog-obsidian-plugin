@@ -21,6 +21,8 @@ const OMDB_DELAY_MS = 100;
 interface QueueItem {
 	title: WatchLogTitle;
 	resolve: (url: string | null) => void;
+	/** explicit refresh: replace the title's poster */
+	overwrite: boolean;
 }
 
 interface JikanImagesShape {
@@ -98,12 +100,13 @@ export class PosterService {
 
 	/**
 	 * Enqueue a poster fetch for a title. Resolves with the URL or null; the result is also persisted
-	 * via DataManager.updatePosterUrl (silent + debounced).
+	 * via DataManager.updatePosterUrl: into the note when its poster is empty, or always with `overwrite`
+	 * (the explicit refresh, which also ignores the poster the title has).
 	 */
-	enqueue(title: WatchLogTitle): Promise<string | null> {
+	enqueue(title: WatchLogTitle, overwrite = false): Promise<string | null> {
 		return new Promise((resolve) => {
 			if (this.disposed) { resolve(null); return; }
-			this.queue.push({ title, resolve });
+			this.queue.push({ title, resolve, overwrite });
 			void this.processQueue();
 		});
 	}
@@ -124,17 +127,12 @@ export class PosterService {
 			if (this.disposed) break;
 			const item = this.queue.shift();
 			if (!item) break;
-			// manual override: don't auto-fetch, don't touch posterUrl
-			if (item.title.manualPosterUrl && item.title.manualPosterUrl.trim() !== '') {
-				item.resolve(item.title.manualPosterUrl);
-				continue;
-			}
 			try {
-				const url = await this.fetchPosterForTitle(item.title);
+				const url = await this.fetchPosterForTitle(item.title, item.overwrite);
 				if (this.disposed) { item.resolve(null); break; }
 				// 'none' only for a clean "the API has no poster" — see the catch
 				const finalUrl = url || 'none';
-				this.dataManager.updatePosterUrl(item.title.id, finalUrl);
+				await this.dataManager.updatePosterUrl(item.title.id, finalUrl, item.overwrite);
 				item.resolve(url);
 			} catch {
 				// a rejected key or a dropped connection must NOT be cached as 'none': that is
@@ -164,10 +162,12 @@ export class PosterService {
 		return 0;
 	}
 
-	private async fetchPosterForTitle(title: WatchLogTitle): Promise<string | null> {
-		// already cached
-		if (title.posterUrl && title.posterUrl.startsWith('http')) return title.posterUrl;
-		if (title.posterUrl === 'none') return null;
+	private async fetchPosterForTitle(title: WatchLogTitle, overwrite: boolean): Promise<string | null> {
+		// the title already has one (a refresh looks it up again)
+		if (!overwrite) {
+			if (title.posterUrl && title.posterUrl.startsWith('http')) return title.posterUrl;
+			if (title.posterUrl === 'none') return null;
+		}
 
 		const settings = this.getSettings();
 		const group = getApiGroupForType(title.type, settings.typeApiMapping);

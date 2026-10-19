@@ -115,7 +115,7 @@ export class EditTitleModal extends Modal {
 		this.fieldLink = title.externalLink;
 		this.fieldSeasonsText = seasonsToText(title.seasons);
 		this.fieldReview = title.review ?? '';
-		this.fieldPosterUrl = title.manualPosterUrl ?? '';
+		this.fieldPosterUrl = title.posterUrl === 'none' ? '' : title.posterUrl ?? '';
 		this.fieldTrailerUrl = title.manualTrailerUrl ?? '';
 		// seed the group dropdown with the title's current group
 		this.originalGroupId =
@@ -215,7 +215,7 @@ export class EditTitleModal extends Modal {
 		linkInput.value = this.fieldLink;
 		linkInput.addEventListener('input', () => { this.fieldLink = linkInput.value; });
 
-		// poster URL (manual override)
+		// poster URL (the note's `poster` field)
 		const posterRow = makeRow('Poster URL');
 		const posterStack = posterRow.createDiv({ cls: 'wl-modal-input-stack' });
 		const posterInput = posterStack.createEl('input', {
@@ -226,7 +226,7 @@ export class EditTitleModal extends Modal {
 		posterInput.addEventListener('input', () => { this.fieldPosterUrl = posterInput.value; });
 		posterStack.createDiv({
 			cls: 'wl-modal-info',
-			text: 'Override the auto-fetched cover. Leave blank to let WatchLog fetch one again.',
+			text: 'Stored in the note. Leave blank to let WatchLog fetch one again.',
 		});
 
 		// trailer URL (manual override)
@@ -385,7 +385,7 @@ export class EditTitleModal extends Modal {
 			episodeDuration: this.fieldDuration,
 			externalLink: this.fieldLink,
 			seasons,
-			manualPosterUrl: this.fieldPosterUrl.trim(),
+			posterUrl: this.fieldPosterUrl.trim() || (this.original.posterUrl === 'none' ? 'none' : ''),
 			manualTrailerUrl: this.fieldTrailerUrl.trim(),
 		};
 

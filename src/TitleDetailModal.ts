@@ -454,14 +454,13 @@ export class TitleDetailModal extends Modal {
 		};
 
 		const display = getDisplayPoster(this.title);
-		const isManual = !!(this.title.manualPosterUrl && this.title.manualPosterUrl.trim() !== '');
 		if (display && display.startsWith('http')) {
 			showImg(display);
 			img.onerror = () => {
 				showPlaceholder();
-				if (!isManual) void this.dataManager.updatePosterUrl(this.title.id, 'none');
+				void this.dataManager.updatePosterUrl(this.title.id, 'none');
 			};
-		} else if (!isManual && this.title.posterUrl === '') {
+		} else if (this.title.posterUrl === '') {
 			placeholder.addClass('is-loading');
 			void this.plugin.posterService?.enqueue(this.title).then((url) => {
 				placeholder.removeClass('is-loading');
@@ -1415,14 +1414,13 @@ export function buildTitleCardElement(
 	};
 
 	const display = getDisplayPoster(title);
-	const isManual = !!(title.manualPosterUrl && title.manualPosterUrl.trim() !== '');
 	if (display && display.startsWith('http')) {
 		showImg(display);
 		img.onerror = () => {
 			showPlaceholder();
-			if (!isManual) plugin.dataManager.updatePosterUrl(title.id, 'none');
+			void plugin.dataManager.updatePosterUrl(title.id, 'none');
 		};
-	} else if (!isManual && title.posterUrl === '') {
+	} else if (title.posterUrl === '') {
 		placeholder.addClass('is-loading');
 		void plugin.posterService?.enqueue(title).then((url) => {
 			placeholder.removeClass('is-loading');

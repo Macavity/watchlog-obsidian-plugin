@@ -1322,8 +1322,8 @@ export class ReadingTab {
 					// Persist silently (no re-render) and update this card's <img> directly.
 					// When a title-based lookup resolved a new ID, store it too so future
 					// loads use the cheap ID path instead of re-searching.
-					if (sourceId) this.readingData.updateCoverAndSource(kind, id, url, sourceId);
-					else this.readingData.updateCoverUrl(kind, id, url);
+					if (sourceId) void this.readingData.updateCoverAndSource(kind, id, url, sourceId);
+					else void this.readingData.updateCoverUrl(kind, id, url);
 					this.applyCoverToCard(card, url, item.title);
 				} else {
 					this.coverFetchFailed.add(id);
@@ -1562,7 +1562,7 @@ export class ReadingTab {
 					}
 					const fresh = this.readingData.getBook(book.id);
 					if (!fresh) return;
-					await this.readingData.updateBook({ ...fresh, coverUrl: result.coverUrl, coverOverride: false });
+					await this.readingData.updateBook({ ...fresh, coverUrl: result.coverUrl });
 					new Notice('Cover refreshed.');
 				} catch (err) {
 					new Notice(apiErrorMessage(err));
@@ -1583,7 +1583,7 @@ export class ReadingTab {
 					}
 					const fresh = this.readingData.getManga(manga.id);
 					if (!fresh) return;
-					await this.readingData.updateManga({ ...fresh, coverUrl: result.coverUrl, coverOverride: false });
+					await this.readingData.updateManga({ ...fresh, coverUrl: result.coverUrl });
 					new Notice('Cover refreshed.');
 				} catch {
 					new Notice('Failed to refresh cover.');

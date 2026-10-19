@@ -5,7 +5,6 @@ import { apiErrorMessage, rawgResizedCover, steamAppIdFromUrl, type GameSearchRe
 import { Game, GameGroup, GAME_AUTO_STATUS } from './types';
 import { renderSearchResultRow } from './SearchThumbnail';
 import { LibraryIndex, gameResultIdKeys } from './LibraryIndex';
-import { isCoverOverride } from './coverOverride';
 import { renderModePill } from './ModePill';
 import { renderTagChips } from './StatusDropdown';
 import { createDatePicker } from './DatePicker';
@@ -64,7 +63,6 @@ export class AddGameModal extends Modal {
 	private fieldLink = '';
 	private fieldCoverUrl = '';
 	// cover last prefilled from an API result; unchanged it stays cache-only (not an override)
-	private apiCoverUrl = '';
 	private fieldPlatforms: string[] = [];
 	// which API row the form was filled from — persisted on the game so covers can later be re-fetched
 	// by id instead of by title
@@ -251,7 +249,6 @@ export class AddGameModal extends Modal {
 				this.fieldPublisher = full.publisher;
 				this.fieldReleaseDate = full.releaseDate;
 				this.fieldCoverUrl = full.coverUrl;
-				this.apiCoverUrl = full.coverUrl;
 				this.fieldLink = full.url;
 				this.fieldStoreUrl = full.storeUrl;
 				this.fieldSingleplayer = full.singleplayer;
@@ -264,7 +261,6 @@ export class AddGameModal extends Modal {
 			this.fieldTitle = result.title;
 			this.fieldReleaseDate = result.releaseDate;
 			this.fieldCoverUrl = result.coverUrl;
-			this.apiCoverUrl = result.coverUrl;
 			this.fieldLink = result.url;
 			this.fieldPlatforms = this.matchOwnPlatforms(result.platforms);
 		}
@@ -543,7 +539,6 @@ export class AddGameModal extends Modal {
 			coop: this.fieldCoop,
 			multiplayer: this.fieldMultiplayer,
 			coverUrl: this.fieldCoverUrl.trim(),
-			coverOverride: isCoverOverride(this.fieldCoverUrl, this.apiCoverUrl),
 			apiSource: this.apiSource,
 			apiId: this.apiId,
 			// seeded from the store link when it's a Steam page, so a later Steam sync matches exactly instead

@@ -788,9 +788,7 @@ export class GameDetailModal extends Modal {
 			paintSummary();
 		});
 		this.linkField(body, 'Cover', this.draft.coverUrl, (v) => {
-			// typed by the user: a note override (E9); cleared, the cached API cover shows again
 			this.draft.coverUrl = v;
-			this.draft.coverOverride = true;
 			this.renderCover();
 			paintSummary();
 		});

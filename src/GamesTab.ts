@@ -1501,8 +1501,8 @@ export class GamesTab {
 				}
 				// persist silently (no re-render, so scroll survives) and swap this card's <img>. A title search
 				// that resolved an id stores it too, so the next fetch takes the cheap id path.
-				if (res.source) this.gameData.updateCoverAndSource(id, res.url, res.source, res.apiId);
-				else this.gameData.updateCoverUrl(id, res.url);
+				if (res.source) void this.gameData.updateCoverAndSource(id, res.url, res.source, res.apiId);
+				else void this.gameData.updateCoverUrl(id, res.url);
 				this.applyCoverToCard(card, res.url);
 			});
 		}
@@ -1559,8 +1559,8 @@ export class GamesTab {
 		}
 		const fresh = this.gameData.getGame(game.id);
 		if (!fresh) return;
-		// an API cover replaces a note override (E9)
-		const updated: Game = { ...fresh, coverUrl: res.url, coverOverride: false };
+		// an explicit refresh replaces the cover in the note
+		const updated: Game = { ...fresh, coverUrl: res.url };
 		if (res.source) {
 			updated.apiSource = res.source;
 			updated.apiId = res.apiId;

@@ -289,7 +289,6 @@ export class GameDataManager {
 	private normalized(src: Game): Game {
 		const g = structuredClone(src);
 		if (!g.status) g.status = this.getSettings().defaultStatus || 'Not started';
-		if (!g.coverOverride) g.coverUrl = this.local.getCache(g.id)?.coverUrl ?? '';
 		g.vaultPage = this.layout().pathFromId(g.id);
 		return g;
 	}
@@ -301,6 +300,8 @@ export class GameDataManager {
 		if (slot && this.dirty.has(src.id)) return slot.view;
 		const base = this.normalized(src);
 		const view = structuredClone(base);
+		// a cover cached by an earlier version shows until the note is written with it
+		if (!view.coverUrl) view.coverUrl = this.local.getCache(src.id)?.coverUrl ?? '';
 		this.views.set(src.id, { src, base, view });
 		setBaseline(view, base);
 		return view;
@@ -439,23 +440,37 @@ export class GameDataManager {
 	// Cover updates
 
 	/**
-	 * Silent cover URL update for the lazy Cards re-fetch: memory and cache only, never the note (E9),
-	 * no notify — the card that triggered the fetch swaps its own <img>, so the grid is not rebuilt and
-	 * the scroll position survives.
+	 * Silent cover URL update for the lazy Cards re-fetch: written to the note's `coverUrl` only when
+	 * that is empty (E12), no notify — the card that triggered the fetch swaps its own <img>, so the
+	 * grid is not rebuilt and the scroll position survives.
 	 */
-	updateCoverUrl(id: string, url: string): void {
+	async updateCoverUrl(id: string, url: string): Promise<void> {
 		const game = this.getGame(id);
-		if (!game) return;
-		if (!game.coverOverride) game.coverUrl = url;
-		this.local.setCache(id, { coverUrl: url });
+		if (!game || !url || game.coverUrl) return;
+		if (this.dirty.has(id)) {
+			// the pending write carries it
+			game.coverUrl = url;
+			return;
+		}
+		const file = this.fileOf(id);
+		if (!file) return;
+		await this.processFrontMatter(file, game, (raw) => {
+			const own = typeof raw.coverUrl === 'string' ? raw.coverUrl.trim() : '';
+			if (own) {
+				game.coverUrl = own;
+				return;
+			}
+			raw.coverUrl = url;
+			game.coverUrl = url;
+		});
 	}
 
 	/**
 	 * Cover found by a title-based lookup. The resolved API source + id are identity data of the note,
 	 * which a background fetch does not write; only the cover is kept.
 	 */
-	updateCoverAndSource(id: string, url: string, _source: 'rawg' | 'igdb', _apiId: string): void {
-		this.updateCoverUrl(id, url);
+	updateCoverAndSource(id: string, url: string, _source: 'rawg' | 'igdb', _apiId: string): Promise<void> {
+		return this.updateCoverUrl(id, url);
 	}
 
 	/** Writes pending silent edits now, without notifying (plugin unload). */
@@ -463,11 +478,14 @@ export class GameDataManager {
 		await this.flushViews();
 	}
 
-	/** A cover that is not a note override is API data and lives in the cache only (E9). */
-	private syncCover(g: Game): void {
-		if (g.coverOverride) return;
-		if ((this.local.getCache(g.id)?.coverUrl ?? '') === g.coverUrl) return;
-		this.local.setCache(g.id, { coverUrl: g.coverUrl });
+	/** Covers live in the note (E12); a cached one is legacy and goes once the note has been written. */
+	private dropLegacyCover(id: string): void {
+		const cached = this.local.getCache(id);
+		if (cached?.coverUrl === undefined) return;
+		const rest = { ...cached };
+		delete rest.coverUrl;
+		this.local.data.cache[id] = rest;
+		this.local.queueSave();
 	}
 
 	// Groups — derived from the `groups` property of the game notes (id = name); an empty group does not exist.
@@ -610,7 +628,7 @@ export class GameDataManager {
 
 	/** Cache + optimistic index update after an own write; `g` stays the UI's copy. */
 	private afterWrite(g: Game, fm: Record<string, unknown>): void {
-		this.syncCover(g);
+		this.dropLegacyCover(g.id);
 		const stored = decodeGame(g.id, fm).entry;
 		this.index.applyLocal({ kind: 'game', entry: stored });
 		g.vaultPage = this.layout().pathFromId(g.id);
@@ -683,7 +701,6 @@ export class GameDataManager {
 			// the copy now holds what the note holds for every field it knows
 			if (ok) setBaseline(g, structuredClone(g));
 		} else {
-			this.syncCover(g);
 			const slot = this.views.get(g.id);
 			if (slot) slot.view = g;
 		}

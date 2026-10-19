@@ -990,7 +990,7 @@ export class ReadingDetailModal extends Modal {
 				}
 				const fresh = this.getItem();
 				if (!fresh) return;
-				await this.readingData.updateBook({ ...(fresh as Book), coverUrl: result.coverUrl, coverOverride: false });
+				await this.readingData.updateBook({ ...(fresh as Book), coverUrl: result.coverUrl });
 			} else {
 				const result = await this.plugin.apiService.getMangaByMalId(Number(newId));
 				if (!result || !result.coverUrl) {
@@ -999,7 +999,7 @@ export class ReadingDetailModal extends Modal {
 				}
 				const fresh = this.getItem();
 				if (!fresh) return;
-				await this.readingData.updateManga({ ...(fresh as Manga), coverUrl: result.coverUrl, coverOverride: false });
+				await this.readingData.updateManga({ ...(fresh as Manga), coverUrl: result.coverUrl });
 			}
 			this.onChanged();
 		} catch (err) {

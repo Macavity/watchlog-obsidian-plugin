@@ -3,7 +3,6 @@ import type WatchLogPlugin from './main';
 import type { ReadingDataManager } from './ReadingDataManager';
 import type { BookSearchResult, MangaSearchResult } from './ApiService';
 import { apiErrorMessage } from './ApiService';
-import { isCoverOverride } from './coverOverride';
 import { renderSearchResultRow } from './SearchThumbnail';
 import { LibraryIndex, bookResultIdKeys, mangaResultIdKeys } from './LibraryIndex';
 import { renderStarRating } from './StarRating';
@@ -104,7 +103,6 @@ export class AddReadingModal extends Modal {
 	private lookupSearchGen = 0;
 	private selectGen = 0;
 	// cover last prefilled from an API result (or the cached one when editing); unchanged it is not an override
-	private apiCoverUrl = '';
 	private prefillSearch: string;
 	private searchDebounce: number | null = null;
 	// built on first lookup, reused for the modal's life
@@ -129,7 +127,6 @@ export class AddReadingModal extends Modal {
 			if (defStatus) this.state.status = defStatus;
 		}
 		this.existingId = initial?.id ?? null;
-		this.apiCoverUrl = initial?.state.coverUrl ?? '';
 		this.onSaved = onSaved;
 		this.prefillSearch = prefillSearch ?? '';
 	}
@@ -349,7 +346,6 @@ export class AddReadingModal extends Modal {
 		this.state.author = r.author;
 		this.state.totalPages = r.totalPages;
 		this.state.coverUrl = r.coverUrl;
-		this.apiCoverUrl = r.coverUrl;
 		this.state.googleBooksId = r.googleBooksId;
 		this.state.releaseDate = r.releaseDate ?? '';
 		this.refreshForm();
@@ -364,7 +360,6 @@ export class AddReadingModal extends Modal {
 					if (detail.totalPages > 0) this.state.totalPages = detail.totalPages;
 					if (detail.coverUrl) {
 						this.state.coverUrl = detail.coverUrl;
-						this.apiCoverUrl = detail.coverUrl;
 					}
 					this.refreshForm();
 				} catch {
@@ -383,7 +378,6 @@ export class AddReadingModal extends Modal {
 		this.state.totalChapters = r.totalChapters;
 		this.state.totalVolumes = r.totalVolumes;
 		this.state.coverUrl = r.coverUrl;
-		this.apiCoverUrl = r.coverUrl;
 		this.state.malId = r.malId > 0 ? String(r.malId) : '';
 		this.state.releaseDate = r.releaseDate ?? '';
 		this.refreshForm();
@@ -634,7 +628,6 @@ export class AddReadingModal extends Modal {
 				chaptersRead: this.state.chaptersRead,
 				totalChapters: this.state.totalChapters,
 				coverUrl: this.state.coverUrl.trim(),
-				coverOverride: isCoverOverride(this.state.coverUrl, this.apiCoverUrl, existing.coverOverride),
 				googleBooksId: this.state.googleBooksId.trim(),
 				vaultPage: this.state.vaultPage,
 				dateStarted: this.state.dateStarted,
@@ -658,7 +651,6 @@ export class AddReadingModal extends Modal {
 				chaptersRead: this.state.chaptersRead,
 				totalChapters: this.state.totalChapters,
 				coverUrl: this.state.coverUrl.trim(),
-				coverOverride: isCoverOverride(this.state.coverUrl, this.apiCoverUrl),
 				googleBooksId: this.state.googleBooksId.trim(),
 				vaultPage: this.state.vaultPage,
 				dateStarted: this.state.dateStarted,
@@ -690,7 +682,6 @@ export class AddReadingModal extends Modal {
 				volumesRead: this.state.volumesRead,
 				totalVolumes: this.state.totalVolumes,
 				coverUrl: this.state.coverUrl.trim(),
-				coverOverride: isCoverOverride(this.state.coverUrl, this.apiCoverUrl, existing.coverOverride),
 				malId: this.state.malId.trim(),
 				vaultPage: this.state.vaultPage,
 				dateStarted: this.state.dateStarted,
@@ -711,7 +702,6 @@ export class AddReadingModal extends Modal {
 				volumesRead: this.state.volumesRead,
 				totalVolumes: this.state.totalVolumes,
 				coverUrl: this.state.coverUrl.trim(),
-				coverOverride: isCoverOverride(this.state.coverUrl, this.apiCoverUrl),
 				malId: this.state.malId.trim(),
 				vaultPage: this.state.vaultPage,
 				dateStarted: this.state.dateStarted,
