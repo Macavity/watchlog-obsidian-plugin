@@ -106,7 +106,7 @@ function identityOf(r: Reader, fm: Record<string, unknown>, link: string): Exter
 export function decodeTitle(id: string, fm: Record<string, unknown>, cache: EntryCache | undefined): Decoded<WatchLogTitle> {
 	const r = new Reader(fm);
 	const c = cache ?? {};
-	const status = r.str('status') ?? 'Plan to Watch';
+	const status = r.str('status') ?? 'Plan to watch';
 	const externalLink = r.str('externalLink') ?? '';
 
 	// seasons: note override wins over cache
