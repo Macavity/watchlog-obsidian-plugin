@@ -54,6 +54,16 @@ export class EntryIndex {
 		this.entries = this.scan();
 	}
 
+	/** Drops cache entries whose note no longer exists; run once after `build()`. Unmanaged keys stay. */
+	sweepCache(): void {
+		if (!this.local.isWritable) return;
+		const layout = this.layout();
+		for (const id of this.local.cacheIds()) {
+			const path = layout.pathFromId(id);
+			if (layout.classify(path) && !this.app.vault.getAbstractFileByPath(path)) this.local.deleteCache(id);
+		}
+	}
+
 	start(): void {
 		const { vault, metadataCache } = this.app;
 		this.register(metadataCache.on('changed', (file) => this.upsert(file)));
@@ -183,7 +193,9 @@ export class EntryIndex {
 	private onDelete(file: TAbstractFile): void {
 		if (!(file instanceof TFile)) return;
 		const id = this.layout().classify(file.path)?.id;
-		if (id !== undefined && this.entries.delete(id)) this.queue(id); // cache stays (spec)
+		if (id === undefined) return;
+		if (this.entries.delete(id)) this.queue(id);
+		this.local.deleteCache(id);
 	}
 
 	private onRename(file: TAbstractFile, oldPath: string): void {

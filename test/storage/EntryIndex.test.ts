@@ -66,7 +66,7 @@ describe('EntryIndex edge cases', () => {
 		expect(idx.manga().map(m => m.id)).toEqual(['Manga/M']);
 		expect(idx.books()).toEqual([]);
 	});
-	it('keeps the cache on delete and never writes', async () => {
+	it('drops the cache of a deleted note but never writes the vault', async () => {
 		const { f, idx, local } = await setup({ 'W/Movie/A.md': note('title: A') });
 		local.setCache('Movie/A', { posterUrl: 'p' });
 		const before = new Map(f.files);
@@ -74,7 +74,26 @@ describe('EntryIndex edge cases', () => {
 		expect(f.files).toEqual(before);
 		f.externalDelete('W/Movie/A.md'); await tick();
 		expect(idx.get('Movie/A')).toBeUndefined();
-		expect(local.getCache('Movie/A')).toEqual({ posterUrl: 'p' });
+		expect(local.getCache('Movie/A')).toBeUndefined();
+	});
+	it('sweeps cache keys without a note once, keeping unmanaged keys', async () => {
+		const { idx, local } = await setup({ 'W/Movie/A.md': note('title: A'), 'W/Movie/Bad.md': '---\n: : :\n---\n' });
+		local.setCache('Movie/A', { posterUrl: 'a' });
+		local.setCache('Movie/Bad', { posterUrl: 'b' });
+		local.setCache('Movie/Gone', { posterUrl: 'g' });
+		local.setCache('Removed Type/X', { posterUrl: 'x' });
+		idx.sweepCache();
+		expect(Object.keys(local.data.cache).sort()).toEqual(['Movie/A', 'Movie/Bad', 'Removed Type/X']);
+	});
+	it('does not sweep while the store is not writable', async () => {
+		const f = createFakeApp({});
+		await f.plugin.saveData({ schemaVersion: 3 });
+		const local = new LocalStore(f.plugin); await local.load();
+		local.data.cache['Movie/Gone'] = { posterUrl: 'g' };
+		const idx = new EntryIndex(f.app, () => new VaultLayout('W', () => ['Movie']), local, () => {});
+		await idx.build();
+		idx.sweepCache();
+		expect(local.getCache('Movie/Gone')).toBeDefined();
 	});
 	it('adds notes that metadataCache reports later', async () => {
 		const { f, idx } = await setup({});

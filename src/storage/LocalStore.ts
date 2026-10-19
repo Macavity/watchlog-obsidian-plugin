@@ -57,6 +57,13 @@ export class LocalStore {
 		await this.save();
 	}
 
+	/** False while data.json holds a legacy or newer format that must not be overwritten. */
+	get isWritable(): boolean { return this.writable; }
+
+	cacheIds(): string[] {
+		return Object.keys(this.data.cache);
+	}
+
 	getCache(id: string): EntryCache | undefined {
 		return this.data.cache[id];
 	}

@@ -236,6 +236,7 @@ export default class WatchLogPlugin extends Plugin {
 			}
 			this.shared.start();
 			await this.index.build();
+			this.index.sweepCache();
 			this.indexReady = true;
 			this.index.start();
 			await this.historyManager.start();
