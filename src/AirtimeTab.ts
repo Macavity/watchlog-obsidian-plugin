@@ -1221,10 +1221,8 @@ export class AirtimeTab {
 					// final unit: remove from Upcoming, do NOT change status
 					await this.dataManager.removeAirtimeEntry(entry.id);
 				} else {
-					// non-final: increment the unit and record the acknowledgement date so the countdown resets
-					entry.currentEpisode = (entry.currentEpisode ?? 1) + 1;
-					entry.lastAcknowledgedDate = todayStr;
-					await this.dataManager.updateAirtimeEntry(entry);
+					// non-final: acknowledge so the countdown resets; without an API pointer also advance the unit
+					await this.dataManager.tickAirtimeEntry(entry, todayStr);
 				}
 				this.render();
 			})();

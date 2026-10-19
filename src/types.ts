@@ -1713,10 +1713,18 @@ export interface TmdbTvDetail {
 	first_air_date?: string;
 	number_of_episodes?: number;
 	seasons?: TmdbTvSeason[];
+	next_episode_to_air?: TmdbEpisodeRef | null;
+	last_episode_to_air?: TmdbEpisodeRef | null;
 	/** only when the detail call uses append_to_response=videos */
 	videos?: TmdbVideosResult;
 	/** only when the detail call uses append_to_response=credits */
 	credits?: TmdbCreditsResult;
+}
+
+export interface TmdbEpisodeRef {
+	season_number?: number;
+	episode_number?: number;
+	air_date?: string | null;
 }
 
 export interface TmdbExternalIds {

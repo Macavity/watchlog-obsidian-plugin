@@ -25,6 +25,9 @@ import type {
 	AniListMediaResponse,
 } from './types';
 import { isCreditsNone, normalizeCreditsForStore, imdbIdFromLink } from './types';
+import type { EntryCache } from './storage/storageTypes';
+
+type Airing = NonNullable<EntryCache['airing']>;
 
 const JIKAN_BASE = 'https://api.jikan.moe/v4';
 const OMDB_BASE = 'https://www.omdbapi.com';
@@ -1245,6 +1248,56 @@ export class ApiService {
 			};
 		} catch (e) {
 			rethrowAuth(e);
+			return null;
+		}
+	}
+
+	// Airing pointer (Upcoming)
+
+	/**
+	 * Next / last aired episode: AniList by `anilistId`, else TMDB tv by `tmdbId` (needs the key).
+	 * null = no source or the request failed; nothing is fetched without an id.
+	 */
+	async fetchAiring(title: Pick<WatchLogTitle, 'anilistId' | 'tmdbId' | 'tmdbMediaType'>): Promise<Airing | null> {
+		if (title.anilistId !== undefined) return this.fetchAniListAiring(title.anilistId);
+		if (title.tmdbId !== undefined && title.tmdbMediaType === 'tv' && this.tmdbApiKey) {
+			return this.fetchTmdbAiring(title.tmdbId);
+		}
+		return null;
+	}
+
+	private async fetchAniListAiring(anilistId: number): Promise<Airing | null> {
+		const media = await this.getAniListById(anilistId);
+		if (!media) return null;
+		const airing: Airing = { refreshedAt: new Date().toISOString() };
+		const next = media.nextAiringEpisode;
+		if (typeof next?.episode === 'number') {
+			airing.nextEpisode = next.episode;
+			if (typeof next.airingAt === 'number') airing.nextAirDate = new Date(next.airingAt * 1000).toISOString();
+			if (next.episode > 1) airing.lastEpisode = next.episode - 1;
+		} else if (media.status === 'FINISHED' && typeof media.episodes === 'number' && media.episodes > 0) {
+			airing.lastEpisode = media.episodes;
+		}
+		return airing;
+	}
+
+	private async fetchTmdbAiring(tmdbId: number): Promise<Airing | null> {
+		try {
+			const detail = await this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}`, this.tmdbHeaders()) as TmdbTvDetail;
+			const airing: Airing = { refreshedAt: new Date().toISOString() };
+			const next = detail.next_episode_to_air;
+			if (typeof next?.episode_number === 'number') {
+				airing.nextEpisode = next.episode_number;
+				if (typeof next.season_number === 'number') airing.nextSeason = next.season_number;
+				if (next.air_date) airing.nextAirDate = next.air_date;
+			}
+			const last = detail.last_episode_to_air;
+			if (typeof last?.episode_number === 'number') {
+				airing.lastEpisode = last.episode_number;
+				if (typeof last.season_number === 'number') airing.lastSeason = last.season_number;
+			}
+			return airing;
+		} catch {
 			return null;
 		}
 	}

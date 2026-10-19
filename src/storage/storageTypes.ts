@@ -35,6 +35,15 @@ export interface EntryCache {
 	tmdbMediaType?: 'movie' | 'tv';
 	malId?: number;
 	anilistId?: number;
+	/** next/last aired episode from TMDB or AniList; season-relative episode numbers */
+	airing?: {
+		nextSeason?: number;
+		nextEpisode?: number;
+		nextAirDate?: string;
+		lastSeason?: number;
+		lastEpisode?: number;
+		refreshedAt: string;
+	};
 }
 
 /** A decoded note: the entry plus frontmatter fields whose values could not be read. */

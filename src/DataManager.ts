@@ -7,6 +7,7 @@ import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayI
 import type { CreditsField } from './types';
 import type { AnyEntry, EntryIndex } from './storage/EntryIndex';
 import type { LocalStore } from './storage/LocalStore';
+import type { EntryCache } from './storage/storageTypes';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { decodeTitle, encodeTitle, splitCache } from './storage/titleCodec';
@@ -58,6 +59,9 @@ function scheduleOf(a: EntryAirtime, releaseDate: string | null): AirtimeSchedul
 }
 
 const NOTES_RE = /(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/;
+
+/** Minimum gap between two API refreshes of a title's airing pointer, unless forced. */
+const AIRING_REFRESH_MS = 6 * 60 * 60 * 1000;
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
@@ -124,6 +128,10 @@ export class DataManager {
 	// debounced batched poster saves: memory now, data.json ~every 5s
 	private posterSaveTimer: number | null = null;
 	private readonly POSTER_SAVE_DEBOUNCE_MS = 5000;
+
+	// airing refresh: last attempt per id (also failed ones) and requests still running
+	private airingAttempts: Map<string, number> = new Map();
+	private airingInFlight: Set<string> = new Set();
 
 	setHistoryManager(hm: HistoryManager): void {
 		this.historyManager = hm;
@@ -825,6 +833,12 @@ export class DataManager {
 			if (a.season !== undefined) base.currentSeason = a.season;
 			if (a.episode !== undefined) base.currentEpisode = a.episode;
 			if (a.acknowledged) base.lastAcknowledgedDate = a.acknowledged;
+			// the API pointer wins over the note's: a tick only acknowledges it
+			const airing = this.airingOf(e);
+			if (airing?.nextEpisode !== undefined) {
+				base.currentEpisode = airing.nextEpisode;
+				if (airing.nextSeason !== undefined) base.currentSeason = airing.nextSeason;
+			}
 			return base;
 		}
 		if (!this.isAwaitingRelease(e) || !item.releaseDate) return null;
@@ -842,6 +856,55 @@ export class DataManager {
 		if (e.kind === 'title') return status === 'To be released';
 		const auto = e.kind === 'game' ? GAME_AUTO_STATUS : 'To be released';
 		return status === auto || isReleaseDateFuture(releaseDate);
+	}
+
+	/** Cached API airing data of a recurring watch schedule; other entries have none. */
+	private airingOf(e: AnyEntry): EntryCache['airing'] | undefined {
+		if (e.kind !== 'title' || !e.entry.airtime || e.entry.airtime.recurrence === 'once') return undefined;
+		return this.local.getCache(e.entry.id)?.airing;
+	}
+
+	/** True when the entry's episode pointer comes from the API cache instead of the note. */
+	isAiringTracked(entry: AirtimeEntry): boolean {
+		const e = this.index.get(entry.titleId);
+		return !!e && this.airingOf(e)?.nextEpisode !== undefined;
+	}
+
+	/**
+	 * Tick on an aired unit: records the acknowledgement so the countdown resets. Without an API
+	 * pointer it also advances the note's unit; with one, the API moves the pointer.
+	 */
+	async tickAirtimeEntry(entry: AirtimeEntry, date: string): Promise<void> {
+		const e = this.index.get(entry.titleId);
+		if (e?.entry.airtime && this.isAiringTracked(entry)) {
+			if (await this.writeAirtime(e, { ...e.entry.airtime, acknowledged: date }, null)) this.notifyListeners();
+			return;
+		}
+		await this.updateAirtimeEntry({ ...entry, currentEpisode: (entry.currentEpisode ?? 1) + 1, lastAcknowledgedDate: date });
+	}
+
+	/**
+	 * Reloads the airing pointer of a title from its API into the cache, at most every
+	 * AIRING_REFRESH_MS unless forced. Never writes the note.
+	 */
+	async refreshAiring(id: string, force = false): Promise<void> {
+		const e = this.index.get(id);
+		if (e?.kind !== 'title' || this.airingInFlight.has(id)) return;
+		const refreshed = Date.parse(this.local.getCache(id)?.airing?.refreshedAt ?? '');
+		const last = Math.max(isNaN(refreshed) ? 0 : refreshed, this.airingAttempts.get(id) ?? 0);
+		if (!force && Date.now() - last < AIRING_REFRESH_MS) return;
+		this.airingAttempts.set(id, Date.now());
+		this.airingInFlight.add(id);
+		try {
+			const airing = await this.plugin.apiService.fetchAiring(e.entry);
+			if (!airing || this.index.get(id)?.kind !== 'title') return;
+			this.local.setCache(id, { airing });
+			this.notifyListeners();
+		} catch (err) {
+			console.warn(`WatchLog: could not refresh airing data of ${id}`, err);
+		} finally {
+			this.airingInFlight.delete(id);
+		}
 	}
 
 	/** True when removing this entry clears the item's release date (and with it the auto status). */
@@ -1512,6 +1575,9 @@ export class DataManager {
 	/** Stores the title's API-derived fields in data.json when they changed. */
 	private syncCache(t: WatchLogTitle): void {
 		const next = splitCache(t);
+		// airing is not a title field; it lives only in the cache
+		const airing = this.local.getCache(t.id)?.airing;
+		if (airing) next.airing = airing;
 		if (sameJson(next, this.local.getCache(t.id) ?? {})) return;
 		this.local.data.cache[t.id] = next;
 		this.local.queueSave();

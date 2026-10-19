@@ -1,5 +1,5 @@
 import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, TFile, parseYaml, setIcon, stringifyYaml } from 'obsidian';
-import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, AirtimeSchedule, setActiveDateFormat } from './types';
+import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, setActiveDateFormat } from './types';
 import { cardSizeToMinWidth } from './VirtualGrid';
 import type { CardStyleTab, WatchLogData } from './types';
 import { DataManager } from './DataManager';
@@ -22,7 +22,9 @@ import { EntryIndex } from './storage/EntryIndex';
 import { HistoryStore } from './storage/HistoryStore';
 import { hasWatchlogKey } from './storage/baseFile';
 import { legacyRoot, migrateV1 } from './storage/migrateV1';
+import type { BackupManagers } from './backup';
 import { composeSettings, persistSettings } from './settingsSplit';
+import { runAirtimeScheduler } from './airtimeScheduler';
 
 /** Root folder created on a fresh install (no `.base` with a `watchlog:` key found). */
 const DEFAULT_ROOT = 'WatchLog';
@@ -262,6 +264,28 @@ export default class WatchLogPlugin extends Plugin {
 		new Notice(`Watchlog moved its data into notes (backup: data.v1-backup.json).${skipped}`, 10000);
 	}
 
+	/** Everything backup export and restore need. */
+	backupManagers(): BackupManagers {
+		return {
+			dataManager: this.dataManager,
+			readingDataManager: this.readingDataManager,
+			gameDataManager: this.gameDataManager,
+			historyManager: this.historyManager,
+			storage: {
+				local: this.local,
+				shared: this.shared,
+				importContext: () => ({
+					app: this.app,
+					local: this.local,
+					shared: this.shared,
+					history: new HistoryStore(this.app, () => this.layout, (name) => this.isTitleNote(name)),
+					yaml: this.yaml,
+					layout: this.layout,
+				}),
+			},
+		};
+	}
+
 	private isTitleNote(name: string): boolean {
 		return this.app.vault.getMarkdownFiles()
 			.some((f: TFile) => f.basename === name && this.layout.classify(f.path)?.kind === 'title');
@@ -302,60 +326,12 @@ export default class WatchLogPlugin extends Plugin {
 	}
 
 	private checkAirtimeNotifications(): void {
-		const now = new Date();
-		const currentHHMM =
-			`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-		const today =
-			`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-		const entries = this.dataManager.getAirtimeEntries();
-		for (const entry of entries) {
-			// only fire when the entry has a specific time set and it matches now
-			if (!entry.schedule.releaseTime) continue;
-			if (entry.schedule.releaseTime !== currentHHMM) continue;
-
-			// direct day-of-week / date check, avoiding the getAirtimeCountdown rollover bug
-			if (!this.isScheduledForToday(entry.schedule)) continue;
-
-			// deduplicate: only fire once per entry per day
-			const notifKey = `${entry.id}-${today}`;
-			if (this.notifiedEntries.has(notifKey)) continue;
-			this.notifiedEntries.add(notifKey);
-
-			// resolve the entry's subject — a watch title, a reading item, or a game
-			let name: string;
-			let maxUnits: number;
-			if (entry.source === 'game') {
-				const game = this.gameDataManager.getGame(entry.titleId);
-				if (!game) continue;
-				name = game.title;
-				maxUnits = 0; // games are single releases — nothing to auto-increment
-			} else if (entry.source === 'reading') {
-				const kind = entry.readingKind ?? 'book';
-				const item = kind === 'book'
-					? this.readingDataManager.getBook(entry.titleId)
-					: this.readingDataManager.getManga(entry.titleId);
-				if (!item) continue;
-				name = item.title;
-				maxUnits = entry.totalEpisodes ?? item.totalChapters ?? 0;
-			} else {
-				const title = this.dataManager.getTitle(entry.titleId);
-				if (!title) continue;
-				name = title.title;
-				maxUnits = entry.totalEpisodes ?? title.totalEpisodes;
-			}
-			new Notice(name, 8000);
-
-			// auto-increment the unit for recurring schedules — a single release ('once') has no next unit
-			if (entry.schedule.recurrence !== 'once' && maxUnits > 1 && entry.currentEpisode !== undefined) {
-				const nextEp = entry.currentEpisode + 1;
-				if (nextEp <= maxUnits) {
-					entry.currentEpisode = nextEp;
-					void this.dataManager.updateAirtimeEntry(entry);
-				}
-				// final unit: leave in Upcoming, handled via the tick button
-			}
-		}
+		runAirtimeScheduler({
+			dataManager: this.dataManager,
+			readingDataManager: this.readingDataManager,
+			gameDataManager: this.gameDataManager,
+			notify: (name) => new Notice(name, 8000),
+		}, this.notifiedEntries);
 
 		// the due count is time-based, so refresh the status bar on every tick
 		this.updateStatusBar();
@@ -399,29 +375,6 @@ export default class WatchLogPlugin extends Plugin {
 	 * True when today is a day the given schedule fires. Avoids the rollover in
 	 * getAirtimeNextDate/getAirtimeCountdown.
 	 */
-	private isScheduledForToday(schedule: AirtimeSchedule): boolean {
-		const now = new Date();
-		const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-		if (schedule.recurrence === 'daily') return true;
-
-		if (schedule.recurrence === 'weekly') {
-			return schedule.dayOfWeek === now.getDay();
-		}
-
-		if (schedule.recurrence === 'monthly') {
-			return now.getDate() === (schedule.dayOfMonth ?? -1);
-		}
-
-		if (schedule.recurrence === 'once' && schedule.releaseDate) {
-			const rel = new Date(schedule.releaseDate + 'T00:00:00');
-			const relDay = new Date(rel.getFullYear(), rel.getMonth(), rel.getDate());
-			return relDay.getTime() === today.getTime();
-		}
-
-		return false;
-	}
-
 	/**
 	 * Minimum card width (px) for every poster/cover grid and shelf, from the card-size step for this
 	 * device class (desktop vs mobile).
