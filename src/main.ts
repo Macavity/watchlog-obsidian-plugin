@@ -1,7 +1,7 @@
-import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, normalizePath, setIcon } from 'obsidian';
+import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, normalizePath, parseYaml, setIcon, stringifyYaml } from 'obsidian';
 import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, AirtimeSchedule, normalizeRowsLayout, setActiveDateFormat } from './types';
 import { cardSizeToMinWidth } from './VirtualGrid';
-import type { ReadingData, CardStyleTab } from './types';
+import type { ReadingData, CardStyleTab, WatchLogData } from './types';
 import type { HistoryEntry } from './HistoryManager';
 import { DataManager } from './DataManager';
 import { ReadingDataManager } from './ReadingDataManager';
@@ -16,10 +16,37 @@ import { AddTitleModal } from './AddTitleModal';
 import { TitleDetailModal } from './TitleDetailModal';
 import { InsertWidgetModal } from './InsertWidgetModal';
 import { WidgetRenderer } from './WidgetRenderer';
+import { VaultLayout } from './storage/VaultLayout';
+import { LocalStore } from './storage/LocalStore';
+import { SharedConfigStore } from './storage/SharedConfigStore';
+import { EntryIndex } from './storage/EntryIndex';
+import { hasWatchlogKey } from './storage/baseFile';
+
+/** Root folder created on a fresh install (no `.base` with a `watchlog:` key found). */
+const DEFAULT_ROOT = 'WatchLog';
 
 export default class WatchLogPlugin extends Plugin {
 	settings: WatchLogPluginSettings = DEFAULT_SETTINGS;
-	dataManager: DataManager = new DataManager(this);
+	// schema-1 data.json awaiting migration; while set, data.json is never written
+	private legacyData: WatchLogData | null = null;
+	private layout = new VaultLayout(DEFAULT_ROOT, () => this.settings.types.map((t) => t.name));
+	private local = new LocalStore({
+		loadData: () => this.loadData(),
+		saveData: (d) => (this.legacyData ? Promise.resolve() : this.saveData(d)),
+	});
+	private shared = new SharedConfigStore(
+		this.app,
+		() => this.layout,
+		{ parse: parseYaml, stringify: stringifyYaml },
+		(ref) => this.registerEvent(ref),
+	);
+	private index = new EntryIndex(this.app, () => this.layout, this.local, (ref) => this.registerEvent(ref));
+	dataManager: DataManager = new DataManager(this, {
+		index: this.index,
+		local: this.local,
+		shared: this.shared,
+		layout: () => this.layout,
+	});
 	readingDataManager: ReadingDataManager = new ReadingDataManager(this);
 	gameDataManager: GameDataManager = new GameDataManager(this);
 	apiService: ApiService = new ApiService('', '');
@@ -41,15 +68,17 @@ export default class WatchLogPlugin extends Plugin {
 		// the card-size CSS var must be live before any view or modal renders a grid
 		this.applyCardSizeCssVar();
 		this.register(() => activeDocument.body.style.removeProperty('--wl-card-min-width'));
-		this.dataManager = new DataManager(this);
-		await this.dataManager.load();
+		const loaded = await this.local.load();
+		if (loaded.schema === 1) {
+			// migration (Task 16): convert the legacy data.json here. Until then it is kept in memory and
+			// on disk untouched (saves are suppressed) while the plugin runs like a fresh install.
+			this.legacyData = loaded.legacy;
+		}
 
 		// one-time migration: pull legacy reading.json / history.json into data.json so Sync replicates
 		// them. After data.json loads, before the reading/history managers bind. Idempotent — gated by a
 		// flag in data.json.
 		await this.migrateReadingHistory();
-
-		this.dataManager.startWatchingExternalChanges();
 
 		this.apiService = new ApiService(
 			this.settings.omdbApiKey,
@@ -77,8 +106,9 @@ export default class WatchLogPlugin extends Plugin {
 			() => this.settings,
 		);
 
-		await this.dataManager.ensureFolders();
 		this.startAirtimeScheduler();
+		// notes are read once the vault and metadata cache are ready
+		this.app.workspace.onLayoutReady(() => void this.startVaultStorage());
 
 		this.registerView(WATCHLOG_VIEW_TYPE, (leaf) => {
 			return new WatchLogView(leaf, this, this.dataManager);
@@ -155,7 +185,46 @@ export default class WatchLogPlugin extends Plugin {
 		this.gameDataManager?.flushCoverSave();
 		this.posterService?.destroy();
 		this.widgetRenderer?.cleanup();
+		this.index.stop();
+		this.shared.stop();
+		void this.local.flush();
+	}
 
+	/**
+	 * Locates the root (folder of the first `.base` with a `watchlog:` key), creates the base on a
+	 * fresh install, loads the shared config and builds the entry index from the notes.
+	 */
+	private async startVaultStorage(): Promise<void> {
+		try {
+			const root = await this.findRoot();
+			this.layout = new VaultLayout(root ?? DEFAULT_ROOT, () => this.settings.types.map((t) => t.name));
+			if (root === null && !this.legacyData) {
+				await this.dataManager.ensureFolder(this.layout.root);
+				await this.shared.createBase(this.settings as unknown as Record<string, unknown>);
+			}
+			await this.shared.load();
+			if (root !== null && (await this.shared.ensureFilter()) === 'missing') {
+				new Notice('Watchlog: the folder filter in WatchLog.base was not found; the base view may list other notes.');
+			}
+			this.shared.start();
+			await this.index.build();
+			this.index.start();
+			await this.dataManager.init();
+			await this.dataManager.ensureFolders();
+		} catch (e) {
+			console.error('[WL] vault storage failed to start', e);
+			new Notice('Watchlog could not load its notes. See the developer console for details.');
+		}
+	}
+
+	private async findRoot(): Promise<string | null> {
+		const { vault } = this.app;
+		const bases = await Promise.all(
+			vault.getFiles()
+				.filter((f) => f.extension === 'base')
+				.map(async (f) => ({ path: f.path, hasWatchlogKey: hasWatchlogKey(await vault.cachedRead(f)) })),
+		);
+		return VaultLayout.findRoot(bases);
 	}
 
 	private startAirtimeScheduler(): void {

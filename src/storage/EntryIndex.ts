@@ -60,6 +60,13 @@ export class EntryIndex {
 		this.register(vault.on('rename', (file, oldPath) => this.onRename(file, oldPath)));
 	}
 
+	/** Drops a pending change notification (plugin unload). */
+	stop(): void {
+		if (this.timer !== null) clearTimeout(this.timer);
+		this.timer = null;
+		this.pending.clear();
+	}
+
 	titles(): WatchLogTitle[] { return this.ofKind('title'); }
 	books(): Book[] { return this.ofKind('book'); }
 	manga(): Manga[] { return this.ofKind('manga'); }

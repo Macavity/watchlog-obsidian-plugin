@@ -1,4 +1,4 @@
-import { TFile, type App } from 'obsidian';
+import { TFile, type App, type EventRef } from 'obsidian';
 import type { SharedConfig, YamlIO } from './storageTypes';
 import type { VaultLayout } from './VaultLayout';
 import {
@@ -53,8 +53,14 @@ function canon(v: unknown): string {
 export class SharedConfigStore {
 	private config: SharedConfig = { version: VERSION, settings: {} };
 	private listeners: (() => void)[] = [];
+	private modifyRef: EventRef | null = null;
 
-	constructor(private app: App, private layout: () => VaultLayout, private yaml: YamlIO) {}
+	constructor(
+		private app: App,
+		private layout: () => VaultLayout,
+		private yaml: YamlIO,
+		private register: (ref: EventRef) => void = () => {},
+	) {}
 
 	private file(): TFile | null {
 		const f = this.app.vault.getAbstractFileByPath(this.layout().basePath);
@@ -120,10 +126,16 @@ export class SharedConfigStore {
 	}
 
 	start(): void {
-		this.app.vault.on('modify', (file: unknown) => {
+		this.modifyRef = this.app.vault.on('modify', (file: unknown) => {
 			if (!(file instanceof TFile) || file.path !== this.layout().basePath) return;
 			void this.reload(file);
 		});
+		this.register(this.modifyRef);
+	}
+
+	stop(): void {
+		if (this.modifyRef) this.app.vault.offref(this.modifyRef);
+		this.modifyRef = null;
 	}
 
 	onChange(cb: () => void): void {

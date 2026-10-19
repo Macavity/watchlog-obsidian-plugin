@@ -1,145 +1,150 @@
-import { App, TFile, normalizePath } from 'obsidian';
+import { App, Notice, TAbstractFile, TFile, normalizePath, stringifyYaml } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { WatchLogData, WatchLogTitle, WatchLogGroup, AirtimeEntry, MaybeTitle, RecommendedDaily, SavedFilterPreset, WatchLogPluginSettings, Book, Manga, Game } from './types';
 import type { HistoryManager } from './HistoryManager';
 import { formatHistoryDate } from './HistoryManager';
-import { getDisplayPoster, getDisplayTrailer, getTitleCredits, pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso } from './types';
+import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso } from './types';
 import type { CreditsField } from './types';
+import type { EntryIndex } from './storage/EntryIndex';
+import type { LocalStore } from './storage/LocalStore';
+import type { SharedConfigStore } from './storage/SharedConfigStore';
+import type { VaultLayout } from './storage/VaultLayout';
+import { decodeTitle, encodeTitle, splitCache } from './storage/titleCodec';
+import { externalIdFromLink } from './storage/externalId';
 
-function isValidWatchLogData(data: unknown): data is WatchLogData {
-	return (
-		data !== null &&
-		typeof data === 'object' &&
-		Array.isArray((data as { titles?: unknown }).titles)
-	);
+export interface DataStores {
+	index: EntryIndex;
+	local: LocalStore;
+	shared: SharedConfigStore;
+	layout: () => VaultLayout;
 }
 
+/** Interim: groups, Upcoming and Maybe still live in data.json until they move to frontmatter. */
+interface LegacyLists {
+	groups?: WatchLogGroup[];
+	airtime?: AirtimeEntry[];
+	maybe?: MaybeTitle[];
+}
+
+/** Every frontmatter key encodeTitle can emit; the full rewrite deletes the ones it omits. */
+const TITLE_KEYS: readonly string[] = [
+	'title', 'type', 'status', 'priority', 'review', 'rating', 'progress', 'totalEpisodes', 'episodeDuration',
+	'dateStarted', 'dateFinished', 'dateAdded', 'dateModified', 'releaseDate', 'malId', 'anilistId',
+	'communityRating', 'communityVotes', 'communitySource', 'director', 'cast', 'studio', 'poster', 'trailer',
+	'externalLink', 'pinned', 'favorite', 'dateFavorited', 'externalId', 'groups', 'maybe', 'watched', 'skipped',
+	'seasons', 'manualPosterUrl', 'manualTrailerUrl', 'manualDirector', 'manualCast', 'manualStudio',
+	'airtimeRecurrence', 'airtimeDay', 'airtimeTime', 'airtimeSeason', 'airtimeEpisode', 'airtimeAcknowledged',
+];
+
+const NOTES_RE = /(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/;
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** `## Notes` body of a note; null when the section is absent. */
+function extractNotes(content: string): string | null {
+	const match = content.match(NOTES_RE);
+	if (!match) return null;
+	// strip the template's leading blank line and trailing whitespace, keep internal breaks
+	return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
+}
+
+/**
+ * Replaces the `## Notes` body, preserving the heading, every other section, the frontmatter and
+ * any prose outside it. Appends the heading when missing (never duplicated). The boundary matches
+ * extractNotes, so read-then-write round-trips cleanly.
+ */
+function replaceNotesSection(existing: string, notesBody: string): string {
+	const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
+	if (!headingMatch || headingMatch.index === undefined) {
+		const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+		return `${existing}${sep}\n## Notes\n\n${notesBody}\n`;
+	}
+	const bodyStart = headingMatch.index + headingMatch[0].length;
+	const after = existing.slice(bodyStart);
+	const nextHeading = after.match(/\n(?:## |# )/);
+	const bodyEnd =
+		nextHeading && nextHeading.index !== undefined
+			? bodyStart + nextHeading.index
+			: existing.length;
+	const before = existing.slice(0, bodyStart);
+	const rest = existing.slice(bodyEnd);
+	return `${before}\n${notesBody}\n${rest}`;
+}
+
+/**
+ * Watchlist titles, backed by one note per title. Reads come from the EntryIndex (frontmatter) plus
+ * the LocalStore cache; writes go to the note via processFrontMatter and only touch what changed.
+ */
 export class DataManager {
 	private plugin: WatchLogPlugin;
 	private app: App;
-	private data: WatchLogData;
+	private index: EntryIndex;
+	private local: LocalStore;
+	private shared: SharedConfigStore;
+	private layout: () => VaultLayout;
 	private changeListeners: Array<() => void> = [];
 	private historyManager: HistoryManager | null = null;
-	// debounced save for high-frequency edits (rapid episode clicks): memory now, disk coalesced
+
+	// Mutable copies handed to the UI, one per id. `src` is the index entry the copy was made from:
+	// it is the baseline a write diffs against, so only fields the user changed reach the note.
+	private views: Map<string, { src: WatchLogTitle; view: WatchLogTitle }> = new Map();
+	// `## Notes` body per id as last read from / written to the note
+	private notes: Map<string, string> = new Map();
+	// titles changed via updateTitleSilent, written on the next save()
+	private dirty: Set<string> = new Set();
+
+	// debounced save for high-frequency edits (rapid episode clicks): memory now, note coalesced
 	private pendingSaveTimer: number | null = null;
 	private pendingMdTitleIds: Set<string> = new Set();
 	private readonly EPISODE_SAVE_DEBOUNCE_MS = 500;
-	// last self-initiated saveOnly — the 'raw' watcher uses it to ignore the echo of our own
-	// writes, which would otherwise reload data.json and notify on every debounced save
-	private lastSelfSaveTime = 0;
-	private readonly SELF_SAVE_ECHO_WINDOW_MS = 2000;
 
-	// debounced batched poster saves: memory now, disk ~every 5s
+	// debounced batched poster saves: memory now, data.json ~every 5s
 	private posterSaveTimer: number | null = null;
 	private readonly POSTER_SAVE_DEBOUNCE_MS = 5000;
-
-	// generic queued-save debounce for cross-cutting saves (settings, drafts, lists)
-	private queuedSaveTimer: number | null = null;
-	private readonly QUEUED_SAVE_DEBOUNCE_MS = 100;
 
 	setHistoryManager(hm: HistoryManager): void {
 		this.historyManager = hm;
 	}
 
-	constructor(plugin: WatchLogPlugin) {
+	constructor(plugin: WatchLogPlugin, stores: DataStores) {
 		this.plugin = plugin;
 		this.app = plugin.app;
-		this.data = { titles: [], groups: [], settings: {} };
+		this.index = stores.index;
+		this.local = stores.local;
+		this.shared = stores.shared;
+		this.layout = stores.layout;
 	}
 
+	getLayout(): VaultLayout {
+		return this.layout();
+	}
+
+	/** After index.build(): reads note bodies and follows index/vault changes. */
+	async init(): Promise<void> {
+		await Promise.all(this.index.titles().map((t) => this.readNotes(t.id)));
+		this.index.onChange(() => this.notifyListeners());
+		const { vault } = this.app;
+		this.plugin.registerEvent(vault.on('modify', (f) => void this.refreshNotes(f)));
+		this.plugin.registerEvent(vault.on('create', (f) => void this.refreshNotes(f)));
+		this.plugin.registerEvent(vault.on('rename', (f, oldPath) => this.onVaultRename(f, oldPath)));
+		this.notifyListeners();
+	}
+
+	/** Re-reads data.json (backup restore). */
 	async load(): Promise<void> {
-		const raw: unknown = await this.plugin.loadData();
-		this.data = isValidWatchLogData(raw)
-			? raw
-			: { titles: [], groups: [], settings: {} };
-		const changed = this.migrateData();
-		if (changed) {
-			await this.saveOnly();
-		}
+		await this.local.load();
+		this.views.clear();
+		this.notifyListeners();
 	}
 
-	private migrateData(): boolean {
-		let changed = false;
-		if (!Array.isArray(this.data.titles)) {
-			this.data.titles = [];
-			changed = true;
-		}
-		if (!Array.isArray((this.data as unknown as Record<string, unknown>)['groups'])) {
-			this.data.groups = [];
-			changed = true;
-		}
-
-		if (!Array.isArray(this.data.airtime)) {
-			this.data.airtime = [];
-			changed = true;
-		}
-
-		for (const title of this.data.titles) {
-			if (!title.dateAdded) {
-				title.dateAdded = new Date().toISOString();
-				changed = true;
-			} else if (!title.dateAdded.includes('T')) {
-				title.dateAdded = new Date(title.dateAdded).toISOString();
-				changed = true;
-			}
-
-			if (!title.dateModified) {
-				const raw = title as unknown as Record<string, unknown>;
-				const lastInteracted = raw['lastInteracted'];
-				if (typeof lastInteracted === 'string' && lastInteracted) {
-					title.dateModified = lastInteracted;
-				} else {
-					title.dateModified = title.dateAdded;
-				}
-				changed = true;
-			}
-
-			for (const season of (title.seasons ?? [])) {
-				if (!Array.isArray(season.skippedEpisodes)) {
-					season.skippedEpisodes = [];
-					changed = true;
-				}
-			}
-
-			if (title.posterUrl === undefined) { title.posterUrl = ''; changed = true; }
-			if (title.manualPosterUrl === undefined) { title.manualPosterUrl = ''; changed = true; }
-			if (title.trailerUrl === undefined) { title.trailerUrl = ''; changed = true; }
-			if (title.manualTrailerUrl === undefined) { title.manualTrailerUrl = ''; changed = true; }
-			if (title.anilistId === undefined) { title.anilistId = 0; changed = true; }
-			if (title.communityRating === undefined) { title.communityRating = 0; changed = true; }
-			if (title.communityVotes === undefined) { title.communityVotes = 0; changed = true; }
-			if (title.communitySource === undefined) { title.communitySource = ''; changed = true; }
-			if (title.communityRatingLastFetched === undefined) { title.communityRatingLastFetched = ''; changed = true; }
-			if (title.favorite === undefined) { title.favorite = false; changed = true; }
-			// every stored tmdbId predates tmdbMediaType and came from the Collections path,
-			// which only ever wrote movie ids
-			if (title.tmdbId && title.tmdbMediaType === undefined) {
-				title.tmdbMediaType = 'movie';
-				changed = true;
-			}
-		}
-
-		if (!this.data.posterRetryDone) {
-			for (const title of this.data.titles) {
-				if (title.posterUrl === 'none') {
-					title.posterUrl = '';
-				}
-			}
-			this.data.posterRetryDone = true;
-			changed = true;
-		}
-
-		if (!this.data.recommendedDaily) {
-			this.data.recommendedDaily = { date: '', ids: [] };
-			changed = true;
-		}
-		return changed;
+	private get lists(): LegacyLists {
+		return this.local.data as unknown as LegacyLists;
 	}
 
 	// Rows-view daily recommendations
 
 	getRecommendedDaily(): RecommendedDaily {
-		return this.data.recommendedDaily ?? { date: '', ids: [] };
+		return this.local.data.ui.recommendedDaily ?? { date: '', ids: [] };
 	}
 
 	/**
@@ -147,25 +152,25 @@ export class DataManager {
 	 * renders them itself.
 	 */
 	setRecommendedDaily(rec: RecommendedDaily): void {
-		this.data.recommendedDaily = rec;
-		void this.saveOnly();
+		this.local.data.ui.recommendedDaily = rec;
+		this.local.queueSave();
 	}
 
 	/**
-	 * Silent poster URL update: memory now, debounced disk save (5s). No notify — the card that
+	 * Silent poster URL update: memory now, debounced cache save (5s). No notify — the card that
 	 * triggered the fetch updates its own <img>.
 	 */
 	updatePosterUrl(titleId: string, url: string): void {
-		const title = this.data.titles.find((t) => t.id === titleId);
-		if (title) {
-			title.posterUrl = url;
-			this.schedulePosterSave();
-		}
+		const title = this.getTitle(titleId);
+		if (!title) return;
+		title.posterUrl = url;
+		this.local.data.cache[titleId] = { ...this.local.getCache(titleId), posterUrl: url };
+		this.schedulePosterSave();
 	}
 
 	/** Silent TMDB id + collection cache. tmdbId null = not a movie, keep the verdict only. */
 	updateTmdbIdentity(id: string, tmdbId: number | null, collectionId: number): void {
-		const title = this.data.titles.find((t) => t.id === id);
+		const title = this.getTitle(id);
 		if (!title) return;
 		const nextTmdbId = tmdbId ?? title.tmdbId;
 		if (title.tmdbId === nextTmdbId && title.collectionId === collectionId) return;
@@ -175,40 +180,39 @@ export class DataManager {
 			title.tmdbMediaType = 'movie';
 		}
 		title.collectionId = collectionId;
-		void this.saveOnly();
+		this.syncCache(title);
 	}
 
-	/** Silent community-rating update: memory + disk, no notify. The caller refreshes its own UI. */
+	/** Silent community-rating update: memory + cache, no notify. The caller refreshes its own UI. */
 	updateCommunityRating(
 		id: string,
 		rating: number,
 		votes: number,
 		source: '' | 'imdb' | 'mal' | 'anilist' | 'tmdb',
 	): void {
-		const title = this.data.titles.find((t) => t.id === id);
+		const title = this.getTitle(id);
 		if (!title) return;
 		title.communityRating = rating;
 		title.communityVotes = votes;
 		title.communitySource = source;
 		title.communityRatingLastFetched = new Date().toISOString();
-		void this.saveOnly();
+		this.syncCache(title);
 	}
 
 	/**
-	 * Silent trailer URL update (manual refresh): memory + disk, no notify — the caller re-renders
+	 * Silent trailer URL update (manual refresh): memory + cache, no notify — the caller re-renders
 	 * its own row.
 	 */
 	updateTrailerUrl(titleId: string, url: string): void {
-		const title = this.data.titles.find((t) => t.id === titleId);
+		const title = this.getTitle(titleId);
 		if (!title) return;
 		title.trailerUrl = url;
-		void this.saveOnly();
+		this.syncCache(title);
 	}
 
 	/**
-	 * Persists a director/cast backfill through the normal update path: data.json AND the note's
-	 * frontmatter (NOT the poster-style silent save, which skips the .md). Deliberately does not
-	 * stamp dateModified — a background backfill is not a user edit and must not reshuffle
+	 * Persists a director/cast backfill: cache AND the note's merged credit fields. Deliberately does
+	 * not stamp dateModified — a background backfill is not a user edit and must not reshuffle
 	 * "recently modified" sorts.
 	 *
 	 * Only the fetched fields are touched; user-added credits live in their own arrays. Manual
@@ -221,8 +225,8 @@ export class DataManager {
 		title.cast = cast;
 		title.manualDirector = pruneManualCredits(title.manualDirector ?? [], director);
 		title.manualCast = pruneManualCredits(title.manualCast ?? [], cast);
-		await this.save();
-		await this.updateMarkdownFile(title);
+		await this.writeTitle(title);
+		this.notifyListeners();
 	}
 
 	/** Studio backfill; same no-dateModified rules as updateCredits. Caches the TMDB id it resolved. */
@@ -240,14 +244,14 @@ export class DataManager {
 			title.tmdbId = tmdbId;
 			title.tmdbMediaType = tmdbMediaType;
 		}
-		await this.save();
-		await this.updateMarkdownFile(title);
+		await this.writeTitle(title);
+		this.notifyListeners();
 	}
 
 	/**
 	 * Replaces one field's user-added credits (the add modal commits additions and removals in one
 	 * call). Uncapped by design — the API cap trims a fetched cast, not user input. Like
-	 * updateCredits: data.json + frontmatter, no dateModified stamp.
+	 * updateCredits: no dateModified stamp.
 	 */
 	async updateManualCredits(titleId: string, field: CreditsField, names: string[]): Promise<void> {
 		const title = this.getTitle(titleId);
@@ -258,13 +262,13 @@ export class DataManager {
 		if (field === 'director') title.manualDirector = cleaned;
 		else if (field === 'cast') title.manualCast = cleaned;
 		else title.manualStudio = cleaned;
-		await this.save();
-		await this.updateMarkdownFile(title);
+		await this.writeTitle(title);
+		this.notifyListeners();
 	}
 
 	/**
-	 * Silent favorite toggle: data.json + frontmatter, no notify — the detail modal updates its own
-	 * button and flags the change for the on-close refresh. No dateModified stamp.
+	 * Silent favorite toggle: note only, no notify — the detail modal updates its own button and
+	 * flags the change for the on-close refresh. No dateModified stamp.
 	 */
 	async setFavorite(id: string, favorite: boolean): Promise<void> {
 		const title = this.getTitle(id);
@@ -273,15 +277,14 @@ export class DataManager {
 		// stamp drives the Favorites shelf order (newest first); cleared on unfavorite
 		if (favorite) title.dateFavorited = new Date().toISOString();
 		else delete title.dateFavorited;
-		await this.saveOnly();
-		await this.updateMarkdownFile(title);
+		await this.writeTitle(title);
 	}
 
 	private schedulePosterSave(): void {
 		if (this.posterSaveTimer !== null) return;
 		this.posterSaveTimer = window.setTimeout(() => {
 			this.posterSaveTimer = null;
-			void this.saveOnly();
+			this.local.queueSave();
 		}, this.POSTER_SAVE_DEBOUNCE_MS);
 	}
 
@@ -290,79 +293,68 @@ export class DataManager {
 		if (this.posterSaveTimer !== null) {
 			window.clearTimeout(this.posterSaveTimer);
 			this.posterSaveTimer = null;
-			void this.saveOnly();
+			this.local.queueSave();
 		}
 	}
 
-	/** Synchronously flush a pending poster save during plugin unload. */
+	/** Flush a pending poster save during plugin unload. */
 	flushPosterSaveSync(): void {
-		if (this.posterSaveTimer !== null) {
-			window.clearTimeout(this.posterSaveTimer);
-			this.posterSaveTimer = null;
-			this.lastSelfSaveTime = Date.now();
-			void this.plugin.saveData(this.data);
-		}
+		this.flushPosterSave();
+		void this.local.flush();
 	}
 
-	/** Public access to the full in-memory data snapshot. */
+	/**
+	 * data.json contents (device-local settings, cache, UI state). Reading, games and history still
+	 * keep their datasets as keys on this object until they move to the vault.
+	 */
 	getData(): WatchLogData {
-		return this.data;
+		return this.local.data as unknown as WatchLogData;
 	}
 
 	/** Centralized debounced save for cross-cutting paths (settings, drafts, lists). */
 	queueSave(): void {
-		if (this.queuedSaveTimer !== null) {
-			window.clearTimeout(this.queuedSaveTimer);
-		}
-		this.queuedSaveTimer = window.setTimeout(() => {
-			this.queuedSaveTimer = null;
-			void this.saveOnly();
-		}, this.QUEUED_SAVE_DEBOUNCE_MS);
+		this.local.queueSave();
 	}
 
 	flushQueuedSaveSync(): void {
-		if (this.queuedSaveTimer !== null) {
-			window.clearTimeout(this.queuedSaveTimer);
-			this.queuedSaveTimer = null;
-			this.lastSelfSaveTime = Date.now();
-			void this.plugin.saveData(this.data);
-		}
+		void this.local.flush();
 	}
 
 	/** Save settings through the centralized data path. */
 	async saveSettings(settings: WatchLogPluginSettings): Promise<void> {
-		this.data.settings = settings;
-		await this.saveOnly();
+		this.local.data.settings = settings as unknown as Record<string, unknown>;
+		await this.persist();
 	}
 
-	private async saveOnly(): Promise<void> {
-		this.lastSelfSaveTime = Date.now();
-		await this.plugin.saveData(this.data);
-		this.lastSelfSaveTime = Date.now();
+	/** Writes data.json now. Reading, games and history route their saves through here. */
+	async persist(): Promise<void> {
+		this.local.queueSave();
+		await this.local.flush();
 	}
 
 	/**
-	 * Persist the full in-memory data object to data.json. Reading and activity-log data live as
-	 * keys (`reading` / `history`) in this same object, so those managers route their saves through
-	 * here. saveOnly() stamps lastSelfSaveTime, so the 'raw' watcher ignores the echo.
+	 * Writes titles changed via updateTitleSilent (and pending episode toggles), syncs in-memory API
+	 * data to the cache, then notifies.
 	 */
-	async persist(): Promise<void> {
-		await this.saveOnly();
-	}
-
 	async save(): Promise<void> {
-		// an immediate save supersedes any pending debounced one — memory already has those changes
+		// an immediate save supersedes any pending debounced one
 		if (this.pendingSaveTimer !== null) {
 			window.clearTimeout(this.pendingSaveTimer);
 			this.pendingSaveTimer = null;
-			this.pendingMdTitleIds.clear();
 		}
-		await this.saveOnly();
+		const ids = [...this.dirty, ...this.pendingMdTitleIds];
+		this.dirty.clear();
+		this.pendingMdTitleIds.clear();
+		for (const id of new Set(ids)) {
+			const t = this.getTitle(id);
+			if (t) await this.writeTitle(t);
+		}
+		for (const { view } of this.views.values()) this.syncCache(view);
 		this.notifyListeners();
 	}
 
 	/**
-	 * Schedule a debounced silent save (no notify, no re-render). Later calls reset the timer;
+	 * Schedule a debounced silent note write (no notify, no re-render). Later calls reset the timer;
 	 * callers own any targeted DOM updates.
 	 */
 	scheduleEpisodeSave(titleIdForMd: string): void {
@@ -384,36 +376,38 @@ export class DataManager {
 		if (this.pendingMdTitleIds.size === 0) return;
 		const ids = Array.from(this.pendingMdTitleIds);
 		this.pendingMdTitleIds.clear();
-		await this.saveOnly();
 		for (const id of ids) {
 			const t = this.getTitle(id);
-			if (t) await this.updateMarkdownFile(t);
+			if (t) await this.writeTitle(t);
 		}
 	}
 
-	/** Synchronously flush a pending episode-save during plugin unload (no awaits). */
+	/** Starts a pending episode write during plugin unload (cannot be awaited there). */
 	flushPendingSaveSync(): void {
-		if (this.pendingSaveTimer !== null) {
-			window.clearTimeout(this.pendingSaveTimer);
-			this.pendingSaveTimer = null;
-		}
-		if (this.pendingMdTitleIds.size === 0) return;
-		const ids = Array.from(this.pendingMdTitleIds);
-		this.pendingMdTitleIds.clear();
-		this.lastSelfSaveTime = Date.now();
-		void this.plugin.saveData(this.data);
-		for (const id of ids) {
-			const t = this.getTitle(id);
-			if (t) void this.updateMarkdownFile(t);
-		}
+		void this.flushPendingSave();
+	}
+
+	// Reads
+
+	/** Mutable copy of an index entry; stable per id until the note changes underneath. */
+	private viewOf(src: WatchLogTitle): WatchLogTitle {
+		const slot = this.views.get(src.id);
+		if (slot && slot.src === src) return slot.view;
+		// a pending silent edit keeps its copy until written
+		if (slot && (this.dirty.has(src.id) || this.pendingMdTitleIds.has(src.id))) return slot.view;
+		const view = structuredClone(src);
+		view.notes = this.notes.get(src.id) ?? '';
+		this.views.set(src.id, { src, view });
+		return view;
 	}
 
 	getTitles(): WatchLogTitle[] {
-		return this.data.titles ?? [];
+		return this.index.titles().map((t) => this.viewOf(t));
 	}
 
 	getTitle(id: string): WatchLogTitle | undefined {
-		return (this.data.titles ?? []).find((t) => t.id === id);
+		const e = this.index.get(id);
+		return e?.kind === 'title' ? this.viewOf(e.entry) : undefined;
 	}
 
 	async addTitle(title: WatchLogTitle): Promise<void> {
@@ -426,12 +420,11 @@ export class DataManager {
 		if (autoUpcoming) {
 			title.status = 'To be released';
 		}
-		this.data.titles.push(title);
-		await this.save();
+		await this.createNote(title);
 		if (autoUpcoming) {
 			await this.autoAddToUpcoming(title);
 		}
-		await this.updateMarkdownFile(title);
+		this.notifyListeners();
 		const now = new Date().toISOString();
 		void this.historyManager?.log(
 			`${title.title} (${title.type}) was added on ${formatHistoryDate(now)}`,
@@ -445,77 +438,41 @@ export class DataManager {
 		if (autoUpcoming) {
 			title.status = 'To be released';
 		}
-		this.data.titles.push(title);
-		await this.saveOnly();
+		await this.createNote(title);
 		if (autoUpcoming) {
 			await this.autoAddToUpcoming(title);
 		}
-		await this.updateMarkdownFile(title);
 	}
 
-	/** Batch-add: push all titles into memory, save once, then write all MD files. */
+	/** Batch-add: one note per title; ids are rewritten to the created note paths. */
 	async addTitleBatch(titles: WatchLogTitle[]): Promise<void> {
-		const upcoming: WatchLogTitle[] = [];
 		for (const title of titles) {
-			if (this.canAutoAddToUpcoming(title)) {
-				title.status = 'To be released';
-				upcoming.push(title);
-			}
-			this.data.titles.push(title);
-		}
-		await this.saveOnly();
-		for (const title of upcoming) {
-			await this.autoAddToUpcoming(title);
-		}
-		for (const title of titles) {
-			await this.updateMarkdownFile(title);
+			await this.addTitleSilent(title);
 		}
 	}
 
-	/** Batch-update via mutator. Single save + single notify; MD files updated. */
+	/** Batch-update via mutator. Single notify; notes updated. */
 	async batchUpdate(ids: string[], mutator: (t: WatchLogTitle) => void): Promise<void> {
-		const updated: WatchLogTitle[] = [];
+		let updated = 0;
 		for (const id of ids) {
 			const t = this.getTitle(id);
 			if (!t) continue;
 			mutator(t);
 			t.dateModified = new Date().toISOString();
-			updated.push(t);
+			await this.writeTitle(t);
+			updated++;
 		}
-		if (updated.length === 0) return;
-		await this.save();
-		for (const t of updated) {
-			await this.updateMarkdownFile(t);
-		}
+		if (updated > 0) this.notifyListeners();
 	}
 
-	/** Remove multiple titles in one batch: single save, MD files deleted in chunks of 10. */
+	/** Remove multiple titles in one batch: single notify, notes trashed in chunks of 10. */
 	async removeTitlesBatch(ids: string[]): Promise<void> {
 		const CHUNK_SIZE = 10;
-		const titlesToDelete: WatchLogTitle[] = [];
-
-		for (const id of ids) {
-			const title = this.getTitle(id);
-			if (title) titlesToDelete.push(title);
-			this.data.titles = this.data.titles.filter((t) => t.id !== id);
-			for (const group of this.data.groups) {
-				group.titleIds = group.titleIds.filter((tid) => tid !== id);
-			}
-			if (this.data.airtime) {
-				this.data.airtime = this.data.airtime.filter((e) => e.titleId !== id || e.source === 'reading');
-			}
-			const d = this.data as unknown as Record<string, unknown>;
-			if (d['collapsedSeasons']) {
-				delete (d['collapsedSeasons'] as Record<string, number[]>)[id];
-			}
+		for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+			const chunk = ids.slice(i, i + CHUNK_SIZE);
+			await Promise.all(chunk.map((id) => this.deleteNote(id)));
 		}
-
-		await this.save();
-
-		for (let i = 0; i < titlesToDelete.length; i += CHUNK_SIZE) {
-			const chunk = titlesToDelete.slice(i, i + CHUNK_SIZE);
-			await Promise.all(chunk.map((t) => this.deleteMarkdownFile(t)));
-		}
+		this.notifyListeners();
 	}
 
 	canAutoAddToUpcoming(title: WatchLogTitle): boolean {
@@ -529,10 +486,10 @@ export class DataManager {
 	}
 
 	async autoAddToUpcoming(title: WatchLogTitle): Promise<void> {
-		if (!this.data.airtime) this.data.airtime = [];
+		if (!this.lists.airtime) this.lists.airtime = [];
 		// avoid duplicates
-		if (this.data.airtime.some((e) => e.titleId === title.id)) return;
-		const entry: import('./types').AirtimeEntry = {
+		if (this.lists.airtime.some((e) => e.titleId === title.id)) return;
+		const entry: AirtimeEntry = {
 			id: this.generateAirtimeId(title.id),
 			titleId: title.id,
 			schedule: {
@@ -541,8 +498,8 @@ export class DataManager {
 			},
 			dateAdded: new Date().toISOString(),
 		};
-		this.data.airtime.push(entry);
-		await this.plugin.saveData(this.data);
+		this.lists.airtime.push(entry);
+		await this.persist();
 	}
 
 	/**
@@ -591,12 +548,13 @@ export class DataManager {
 
 	/** Remove all Upcoming entries for a title (e.g. when the date goes past). */
 	async removeAirtimeEntriesForTitle(titleId: string): Promise<void> {
-		const before = (this.data.airtime ?? []).length;
-		this.data.airtime = (this.data.airtime ?? []).filter(
+		const before = (this.lists.airtime ?? []).length;
+		this.lists.airtime = (this.lists.airtime ?? []).filter(
 			(e) => e.titleId !== titleId || (e.source !== undefined && e.source !== 'watchlist'),
 		);
-		if ((this.data.airtime ?? []).length !== before) {
-			await this.save();
+		if ((this.lists.airtime ?? []).length !== before) {
+			await this.persist();
+			this.notifyListeners();
 		}
 	}
 
@@ -605,8 +563,8 @@ export class DataManager {
 
 	/** Auto-adds a reading item with a future release date to Upcoming. No-op if one exists. */
 	async autoAddReadingToUpcoming(item: Book | Manga, kind: 'book' | 'manga'): Promise<void> {
-		if (!this.data.airtime) this.data.airtime = [];
-		if (this.data.airtime.some((e) => e.source === 'reading' && e.titleId === item.id)) return;
+		if (!this.lists.airtime) this.lists.airtime = [];
+		if (this.lists.airtime.some((e) => e.source === 'reading' && e.titleId === item.id)) return;
 		const entry: AirtimeEntry = {
 			id: this.generateReadingAirtimeId(item.id),
 			titleId: item.id,
@@ -618,24 +576,25 @@ export class DataManager {
 			},
 			dateAdded: new Date().toISOString(),
 		};
-		this.data.airtime.push(entry);
-		await this.plugin.saveData(this.data);
+		this.lists.airtime.push(entry);
+		await this.persist();
 	}
 
 	/** Remove all Upcoming entries for a reading item (book/manga id). */
 	async removeReadingAirtimeEntries(itemId: string): Promise<void> {
-		const before = (this.data.airtime ?? []).length;
-		this.data.airtime = (this.data.airtime ?? []).filter(
+		const before = (this.lists.airtime ?? []).length;
+		this.lists.airtime = (this.lists.airtime ?? []).filter(
 			(e) => !(e.source === 'reading' && e.titleId === itemId),
 		);
-		if ((this.data.airtime ?? []).length !== before) {
-			await this.save();
+		if ((this.lists.airtime ?? []).length !== before) {
+			await this.persist();
+			this.notifyListeners();
 		}
 	}
 
 	generateReadingAirtimeId(itemId: string): string {
 		const base = `airtime-reading-${itemId}`;
-		const existing = (this.data.airtime ?? []).map((e) => e.id);
+		const existing = (this.lists.airtime ?? []).map((e) => e.id);
 		if (!existing.includes(base)) return base;
 		let counter = 2;
 		while (existing.includes(`${base}-${counter}`)) counter++;
@@ -646,8 +605,8 @@ export class DataManager {
 
 	/** Auto-adds a game with a future release date to Upcoming. No-op if one exists. */
 	async autoAddGameToUpcoming(game: Game): Promise<void> {
-		if (!this.data.airtime) this.data.airtime = [];
-		if (this.data.airtime.some((e) => e.source === 'game' && e.titleId === game.id)) return;
+		if (!this.lists.airtime) this.lists.airtime = [];
+		if (this.lists.airtime.some((e) => e.source === 'game' && e.titleId === game.id)) return;
 		const entry: AirtimeEntry = {
 			id: this.generateGameAirtimeId(game.id),
 			titleId: game.id,
@@ -658,84 +617,76 @@ export class DataManager {
 			},
 			dateAdded: new Date().toISOString(),
 		};
-		this.data.airtime.push(entry);
-		await this.plugin.saveData(this.data);
+		this.lists.airtime.push(entry);
+		await this.persist();
 	}
 
 	/** Remove all Upcoming entries for a game id. */
 	async removeGameAirtimeEntries(gameId: string): Promise<void> {
-		const before = (this.data.airtime ?? []).length;
-		this.data.airtime = (this.data.airtime ?? []).filter(
+		const before = (this.lists.airtime ?? []).length;
+		this.lists.airtime = (this.lists.airtime ?? []).filter(
 			(e) => !(e.source === 'game' && e.titleId === gameId),
 		);
-		if ((this.data.airtime ?? []).length !== before) {
-			await this.save();
+		if ((this.lists.airtime ?? []).length !== before) {
+			await this.persist();
+			this.notifyListeners();
 		}
 	}
 
 	generateGameAirtimeId(gameId: string): string {
 		const base = `airtime-game-${gameId}`;
-		const existing = (this.data.airtime ?? []).map((e) => e.id);
+		const existing = (this.lists.airtime ?? []).map((e) => e.id);
 		if (!existing.includes(base)) return base;
 		let counter = 2;
 		while (existing.includes(`${base}-${counter}`)) counter++;
 		return `${base}-${counter}`;
 	}
 
-	async updateTitle(updated: WatchLogTitle): Promise<void> {
-		updated.dateModified = new Date().toISOString();
-		if (updated.status === 'Completed') {
-			updated.priority = '';
+	/** Logs rating / completion changes against the stored state. */
+	private logChanges(updated: WatchLogTitle): void {
+		const old = this.views.get(updated.id)?.src;
+		if (!old) return;
+		const now = new Date().toISOString();
+		if (old.rating !== updated.rating) {
+			void this.historyManager?.log(
+				`${updated.title} (${updated.type}) was reviewed on ${formatHistoryDate(now)}`,
+				{ source: 'Watchlist', action: 'rating', titleName: updated.title },
+			);
 		}
-		const idx = this.data.titles.findIndex((t) => t.id === updated.id);
-		if (idx >= 0) {
-			const old = this.data.titles[idx]!;
-			const now = new Date().toISOString();
-			if (old.rating !== updated.rating) {
-				void this.historyManager?.log(
-					`${updated.title} (${updated.type}) was reviewed on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'rating', titleName: updated.title },
-				);
-			}
-			if (old.status !== updated.status && updated.status === 'Completed') {
-				void this.historyManager?.log(
-					`${updated.title} (${updated.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'completed', titleName: updated.title },
-				);
-			}
-			this.data.titles[idx] = updated;
-			await this.save();
-			await this.updateMarkdownFile(updated);
+		if (old.status !== updated.status && updated.status === 'Completed') {
+			void this.historyManager?.log(
+				`${updated.title} (${updated.type}) was marked as watched on ${formatHistoryDate(now)}`,
+				{ source: 'Watchlist', action: 'completed', titleName: updated.title },
+			);
 		}
 	}
 
-	/**
-	 * Update without saving or notifying. Caller must save() (or saveOnly + notifyChange) once after
-	 * the batch, and owns the per-title markdown update.
-	 */
-	updateTitleSilent(updated: WatchLogTitle): void {
+	async updateTitle(updated: WatchLogTitle): Promise<void> {
+		if (!this.getTitle(updated.id)) return;
 		updated.dateModified = new Date().toISOString();
 		if (updated.status === 'Completed') {
 			updated.priority = '';
 		}
-		const idx = this.data.titles.findIndex((t) => t.id === updated.id);
-		if (idx >= 0) {
-			const old = this.data.titles[idx]!;
-			const now = new Date().toISOString();
-			if (old.rating !== updated.rating) {
-				void this.historyManager?.log(
-					`${updated.title} (${updated.type}) was reviewed on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'rating', titleName: updated.title },
-				);
-			}
-			if (old.status !== updated.status && updated.status === 'Completed') {
-				void this.historyManager?.log(
-					`${updated.title} (${updated.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'completed', titleName: updated.title },
-				);
-			}
-			this.data.titles[idx] = updated;
+		this.logChanges(updated);
+		this.dirty.delete(updated.id);
+		await this.writeTitle(updated);
+		this.notifyListeners();
+	}
+
+	/**
+	 * Update without writing or notifying. Caller must save() once after the batch (or write the note
+	 * itself via updateMarkdownFile).
+	 */
+	updateTitleSilent(updated: WatchLogTitle): void {
+		const slot = this.views.get(updated.id);
+		if (!slot) return;
+		updated.dateModified = new Date().toISOString();
+		if (updated.status === 'Completed') {
+			updated.priority = '';
 		}
+		this.logChanges(updated);
+		slot.view = updated;
+		this.dirty.add(updated.id);
 	}
 
 	async removeTitle(id: string): Promise<void> {
@@ -747,49 +698,41 @@ export class DataManager {
 				{ source: 'Watchlist', action: 'deleted', titleName: title.title },
 			);
 		}
-		this.data.titles = this.data.titles.filter((t) => t.id !== id);
-		for (const group of this.data.groups) {
-			group.titleIds = group.titleIds.filter((tid) => tid !== id);
-		}
-		if (this.data.airtime) {
-			this.data.airtime = this.data.airtime.filter((e) => e.titleId !== id || e.source === 'reading');
-		}
-		const d = this.data as unknown as Record<string, unknown>;
-		if (d['collapsedSeasons']) {
-			delete (d['collapsedSeasons'] as Record<string, number[]>)[id];
-		}
-		await this.save();
-		if (title) {
-			await this.deleteMarkdownFile(title);
-		}
+		await this.deleteNote(id);
+		this.notifyListeners();
 	}
 
 	// Group CRUD
 
 	getGroups(): WatchLogGroup[] {
-		return this.data.groups ?? [];
+		return this.lists.groups ?? [];
 	}
 
 	getGroup(id: string): WatchLogGroup | undefined {
-		return (this.data.groups ?? []).find((g) => g.id === id);
+		return (this.lists.groups ?? []).find((g) => g.id === id);
 	}
 
 	async addGroup(group: WatchLogGroup): Promise<void> {
-		this.data.groups.push(group);
-		await this.save();
+		if (!this.lists.groups) this.lists.groups = [];
+		this.lists.groups.push(group);
+		await this.persist();
+		this.notifyListeners();
 	}
 
 	async updateGroup(updated: WatchLogGroup): Promise<void> {
-		const idx = this.data.groups.findIndex((g) => g.id === updated.id);
+		const groups = this.lists.groups ?? [];
+		const idx = groups.findIndex((g) => g.id === updated.id);
 		if (idx >= 0) {
-			this.data.groups[idx] = updated;
-			await this.save();
+			groups[idx] = updated;
+			await this.persist();
+			this.notifyListeners();
 		}
 	}
 
 	async removeGroup(id: string): Promise<void> {
-		this.data.groups = this.data.groups.filter((g) => g.id !== id);
-		await this.save();
+		this.lists.groups = (this.lists.groups ?? []).filter((g) => g.id !== id);
+		await this.persist();
+		this.notifyListeners();
 	}
 
 	async addTitleToGroup(groupId: string, titleId: string): Promise<void> {
@@ -803,7 +746,7 @@ export class DataManager {
 
 	getGroupedTitleIds(): Set<string> {
 		const ids = new Set<string>();
-		for (const group of (this.data.groups ?? [])) {
+		for (const group of this.getGroups()) {
 			for (const id of group.titleIds) {
 				ids.add(id);
 			}
@@ -812,94 +755,103 @@ export class DataManager {
 	}
 
 	generateGroupId(name: string): string {
-		let id =
+		const id =
 			'group-' +
 			name
 				.toLowerCase()
 				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/^-|-$/g, '');
-		const existing = (this.data.groups ?? []).map((g) => g.id);
+		const existing = this.getGroups().map((g) => g.id);
 		if (!existing.includes(id)) return id;
 		let counter = 2;
 		while (existing.includes(`${id}-${counter}`)) counter++;
 		return `${id}-${counter}`;
 	}
 
-	// Pinned group
+	// Pinned group (device-local UI state)
 
 	getPinnedGroupId(): string | null {
-		return this.data.pinnedGroupId ?? null;
+		return this.local.data.ui.pinnedGroup ?? null;
 	}
 
 	async setPinnedGroupId(id: string | null): Promise<void> {
-		this.data.pinnedGroupId = id;
-		await this.save();
+		this.local.data.ui.pinnedGroup = id;
+		await this.persist();
+		this.notifyListeners();
 	}
 
-	// Saved filter preset
+	// Saved filter preset (device-local UI state)
 
 	getSavedFilterPreset(): SavedFilterPreset | null {
-		return this.data.savedFilterPreset ?? null;
+		return this.local.data.ui.savedFilterPreset ?? null;
 	}
 
 	async setSavedFilterPreset(preset: SavedFilterPreset | null): Promise<void> {
-		this.data.savedFilterPreset = preset;
-		await this.save();
+		this.local.data.ui.savedFilterPreset = preset;
+		await this.persist();
+		this.notifyListeners();
 	}
 
 	// Airtime CRUD
 
 	getAirtimeEntries(): AirtimeEntry[] {
-		return this.data.airtime ?? [];
+		return this.lists.airtime ?? [];
 	}
 
 	async addAirtimeEntry(entry: AirtimeEntry): Promise<void> {
-		if (!this.data.airtime) this.data.airtime = [];
-		this.data.airtime.push(entry);
-		await this.save();
+		if (!this.lists.airtime) this.lists.airtime = [];
+		this.lists.airtime.push(entry);
+		await this.persist();
+		this.notifyListeners();
 	}
 
 	async updateAirtimeEntry(updated: AirtimeEntry): Promise<void> {
-		if (!this.data.airtime) return;
-		const idx = this.data.airtime.findIndex((e) => e.id === updated.id);
+		const airtime = this.lists.airtime;
+		if (!airtime) return;
+		const idx = airtime.findIndex((e) => e.id === updated.id);
 		if (idx >= 0) {
-			this.data.airtime[idx] = updated;
-			await this.save();
+			airtime[idx] = updated;
+			await this.persist();
+			this.notifyListeners();
 		}
 	}
 
 	async removeAirtimeEntry(id: string): Promise<void> {
-		this.data.airtime = (this.data.airtime ?? []).filter((e) => e.id !== id);
-		await this.save();
+		this.lists.airtime = (this.lists.airtime ?? []).filter((e) => e.id !== id);
+		await this.persist();
+		this.notifyListeners();
 	}
 
 	async removeAirtimeEntriesBatch(ids: string[]): Promise<void> {
 		if (ids.length === 0) return;
 		const removeSet = new Set(ids);
-		this.data.airtime = (this.data.airtime ?? []).filter((e) => !removeSet.has(e.id));
-		await this.save();
+		this.lists.airtime = (this.lists.airtime ?? []).filter((e) => !removeSet.has(e.id));
+		await this.persist();
+		this.notifyListeners();
 	}
 
 	// Maybe CRUD
 
 	getMaybeTitles(): MaybeTitle[] {
-		return this.data.maybe ?? [];
+		return this.lists.maybe ?? [];
 	}
 
 	async addMaybeTitle(title: MaybeTitle): Promise<void> {
-		if (!this.data.maybe) this.data.maybe = [];
-		this.data.maybe.push(title);
-		await this.save();
+		if (!this.lists.maybe) this.lists.maybe = [];
+		this.lists.maybe.push(title);
+		await this.persist();
+		this.notifyListeners();
 	}
 
 	async removeMaybeTitle(id: string): Promise<void> {
-		this.data.maybe = (this.data.maybe ?? []).filter((t) => t.id !== id);
-		await this.save();
+		this.lists.maybe = (this.lists.maybe ?? []).filter((t) => t.id !== id);
+		await this.persist();
+		this.notifyListeners();
 	}
 
 	generateMaybeId(titleName: string): string {
-		let base = 'maybe-' + titleName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-		const existing = (this.data.maybe ?? []).map((t) => t.id);
+		const base = 'maybe-' + titleName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+		const existing = (this.lists.maybe ?? []).map((t) => t.id);
 		if (!existing.includes(base)) return base;
 		let counter = 2;
 		while (existing.includes(`${base}-${counter}`)) counter++;
@@ -908,7 +860,7 @@ export class DataManager {
 
 	generateAirtimeId(titleId: string): string {
 		const base = `airtime-${titleId}`;
-		const existing = (this.data.airtime ?? []).map((e) => e.id);
+		const existing = (this.lists.airtime ?? []).map((e) => e.id);
 		if (!existing.includes(base)) return base;
 		let counter = 2;
 		while (existing.includes(`${base}-${counter}`)) counter++;
@@ -968,54 +920,11 @@ export class DataManager {
 	}
 
 	getTotalTimeWatched(): number {
-		return (this.data.titles ?? []).reduce((sum, t) => sum + this.calcTimeWatched(t), 0);
+		return this.getTitles().reduce((sum, t) => sum + this.calcTimeWatched(t), 0);
 	}
 
 	getTotalTimeRemaining(): number {
-		return (this.data.titles ?? []).reduce((sum, t) => sum + this.calcTimeRemaining(t), 0);
-	}
-
-	// External change watcher
-
-	/**
-	 * Vault-relative path of our own data.json, as the 'raw' event reports it. Derived from the
-	 * manifest rather than hardcoded: the plugin folder is only called `watchlog` on a Community
-	 * Plugins install — BRAT and manual installs can name it anything, and a hardcoded match would
-	 * silently disable external-change detection there.
-	 */
-	private dataFilePath(): string {
-		const dir = this.plugin.manifest.dir
-			?? `${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`;
-		return normalizePath(`${dir}/data.json`);
-	}
-
-	startWatchingExternalChanges(): void {
-		const dataPath = this.dataFilePath();
-		// 'raw' fires when Obsidian Sync writes a file directly to disk (not via the vault API). A real
-		// runtime event, but not declared in Obsidian's public types.
-		const ref = (
-			this.app.vault as unknown as {
-				on(event: 'raw', cb: (path: string) => void): import('obsidian').EventRef;
-			}
-		).on('raw', (path: string) => {
-			if (normalizePath(path) === dataPath) {
-				// suppress the echo of our own saveOnly() — Obsidian fires 'raw' for any write to the data file,
-				// so without this guard each episode click cascades into load() + notifyListeners()
-				if (Date.now() - this.lastSelfSaveTime < this.SELF_SAVE_ECHO_WINDOW_MS) {
-					return;
-				}
-				void (async () => {
-					await this.load();
-					this.notifyListeners();
-					// reading + activity log live in data.json now, so a synced file carries them: re-bind those
-					// managers to the fresh object and refresh their UIs
-					await this.plugin.readingDataManager?.adoptExternalChange();
-					await this.plugin.gameDataManager?.adoptExternalChange();
-					this.plugin.historyManager?.adoptExternalChange();
-				})();
-			}
-		});
-		this.plugin.registerEvent(ref);
+		return this.getTitles().reduce((sum, t) => sum + this.calcTimeRemaining(t), 0);
 	}
 
 	// Listeners
@@ -1040,20 +949,17 @@ export class DataManager {
 		activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
 	}
 
-	// Season collapse persistence
+	// Season collapse persistence (device-local UI state)
 
 	getCollapsedSeasonsForTitle(titleId: string): Set<number> {
-		const stored = (this.data as unknown as Record<string, unknown>)['collapsedSeasons'] as
-			| Record<string, number[]>
-			| undefined;
-		return new Set<number>(stored?.[titleId] ?? []);
+		return new Set<number>(this.local.data.ui.collapsedSeasons?.[titleId] ?? []);
 	}
 
 	async persistCollapsedSeasons(titleId: string, seasons: Set<number>): Promise<void> {
-		const d = this.data as unknown as Record<string, unknown>;
-		if (!d['collapsedSeasons']) d['collapsedSeasons'] = {};
-		(d['collapsedSeasons'] as Record<string, number[]>)[titleId] = Array.from(seasons);
-		await this.save();
+		const ui = this.local.data.ui;
+		ui.collapsedSeasons = { ...ui.collapsedSeasons, [titleId]: Array.from(seasons) };
+		await this.persist();
+		this.notifyListeners();
 	}
 
 	// Skip helpers
@@ -1256,15 +1162,16 @@ export class DataManager {
 
 	async ensureFolders(): Promise<void> {
 		if (!this.plugin.settings.autoCreateFolders) return;
-		const root = this.plugin.settings.rootFolder;
-		await this.ensureFolder(root);
+		const layout = this.layout();
+		if (layout.root) await this.ensureFolder(layout.root);
 		for (const type of this.plugin.settings.types) {
-			await this.ensureFolder(`${root}/${type.name}`);
+			await this.ensureFolder(layout.folderFor('title', type.name));
 		}
 	}
 
 	async ensureFolder(path: string): Promise<void> {
 		const normalized = normalizePath(path);
+		if (!normalized || normalized === '/') return;
 		if (!this.app.vault.getAbstractFileByPath(normalized)) {
 			try {
 				await this.app.vault.createFolder(normalized);
@@ -1274,250 +1181,317 @@ export class DataManager {
 		}
 	}
 
-	private lastMarkdownPathById: Map<string, string> = new Map();
-
-	/** Resolves the per-title `.md` path — the same scheme used to create it. */
+	/** Path of the title's note: its id below the root. */
 	getNoteFilePath(title: WatchLogTitle): string {
-		const root = this.plugin.settings.rootFolder;
-		const safeTitle = title.title.replace(/[*"\\/<>:|?]/g, '-');
-		return normalizePath(`${root}/${title.type}/${safeTitle}.md`);
+		return this.layout().pathFromId(title.id);
 	}
 
+	/** Writes the title's note (creates it when missing). */
 	async updateMarkdownFile(title: WatchLogTitle): Promise<void> {
-		const root = this.plugin.settings.rootFolder;
-		const folderPath = normalizePath(`${root}/${title.type}`);
-		await this.ensureFolder(folderPath);
-		const filePath = this.getNoteFilePath(title);
-		const progress = this.getProgress(title);
-		const content = this.buildMarkdownContent(title, progress);
-
-		// remove the stale file first when the path changed (rename / type change)
-		const previousPath = this.lastMarkdownPathById.get(title.id);
-		if (previousPath && previousPath !== filePath) {
-			try {
-				const oldFile = this.app.vault.getAbstractFileByPath(previousPath);
-				if (oldFile instanceof TFile) {
-					await this.app.fileManager.trashFile(oldFile);
-				}
-			} catch {
-				// best-effort cleanup
-			}
-		}
-
-		const existing = this.app.vault.getAbstractFileByPath(filePath);
-		if (existing instanceof TFile) {
-			// body-preserving update: swap the leading frontmatter block, then replace ONLY the `## Notes`
-			// body. Everything else is kept verbatim — no append, no dupes (mirrors the Reading path).
-			const current = await this.app.vault.read(existing);
-			let updated = this.rebuildWithFrontmatter(current, this.buildFrontmatter(title, progress));
-			updated = this.replaceNotesSection(updated, title.notes);
-			if (updated !== current) {
-				await this.app.vault.modify(existing, updated);
-			}
-		} else {
-			// new file: write the full template (frontmatter + ## Notes from title.notes)
-			await this.app.vault.create(filePath, content);
-		}
-		this.lastMarkdownPathById.set(title.id, filePath);
+		await this.writeTitle(title);
 	}
 
-	/**
-	 * Replaces only the leading `---…---` frontmatter block, preserving the body; prepends it when
-	 * the file has none. Mirrors ReadingDataManager.rebuildWithFrontmatter.
-	 */
-	private rebuildWithFrontmatter(existing: string, frontmatter: string): string {
-		const fmMatch = existing.match(/^---\n[\s\S]*?\n---\n?/);
-		if (fmMatch) {
-			return frontmatter + '\n' + existing.slice(fmMatch[0].length);
-		}
-		// no frontmatter found — prepend it
-		return frontmatter + '\n\n' + existing;
-	}
-
-	/**
-	 * Reads the `## Notes` body back from a title note. null when the file or section is absent.
-	 * Lets manual .md edits flow back into the plugin.
-	 */
+	/** Reads the `## Notes` body back from a title note. null when the file or section is absent. */
 	async readNotesFromFile(title: WatchLogTitle): Promise<string | null> {
-		const filePath = this.getNoteFilePath(title);
-		const file = this.app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) {
-			// diagnostic: the resolved path matched no real file — the likely culprit if read-back ever
-			// stops working (sanitization / folder / rename mismatch)
-			console.warn(
-				`[WatchLog] Notes read: no note file at resolved path "${filePath}" for title "${title.title}"`,
-			);
-			return null;
-		}
-		const content = await this.app.vault.read(file);
-		const match = content.match(/(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/);
-		if (!match) return null;
-		// strip the template's leading blank line and trailing whitespace, keep internal breaks
-		return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
-	}
-
-	/**
-	 * Replaces the `## Notes` body, preserving the heading, every other section, the frontmatter and
-	 * any prose outside it. Appends the heading when missing (never duplicated). The boundary matches
-	 * readNotesFromFile, so read-then-write round-trips cleanly.
-	 */
-	private replaceNotesSection(existing: string, notesBody: string): string {
-		const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
-		if (!headingMatch || headingMatch.index === undefined) {
-			const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
-			return `${existing}${sep}\n## Notes\n\n${notesBody}\n`;
-		}
-		const bodyStart = headingMatch.index + headingMatch[0].length;
-		const after = existing.slice(bodyStart);
-		const nextHeading = after.match(/\n(?:## |# )/);
-		const bodyEnd =
-			nextHeading && nextHeading.index !== undefined
-				? bodyStart + nextHeading.index
-				: existing.length;
-		const before = existing.slice(0, bodyStart);
-		const rest = existing.slice(bodyEnd);
-		return `${before}\n${notesBody}\n${rest}`;
+		const file = this.fileOf(title.id);
+		if (!file) return null;
+		const notes = extractNotes(await this.app.vault.read(file));
+		this.notes.set(title.id, notes ?? '');
+		return notes;
 	}
 
 	async createMarkdownFileIfMissing(title: WatchLogTitle): Promise<boolean> {
-		const root = this.plugin.settings.rootFolder;
-		const folderPath = normalizePath(`${root}/${title.type}`);
-		const filePath = this.getNoteFilePath(title);
-		if (this.app.vault.getAbstractFileByPath(filePath) instanceof TFile) return false;
-		await this.ensureFolder(normalizePath(root));
-		await this.ensureFolder(folderPath);
-		const content = this.buildMarkdownContent(title, this.getProgress(title));
-		await this.app.vault.create(filePath, content);
+		if (this.fileOf(title.id)) return false;
+		await this.createNote(title);
 		return true;
 	}
 
 	/**
-	 * Rewrites ONLY the frontmatter of an existing title note, body verbatim. Does NOT create the
-	 * file — returns false then. Powers the bulk "Rewrite all frontmatter" action.
+	 * Rewrites every plugin-owned frontmatter key of an existing title note, body verbatim. Keys the
+	 * encoder omits are removed, except progress text kept while seasons are unknown and fields the
+	 * decoder could not read. Does NOT create the file — returns false then. Powers the bulk
+	 * "Rewrite all frontmatter" action.
 	 */
 	async rewriteFrontmatterIfExists(title: WatchLogTitle): Promise<boolean> {
-		const filePath = this.getNoteFilePath(title);
-		const file = this.app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) return false;
-		const current = await this.app.vault.read(file);
-		const updated = this.rebuildWithFrontmatter(current, this.buildFrontmatter(title, this.getProgress(title)));
-		if (updated !== current) {
-			await this.app.vault.modify(file, updated);
+		const file = this.fileOf(title.id);
+		if (!file) return false;
+		const out = encodeTitle(title, this.getProgress(title));
+		const keep = new Set(this.index.invalidFields(title.id));
+		if (title.seasons.length === 0) {
+			keep.add('watched');
+			keep.add('skipped');
 		}
-		this.lastMarkdownPathById.set(title.id, filePath);
-		return true;
+		return this.processFrontMatter(file, title, (raw) => {
+			for (const key of TITLE_KEYS) {
+				if (key in out) {
+					if (!keep.has(key) || !(key in raw)) raw[key] = out[key];
+				} else if (!keep.has(key)) {
+					delete raw[key];
+				}
+			}
+		});
+	}
+
+	// Note I/O
+
+	private fileOf(id: string): TFile | null {
+		const f = this.app.vault.getAbstractFileByPath(this.layout().pathFromId(id));
+		return f instanceof TFile ? f : null;
+	}
+
+	/** First free `<name>.md`, `<name> 2.md`, … */
+	private freePath(path: string): string {
+		if (!this.app.vault.getAbstractFileByPath(path)) return path;
+		const base = path.slice(0, -3);
+		let n = 2;
+		while (this.app.vault.getAbstractFileByPath(`${base} ${n}.md`)) n++;
+		return `${base} ${n}.md`;
+	}
+
+	private parentOf(path: string): string {
+		const i = path.lastIndexOf('/');
+		return i < 0 ? '' : path.slice(0, i);
 	}
 
 	/**
-	 * YAML-quotes a value (escaping backslashes and double quotes) so a `:` in a title or URL can't
-	 * break the frontmatter. Empty → `""`.
+	 * processFrontMatter, then the optimistic index update for `t` — inside the callback, so it lands
+	 * before the write's `changed` event can be seen. False (and a notice) on unreadable YAML.
 	 */
-	private yamlEscape(value: string): string {
-		if (value === '') return '""';
-		return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-	}
-
-	/** The leading `---…---` frontmatter block (no trailing newline). */
-	private buildFrontmatter(title: WatchLogTitle, progress: number): string {
-		const esc = (v: string): string => this.yamlEscape(v);
-		const lines: string[] = ['---'];
-		// text values go through yamlEscape; numbers/booleans/dates emit unquoted. absent optional fields
-		// are omitted
-		lines.push(`title: ${esc(title.title)}`);
-		lines.push(`type: ${esc(title.type)}`);
-		lines.push(`status: ${esc(title.status)}`);
-		lines.push(`priority: ${esc(title.priority)}`);
-		if (title.review) lines.push(`review: ${esc(title.review)}`);
-		lines.push(`rating: ${title.rating}`);
-		lines.push(`progress: ${progress}%`);
-		lines.push(`totalEpisodes: ${title.totalEpisodes}`);
-		lines.push(`episodeDuration: ${title.episodeDuration}`);
-		lines.push(`dateStarted: ${title.dateStarted ?? 'null'}`);
-		lines.push(`dateFinished: ${title.dateFinished ?? 'null'}`);
-		lines.push(`dateAdded: ${esc(title.dateAdded)}`);
-		lines.push(`dateModified: ${esc(title.dateModified)}`);
-		if (title.releaseDate) lines.push(`releaseDate: ${title.releaseDate}`);
-		if (title.malId !== undefined) lines.push(`malId: ${title.malId}`);
-		if (title.anilistId !== undefined) lines.push(`anilistId: ${title.anilistId}`);
-		if (title.communityRating !== undefined) lines.push(`communityRating: ${title.communityRating}`);
-		if (title.communityVotes !== undefined) lines.push(`communityVotes: ${title.communityVotes}`);
-		if (title.communitySource) lines.push(`communitySource: ${esc(title.communitySource)}`);
-		// inline YAML arrays of the merged view — fetched names plus user-added, uncapped. unfetched and
-		// 'none' are both omitted
-		const director = getTitleCredits(title, 'director');
-		if (director.length > 0) lines.push(`director: [${director.map(esc).join(', ')}]`);
-		const cast = getTitleCredits(title, 'cast');
-		if (cast.length > 0) lines.push(`cast: [${cast.map(esc).join(', ')}]`);
-		const studio = getTitleCredits(title, 'studio');
-		if (studio.length > 0) lines.push(`studio: [${studio.map(esc).join(', ')}]`);
-		// single resolved poster (manual override if set, else auto-fetched)
-		const poster = getDisplayPoster(title);
-		if (poster && poster !== 'none') lines.push(`poster: ${esc(poster)}`);
-		// single resolved trailer (manual override if set, else auto-fetched)
-		const trailer = getDisplayTrailer(title);
-		if (trailer) lines.push(`trailer: ${esc(trailer)}`);
-		if (title.externalLink) lines.push(`externalLink: ${esc(title.externalLink)}`);
-		if (title.pinned) lines.push(`pinned: true`);
-		if (title.favorite) lines.push(`favorite: true`);
-		lines.push('---');
-		return lines.join('\n');
-	}
-
-	/** Full note template (frontmatter + ## Notes body). Only used when creating a file. */
-	private buildMarkdownContent(title: WatchLogTitle, progress: number): string {
-		return `${this.buildFrontmatter(title, progress)}
-
-## Notes
-
-${title.notes}
-`;
-	}
-
-	private async deleteMarkdownFile(title: WatchLogTitle): Promise<void> {
-		const filePath = this.getNoteFilePath(title);
-		const file = this.app.vault.getAbstractFileByPath(filePath);
-		if (file instanceof TFile) {
-			await this.app.fileManager.trashFile(file);
+	private async processFrontMatter(
+		file: TFile,
+		t: WatchLogTitle,
+		fn: (fm: Record<string, unknown>) => void,
+	): Promise<boolean> {
+		try {
+			await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+				fn(fm);
+				this.afterWrite(t, { ...fm });
+			});
+			return true;
+		} catch (e) {
+			console.warn(`WatchLog: could not update frontmatter of ${file.path}`, e);
+			new Notice(`Could not update "${file.basename}": its frontmatter is not valid YAML.`);
+			return false;
 		}
+	}
+
+	/** Creates the note for a new title; the title's id becomes the note path. */
+	private async createNote(title: WatchLogTitle): Promise<void> {
+		const layout = this.layout();
+		// without an API identity nothing can refetch the seasons: they belong in the note
+		const fetchable = !!title.tmdbId || !!title.malId || !!title.anilistId
+			|| externalIdFromLink(title.externalLink) !== null;
+		if (!fetchable && title.seasons.length > 0) title.seasonsOverride = true;
+		const path = this.freePath(layout.notePath('title', title.title, title.type));
+		await this.ensureFolder(this.parentOf(path));
+		const fm = encodeTitle(title, this.getProgress(title));
+		const notes = title.notes ?? '';
+		title.id = layout.idFromPath(path);
+		this.notes.set(title.id, notes);
+		// index first, so the create event finds nothing new
+		this.afterWrite(title, fm);
+		try {
+			await this.app.vault.create(path, `---\n${stringifyYaml(fm)}---\n\n## Notes\n\n${notes}\n`);
+		} catch (e) {
+			this.index.removeLocal(title.id);
+			this.views.delete(title.id);
+			throw e;
+		}
+	}
+
+	/**
+	 * Writes a title to its note: renames the file on a title/type change, then sets only the
+	 * frontmatter keys whose encoded value differs from the stored state (so unreadable or foreign
+	 * fields stay untouched unless this edit changes exactly that field), and the `## Notes` body when
+	 * it changed.
+	 */
+	private async writeTitle(t: WatchLogTitle): Promise<void> {
+		let file = this.fileOf(t.id);
+		if (!file) {
+			await this.createNote(t);
+			return;
+		}
+		const indexed = this.index.get(t.id);
+		const src = this.views.get(t.id)?.src ?? (indexed?.kind === 'title' ? indexed.entry : undefined);
+
+		if (src && (t.title !== src.title || t.type !== src.type)) {
+			const target = this.layout().notePath('title', t.title, t.type);
+			if (target !== file.path) {
+				if (this.app.vault.getAbstractFileByPath(target)) {
+					new Notice(`"${target}" already exists; the note keeps its old file name.`);
+				} else {
+					await this.ensureFolder(this.parentOf(target));
+					await this.app.fileManager.renameFile(file, target);
+					this.moveId(t.id, this.layout().idFromPath(target));
+					t.id = this.layout().idFromPath(target);
+					file = this.fileOf(t.id) ?? file;
+				}
+			}
+		}
+
+		const before = src ? encodeTitle(src, this.getProgress(src)) : {};
+		const after = encodeTitle(t, this.getProgress(t));
+		const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+			.filter((k) => !sameJson(before[k], after[k]));
+		if (changed.length > 0) {
+			const ok = await this.processFrontMatter(file, t, (raw) => {
+				for (const key of changed) {
+					if (key in after) raw[key] = after[key];
+					else delete raw[key];
+				}
+			});
+			if (!ok) return;
+		} else {
+			// nothing for the note; API data may still have changed
+			this.syncCache(t);
+			const slot = this.views.get(t.id);
+			if (slot) slot.view = t;
+		}
+
+		const notes = t.notes;
+		if (typeof notes === 'string' && notes !== (this.notes.get(t.id) ?? '')) {
+			// set first: the modify event of this write then sees no change
+			this.notes.set(t.id, notes);
+			await this.app.vault.process(file, (content) => replaceNotesSection(content, notes));
+		}
+	}
+
+	/** Cache + optimistic index update after an own write; `t` stays the UI's copy. */
+	private afterWrite(t: WatchLogTitle, fm: Record<string, unknown>): void {
+		this.syncCache(t);
+		const stored = decodeTitle(t.id, fm, this.local.getCache(t.id)).entry;
+		this.index.applyLocal({ kind: 'title', entry: stored });
+		this.views.set(t.id, { src: stored, view: t });
+	}
+
+	/** Stores the title's API-derived fields in data.json when they changed. */
+	private syncCache(t: WatchLogTitle): void {
+		const next = splitCache(t);
+		if (sameJson(next, this.local.getCache(t.id) ?? {})) return;
+		this.local.data.cache[t.id] = next;
+		this.local.queueSave();
+	}
+
+	private async deleteNote(id: string): Promise<void> {
+		const file = this.fileOf(id);
+		if (file) await this.app.fileManager.trashFile(file);
+		this.index.removeLocal(id);
+		this.local.deleteCache(id);
+		this.views.delete(id);
+		this.notes.delete(id);
+		this.dirty.delete(id);
+		this.pendingMdTitleIds.delete(id);
+		const lists = this.lists;
+		for (const group of lists.groups ?? []) {
+			group.titleIds = group.titleIds.filter((tid) => tid !== id);
+		}
+		if (lists.airtime) {
+			lists.airtime = lists.airtime.filter((e) => e.titleId !== id || e.source === 'reading' || e.source === 'game');
+		}
+		const collapsed = this.local.data.ui.collapsedSeasons;
+		if (collapsed) delete collapsed[id];
+		this.local.queueSave();
+	}
+
+	/** Re-keys everything held per id after a rename. */
+	private moveId(from: string, to: string): void {
+		if (from === to) return;
+		this.local.renameCache(from, to);
+		this.index.removeLocal(from);
+		const notes = this.notes.get(from);
+		if (notes !== undefined) {
+			this.notes.delete(from);
+			this.notes.set(to, notes);
+		}
+		this.views.delete(from);
+		for (const set of [this.dirty, this.pendingMdTitleIds]) {
+			if (set.delete(from)) set.add(to);
+		}
+		const lists = this.lists;
+		for (const group of lists.groups ?? []) {
+			group.titleIds = group.titleIds.map((tid) => (tid === from ? to : tid));
+		}
+		for (const e of lists.airtime ?? []) {
+			if (e.titleId === from && (e.source === undefined || e.source === 'watchlist')) e.titleId = to;
+		}
+		const collapsed = this.local.data.ui.collapsedSeasons;
+		if (collapsed?.[from]) {
+			collapsed[to] = collapsed[from];
+			delete collapsed[from];
+		}
+		this.local.queueSave();
+	}
+
+	private async readNotes(id: string): Promise<void> {
+		const file = this.fileOf(id);
+		if (!file) return;
+		this.notes.set(id, extractNotes(await this.app.vault.cachedRead(file)) ?? '');
+	}
+
+	/** Follows `## Notes` edits made outside the plugin. */
+	private async refreshNotes(file: TAbstractFile): Promise<void> {
+		if (!(file instanceof TFile)) return;
+		const c = this.layout().classify(file.path);
+		if (c?.kind !== 'title') return;
+		const next = extractNotes(await this.app.vault.read(file)) ?? '';
+		const prev = this.notes.get(c.id) ?? '';
+		if (next === prev) return;
+		this.notes.set(c.id, next);
+		const slot = this.views.get(c.id);
+		if (slot && slot.view.notes === prev) slot.view.notes = next;
+		this.notifyListeners();
+	}
+
+	private onVaultRename(file: TAbstractFile, oldPath: string): void {
+		if (!(file instanceof TFile)) return;
+		const layout = this.layout();
+		const from = layout.classify(oldPath)?.id;
+		const to = layout.classify(file.path)?.id;
+		if (from === undefined || to === undefined || from === to || !this.notes.has(from)) return;
+		this.moveId(from, to);
 	}
 
 	// Dashboard helpers
 
 	getRecentlyWatched(count: number): WatchLogTitle[] {
-		return [...(this.data.titles ?? [])]
+		return this.getTitles()
 			.filter((t) => t.watchedEpisodes.length > 0 || t.status === 'Completed')
 			.sort((a, b) => b.dateModified.localeCompare(a.dateModified))
 			.slice(0, count);
 	}
 
 	getRecentlyAdded(count: number): WatchLogTitle[] {
-		return [...(this.data.titles ?? [])]
+		return this.getTitles()
 			.sort((a, b) => b.dateAdded.localeCompare(a.dateAdded))
 			.slice(0, count);
 	}
 
 	getStatsByType(type: string): { watched: number; total: number } {
 		const EXCLUDED = ['Dropped', 'To be released'];
-		const all = this.data.titles ?? [];
+		const all = this.getTitles();
 		const titles = (type === 'All' ? all : all.filter((t) => t.type === type))
-    		.filter((t) => !EXCLUDED.includes(t.status));
+			.filter((t) => !EXCLUDED.includes(t.status));
 		const total = titles.length;
 		const watched = titles.filter((t) => t.status === 'Completed').length;
 		return { watched, total };
 	}
 
 	getCompletedCount(): number {
-		return (this.data.titles ?? []).filter((t) => t.status === 'Completed').length;
+		return this.getTitles().filter((t) => t.status === 'Completed').length;
 	}
 
 	// ID generation
 
+	/**
+	 * Provisional id for a title being built in the UI. The real id is the note path, assigned when
+	 * the note is created (addTitle rewrites `title.id` in place).
+	 */
 	generateId(title: string): string {
-		let id = title
+		const id = title
 			.toLowerCase()
 			.replace(/[^a-z0-9]+/g, '-')
 			.replace(/^-|-$/g, '');
-		const existing = (this.data.titles ?? []).map((t) => t.id);
+		const existing = this.getTitles().map((t) => t.id);
 		if (!existing.includes(id)) return id;
 		let counter = 2;
 		while (existing.includes(`${id}-${counter}`)) {
