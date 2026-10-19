@@ -1,7 +1,7 @@
 import { App, Notice, Platform, PluginSettingTab, Setting, SliderComponent, normalizePath, setIcon } from 'obsidian';
 import { cardSizeToMinWidth } from './VirtualGrid';
 import type WatchLogPlugin from './main';
-import type { TagDefinition, ReadingStatus, ReadingData, GamesData, GamesSettings, DateFormatPref, CardStyleTab, CardTextStyle } from './types';
+import type { TagDefinition, ReadingStatus, GamesSettings, DateFormatPref, CardStyleTab, CardTextStyle } from './types';
 import { SELECTABLE_READING_STATUSES, READING_STATUSES, LAST_USED_TYPE_SENTINEL, formatDateDisplay, needsStudioFetch, getApiGroupForType, isCreditsNone, CREDITS_NONE } from './types';
 import { readingStatusColor } from './ReadingTab';
 import { SteamSyncModal } from './SteamSyncModal';
@@ -111,7 +111,7 @@ import { WatchLogView } from './WatchLogView';
 import { CustomListManager, DefaultColumnsModal } from './CustomListsTab';
 import { ConfirmModal } from './ConfirmModal';
 import { apiErrorMessage, apiErrorShort } from './ApiService';
-import type { HistoryEntry } from './HistoryManager';
+import { buildBackup, parseBackup, restoreBackup } from './backup';
 
 type SettingsSection = 'general' | 'api' | 'customize' | 'watchlist' | 'drafts' | 'custom-lists' | 'reading' | 'widgets' | 'quick-info';
 
@@ -542,7 +542,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		new Setting(bk)
 			.setName('Restore from backup')
-			.setDesc('Restore from a .JSON backup file. This replaces your current watchlist, reading, games and activity-log data with the contents of the backup. Older backups restore only what they contain and leave the newer data untouched.')
+			.setDesc('Restore from a .JSON backup file. Missing notes are created; existing notes are kept. Shared settings and the activity log are replaced. API keys are not part of a backup.')
 			.addButton((b) =>
 				b.setButtonText('Restore from backup').onClick(() => this.openRestoreDialog()),
 			);
@@ -580,22 +580,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 		const filename = `watchlog-backup-${dateStr}.json`;
 
-		// v3 snapshot: a self-describing wrapper around all four data sources. Reading, games
-		// and history all live inside the watch object, so strip them from `watch`.
-		const watchOnly = Object.assign({}, this.plugin.dataManager.getData() ?? {}) as unknown as Record<string, unknown>;
-		delete watchOnly['reading'];
-		delete watchOnly['games'];
-		delete watchOnly['history'];
-		delete watchOnly['migratedReadingHistory'];
-		const snapshot = {
-			version: 3,
-			exportedAt: today.toISOString(),
-			watch: watchOnly,
-			reading: this.plugin.readingDataManager.getData(),
-			games: this.plugin.gameDataManager.getData(),
-			history: this.plugin.historyManager.exportEntries(),
-		};
-		const json = JSON.stringify(snapshot, null, 2);
+		// notes plus shared settings and log; API keys stay out of the file
+		const json = JSON.stringify(buildBackup(this.plugin), null, 2);
 
 		// on mobile a browser download lands in an inaccessible sandbox — write into the vault
 		// instead; desktop keeps the download path
@@ -672,124 +658,24 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			const reader = new FileReader();
 			reader.onload = (e) => {
 				cleanupInput();
-				const text = e.target?.result as string;
-				let parsed: unknown;
-				try { parsed = JSON.parse(text); } catch {
-					new Notice('Invalid backup file: could not parse JSON.');
+				const result = parseBackup(e.target?.result as string);
+				if ('error' in result) {
+					new Notice(`Invalid backup file: ${result.error}`);
 					return;
 				}
-				if (typeof parsed !== 'object' || parsed === null) {
-					new Notice('Invalid backup file: not an object.');
-					return;
-				}
-				const p = parsed as Record<string, unknown>;
-
-				// validate the WHOLE file before touching disk — restore is all-or-nothing
-				const version = p['version'];
-				if (version === 2 || version === 3) {
-					const watch = p['watch'];
-					const reading = p['reading'];
-					const games = p['games'];
-					const history = p['history'];
-					if (!this.isValidWatchData(watch)) {
-						new Notice('Invalid backup file: watch data missing required fields (titles, groups, settings).');
-						return;
-					}
-					if (!this.isValidReadingData(reading)) {
-						new Notice('Invalid backup file: reading data missing required fields (books, manga).');
-						return;
-					}
-					// games are a v3 field; v2 files carry them (if at all) inside `watch`
-					if (version === 3 && !this.isValidGamesData(games)) {
-						new Notice('Invalid backup file: games data missing required fields (games, settings).');
-						return;
-					}
-					if (!Array.isArray(history)) {
-						new Notice('Invalid backup file: activity log is not a list.');
-						return;
-					}
-					const scope = version === 3
-						? 'watchlist, reading (books & manga), games and activity log'
-						: 'watchlist, reading (books & manga) and activity log';
-					new ConfirmModal(this.app, `This will replace ALL current watchlog data; ${scope}. Continue?`, () => {
-						void (async () => {
-							// reading, games + history persist inside data.json — mark the data already-migrated so
-							// the one-time legacy import can't re-run and clobber the restore
-							const restored = Object.assign({}, watch as Record<string, unknown>, { migratedReadingHistory: true });
-							// a v2 file exported before Games shipped has none at all; keep the current ones
-							if (version === 2 && restored['games'] === undefined) {
-								restored['games'] = this.plugin.gameDataManager.getData();
-							}
-							await this.plugin.saveData(restored);
-							await this.plugin.loadSettings();
-							await this.plugin.dataManager.load();
-							await this.plugin.readingDataManager.restore(reading as ReadingData);
-							// v3 restores the explicit field; v2 re-binds the manager to whatever games object landed
-							if (version === 3) await this.plugin.gameDataManager.restore(games as GamesData);
-							else await this.plugin.gameDataManager.load();
-							await this.plugin.historyManager.restore(history as HistoryEntry[]);
-							activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
-							new Notice('Backup restored successfully.');
-						})();
-					}).open();
-					return;
-				}
-
-				// legacy (v1) — the file IS the watch data
-				if (!this.isValidWatchData(parsed)) {
-					new Notice('Invalid backup file: missing required fields (titles, groups, settings).');
-					return;
-				}
-				new ConfirmModal(this.app, 'This is a legacy (watchlist-only) backup. It will replace your current watchlist. Reading and activity-log data are left untouched. Continue?', () => {
+				// validated as a whole before anything is written
+				new ConfirmModal(this.app, 'This restores the backup into your vault: missing notes are created, the shared settings and the activity log are replaced. Existing notes are kept. Continue?', () => {
 					void (async () => {
-						// a legacy backup carries no reading/games/history, so preserve the CURRENT in-memory
-						// data (and the migrated flag) when overwriting the watch data
-						const merged = Object.assign({}, parsed as Record<string, unknown>, {
-							reading: this.plugin.readingDataManager.getData(),
-							games: this.plugin.gameDataManager.getData(),
-							history: this.plugin.historyManager.exportEntries(),
-							migratedReadingHistory: true,
-						});
-						await this.plugin.saveData(merged);
+						await restoreBackup(this.plugin, result.backup);
 						await this.plugin.loadSettings();
-						await this.plugin.dataManager.load();
-						await this.plugin.historyManager.load();
-						await this.plugin.readingDataManager.load();
-						await this.plugin.gameDataManager.load();
 						activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
-						new Notice('Legacy backup restored: watchlist only; reading, games and activity log left untouched.');
+						new Notice('Backup restored successfully.');
 					})();
 				}).open();
 			};
 			reader.readAsText(file);
 		});
 		input.click();
-	}
-
-	private isValidWatchData(value: unknown): boolean {
-		if (typeof value !== 'object' || value === null) return false;
-		const w = value as Record<string, unknown>;
-		return Array.isArray(w['titles'])
-			&& Array.isArray(w['groups'])
-			&& typeof w['settings'] === 'object'
-			&& w['settings'] !== null;
-	}
-
-	private isValidReadingData(value: unknown): boolean {
-		if (typeof value !== 'object' || value === null) return false;
-		const r = value as Record<string, unknown>;
-		return Array.isArray(r['books'])
-			&& Array.isArray(r['manga'])
-			&& typeof r['settings'] === 'object'
-			&& r['settings'] !== null;
-	}
-
-	private isValidGamesData(value: unknown): boolean {
-		if (typeof value !== 'object' || value === null) return false;
-		const g = value as Record<string, unknown>;
-		return Array.isArray(g['games'])
-			&& typeof g['settings'] === 'object'
-			&& g['settings'] !== null;
 	}
 
 	private async refetchAllPosters(): Promise<void> {

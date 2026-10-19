@@ -156,7 +156,8 @@ export class ReadingDataManager {
 		});
 	}
 
-	getData(): ReadingData {
+	/** Current dataset as a backup snapshot. */
+	exportSnapshot(): ReadingData {
 		return {
 			books: this.getBooks(),
 			manga: this.getMangaList(),

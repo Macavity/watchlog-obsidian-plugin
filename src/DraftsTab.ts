@@ -77,8 +77,7 @@ export class DraftsTab {
 	// Persistence
 
 	private async loadPersistState(): Promise<void> {
-		const data = this.plugin.dataManager.getData() as unknown as Record<string, unknown>;
-		const drafts = data['drafts'] as Partial<DraftPersistState> | undefined;
+		const drafts = this.plugin.dataManager.getDrafts();
 		if (drafts) {
 			this.persistState = {
 				dismissed: drafts.dismissed ?? [],
@@ -90,9 +89,7 @@ export class DraftsTab {
 	}
 
 	private async savePersistState(): Promise<void> {
-		const data = this.plugin.dataManager.getData() as unknown as Record<string, unknown>;
-		data['drafts'] = this.persistState;
-		this.plugin.dataManager.queueSave();
+		this.plugin.dataManager.setDrafts(this.persistState);
 	}
 
 	// Vault scanning
@@ -244,8 +241,7 @@ export class DraftsTab {
 		const tag = plugin.settings.draftsVaultTag ?? '#watchlog';
 		const liveMap = await DraftsTab.scanTaggedFiles(plugin, tag);
 
-		const data = plugin.dataManager.getData() as unknown as Record<string, unknown>;
-		const drafts = data['drafts'] as Partial<DraftPersistState> | undefined;
+		const drafts = plugin.dataManager.getDrafts();
 		const dismissed = new Set(drafts?.dismissed ?? []);
 		const added = new Set(drafts?.added ?? []);
 		const titleDisplay = drafts?.titleDisplay ?? {};

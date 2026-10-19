@@ -1,6 +1,6 @@
 import { App, Notice, TAbstractFile, TFile, normalizePath, stringifyYaml } from 'obsidian';
 import type WatchLogPlugin from './main';
-import type { WatchLogData, WatchLogTitle, WatchLogGroup, AirtimeEntry, AirtimeSchedule, EntryAirtime, MaybeTitle, RecommendedDaily, SavedFilterPreset, WatchLogPluginSettings, Book, Manga, Game } from './types';
+import type { DraftPersistState, WatchLogTitle, WatchLogGroup, AirtimeEntry, AirtimeSchedule, EntryAirtime, MaybeTitle, RecommendedDaily, SavedFilterPreset, Book, Manga, Game } from './types';
 import type { HistoryManager } from './HistoryManager';
 import { formatHistoryDate } from './HistoryManager';
 import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso, GAME_AUTO_STATUS } from './types';
@@ -343,12 +343,24 @@ export class DataManager {
 		void this.local.flush();
 	}
 
-	/**
-	 * data.json contents (device-local settings, cache, UI state). Reading, games and history still
-	 * keep their datasets as keys on this object until they move to the vault.
-	 */
-	getData(): WatchLogData {
-		return this.local.data as unknown as WatchLogData;
+	/** Drafts-tab state (device-local). */
+	getDrafts(): Partial<DraftPersistState> | undefined {
+		return this.local.data.drafts;
+	}
+
+	setDrafts(state: DraftPersistState): void {
+		this.local.data.drafts = state;
+		this.local.queueSave();
+	}
+
+	/** Shared settings of the base file; never holds API keys. */
+	getSharedSettings(): Record<string, unknown> {
+		return structuredClone(this.shared.get().settings);
+	}
+
+	/** Backup restore: writes the shared settings into the base file. */
+	async restoreSharedSettings(settings: Record<string, unknown>): Promise<void> {
+		await this.shared.update(settings);
 	}
 
 	/** Centralized debounced save for cross-cutting paths (settings, drafts, lists). */
@@ -358,12 +370,6 @@ export class DataManager {
 
 	flushQueuedSaveSync(): void {
 		void this.local.flush();
-	}
-
-	/** Save settings through the centralized data path. */
-	async saveSettings(settings: WatchLogPluginSettings): Promise<void> {
-		this.local.data.settings = settings as unknown as Record<string, unknown>;
-		await this.persist();
 	}
 
 	/** Writes data.json now. Reading, games and history route their saves through here. */

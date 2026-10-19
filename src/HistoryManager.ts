@@ -3,7 +3,7 @@ import { formatDateDisplay } from './types';
 import type { HistoryStore } from './storage/HistoryStore';
 
 export type HistorySource = 'Watchlist' | 'Reading' | 'Games';
-export type HistoryAction = 'added' | 'completed' | 'deleted' | 'status' | 'rating' | 'watched';
+export type HistoryAction = 'added' | 'completed' | 'deleted' | 'status' | 'rating' | 'watched' | 'group';
 
 export interface HistoryEntry {
 	id: string;
@@ -21,6 +21,7 @@ export interface HistoryEntry {
 export function inferHistoryAction(entry: HistoryEntry): HistoryAction {
 	if (entry.action) return entry.action;
 	const m = entry.message.toLowerCase();
+	if (m.startsWith('group "') && m.includes('was created')) return 'group';
 	if (m.includes('was added')) return 'added';
 	if (m.includes('was deleted')) return 'deleted';
 	if (m.includes('was reviewed') || m.includes('rating changed')) return 'rating';
@@ -79,6 +80,10 @@ export class HistoryManager {
 
 	onChange(cb: () => void): void {
 		this.listeners.push(cb);
+	}
+
+	offChange(cb: () => void): void {
+		this.listeners = this.listeners.filter((l) => l !== cb);
 	}
 
 	async log(

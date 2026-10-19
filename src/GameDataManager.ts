@@ -254,7 +254,7 @@ export class GameDataManager {
 	}
 
 	/** Current dataset as a backup snapshot. */
-	getData(): GamesData {
+	exportSnapshot(): GamesData {
 		return { games: this.getGames(), groups: this.getGroups(), settings: this.getSettings() };
 	}
 
