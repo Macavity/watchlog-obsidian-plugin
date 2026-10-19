@@ -1169,7 +1169,7 @@ export class AirtimeTab {
 		});
 	}
 
-	/** An entry that is only there because its item awaits release leaves by clearing its release date. */
+	/** Removes what the card shows: a derived card clears the release date, a manual schedule only itself. */
 	private confirmRemove(entry: AirtimeEntry, r: ResolvedUpcoming): void {
 		const msg = this.dataManager.removeClearsReleaseDate(entry)
 			? `Remove "${r.title}" from Upcoming and clear its release date?`

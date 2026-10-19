@@ -196,6 +196,41 @@ describe('DataManager on vault storage', () => {
 		expect(f.files.get('W/TV Show/C.md')).not.toContain('airtime');
 	});
 
+	it('removing a manual weekly card of a "To be released" title keeps the date and shows the premiere card', async () => {
+		const { dm, f } = await setupDataManager({
+			'W/TV Show/C.md': '---\ntitle: C\ntype: TV Show\nstatus: To be released\nreleaseDate: 2099-01-01\nairtimeRecurrence: weekly\nairtimeDay: 2\n---\n',
+		});
+		const [entry] = dm.getAirtimeEntries();
+		expect(entry!.schedule.recurrence).toBe('weekly');
+		expect(dm.removeClearsReleaseDate(entry!)).toBe(false);
+		await dm.removeAirtimeEntry(entry!.id);
+		const note = f.files.get('W/TV Show/C.md')!;
+		expect(note).not.toContain('airtime');
+		expect(note).toContain('releaseDate: 2099-01-01');
+		expect(note).toContain('status: To be released');
+		expect(dm.getAirtimeEntries()).toEqual([expect.objectContaining({ titleId: 'TV Show/C', schedule: { recurrence: 'once', releaseDate: '2099-01-01' } })]);
+		// the derived card is what clears the date
+		expect(dm.removeClearsReleaseDate(dm.getAirtimeEntries()[0]!)).toBe(true);
+	});
+
+	it('removing a manual card of a future book keeps its release date', async () => {
+		const { dm, f, plugin, index, shared, local, layout } = await setupDataManager({
+			'W/Books/Dune.md': '---\ntitle: Dune\ntype: book\nstatus: To be released\nreleaseDate: 2099-01-01\nairtimeRecurrence: monthly\nairtimeDay: 5\n---\n',
+		});
+		const deps = { index, local, shared, layout: () => layout };
+		const p = plugin as unknown as Record<string, unknown>;
+		p.readingDataManager = new ReadingDataManager(plugin, deps);
+		await (p.readingDataManager as ReadingDataManager).init();
+		const [entry] = dm.getAirtimeEntries();
+		expect(entry!.schedule.recurrence).toBe('monthly');
+		expect(dm.removeClearsReleaseDate(entry!)).toBe(false);
+		await dm.removeAirtimeEntry(entry!.id);
+		const note = f.files.get('W/Books/Dune.md')!;
+		expect(note).not.toContain('airtime');
+		expect(note).toContain('releaseDate: 2099-01-01');
+		expect(dm.getAirtimeEntries()).toEqual([expect.objectContaining({ schedule: { recurrence: 'once', releaseDate: '2099-01-01' } })]);
+	});
+
 	it('writes manual schedules as airtime keys and removes them again', async () => {
 		const { dm, f } = await setupDataManager({ 'W/TV Show/C.md': '---\ntitle: C\ntype: TV Show\n---\n' });
 		await dm.addAirtimeEntry({

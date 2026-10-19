@@ -1001,10 +1001,10 @@ export class DataManager {
 		}
 	}
 
-	/** True when removing this entry clears the item's release date (and with it the auto status). */
+	/** True when removing this entry clears the item's release date: only the derived card does. */
 	removeClearsReleaseDate(entry: AirtimeEntry): boolean {
 		const e = this.index.get(entry.titleId);
-		return !!e && this.isAwaitingRelease(e);
+		return !!e && !e.entry.airtime && this.isAwaitingRelease(e);
 	}
 
 	async addAirtimeEntry(entry: AirtimeEntry): Promise<void> {
@@ -1024,8 +1024,9 @@ export class DataManager {
 	}
 
 	/**
-	 * Drops manual schedules. A derived (or still "To be released") entry leaves Upcoming by
-	 * clearing its release date; the status follows from the usual release-date rules.
+	 * Removes what the card shows: a manual schedule drops only its airtime keys (the release date
+	 * stays, so a "To be released" item falls back to its derived premiere card); a derived card
+	 * clears the release date, and the status follows from the usual release-date rules.
 	 */
 	async removeAirtimeEntriesBatch(ids: string[]): Promise<void> {
 		if (ids.length === 0) return;
@@ -1033,19 +1034,17 @@ export class DataManager {
 		for (const entry of this.getAirtimeEntries().filter((x) => remove.has(x.id))) {
 			const e = this.index.get(entry.titleId);
 			if (!e) continue;
-			if (e.kind === 'title') {
+			if (e.entry.airtime) {
+				await this.writeAirtime(e, undefined, null);
+			} else if (e.kind === 'title') {
 				const title = this.getTitle(e.entry.id);
 				if (!title) continue;
-				delete title.airtime;
-				const clear = this.isAwaitingRelease(e);
-				if (clear) title.releaseDate = null;
+				title.releaseDate = null;
 				await this.writeTitle(title);
-				if (clear) await this.applyReleaseDateChange(title);
-				continue;
+				await this.applyReleaseDateChange(title);
+			} else {
+				await this.clearReleaseDate(e);
 			}
-			if (e.entry.airtime) await this.writeAirtime(e, undefined, null);
-			const now = this.index.get(entry.titleId);
-			if (now && this.isAwaitingRelease(now)) await this.clearReleaseDate(now);
 		}
 		this.notifyListeners();
 	}
