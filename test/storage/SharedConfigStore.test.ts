@@ -61,4 +61,53 @@ describe('SharedConfigStore', () => {
 		expect(out).not.toContain('steamId');
 		expect(s.get().settings.halfStarRatings).toBe(true);
 	});
+	it('patches only the given keys and keeps foreign keys of the current block', async () => {
+		const { f, s } = mk({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n  halfStarRatings: true\n  futureKey: 7\n' });
+		await s.load();
+		// a sync arrived after load: the file holds a newer value for a key we do not touch
+		f.externalWrite('W/WatchLog.base', 'watchlog:\n  version: 1\n  halfStarRatings: false\n  futureKey: 8\n');
+		await s.update({ episodeNumbering: 'absolute' });
+		const out = f.files.get('W/WatchLog.base')!;
+		expect(out).toContain('halfStarRatings: false');
+		expect(out).toContain('futureKey: 8');
+		expect(out).toContain('episodeNumbering: absolute');
+	});
+	it('does not write with an empty patch or an unreadable block', async () => {
+		const src = 'watchlog:\n  version: 1\n  statuses: [\n';
+		const { f, s } = mk({ 'W/WatchLog.base': src });
+		await s.load();
+		await s.update({});
+		await s.update({ halfStarRatings: true });
+		expect(f.files.get('W/WatchLog.base')).toBe(src);
+	});
+	it('diff returns only changed shared keys', async () => {
+		const { s } = mk({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n  halfStarRatings: true\n' });
+		await s.load();
+		expect(s.diff({ halfStarRatings: true, autoCompleteOnLastEpisode: false, tmdbApiKey: 'x' }))
+			.toEqual({ autoCompleteOnLastEpisode: false });
+	});
+	it('creates a deferred base on the first write only', async () => {
+		const { f, s } = mk({});
+		const create = vi.fn(async () => { await s.createBase({}); });
+		s.deferBase({ create, appeared: vi.fn() });
+		await s.update({});
+		expect(create).not.toHaveBeenCalled();
+		await s.update({ halfStarRatings: true });
+		expect(create).toHaveBeenCalledTimes(1);
+		expect(f.files.has('W/WatchLog.base')).toBe(true);
+	});
+	it('adopts a base that syncs in while deferred', async () => {
+		const { f, s } = mk({});
+		const appeared = vi.fn();
+		const create = vi.fn();
+		s.deferBase({ create, appeared }); s.start();
+		f.externalWrite('X/WatchLog.base', 'views: []\n');
+		await new Promise(r => setTimeout(r, 0));
+		expect(appeared).not.toHaveBeenCalled();
+		f.externalWrite('W/WatchLog.base', 'watchlog:\n  version: 1\n');
+		await new Promise(r => setTimeout(r, 0));
+		expect(appeared).toHaveBeenCalledTimes(1);
+		await s.update({ halfStarRatings: true });
+		expect(create).not.toHaveBeenCalled();
+	});
 });

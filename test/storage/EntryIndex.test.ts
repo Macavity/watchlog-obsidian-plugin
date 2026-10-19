@@ -82,4 +82,18 @@ describe('EntryIndex edge cases', () => {
 		await tick();
 		expect(idx.get('Movie/Late')?.kind).toBe('title');
 	});
+	it('notifies own writes and rebuilds after a type rename', async () => {
+		const f = createFakeApp({ 'W/Anime/A.md': note('title: A\ntype: Anime') });
+		const local = new LocalStore(f.plugin); await local.load();
+		let types = ['Movie'];
+		const idx = new EntryIndex(f.app, () => new VaultLayout('W', () => types), local, () => {});
+		await idx.build();
+		expect(idx.titles()).toEqual([]);
+		types = ['Movie', 'Anime'];
+		await idx.rebuild();
+		expect(idx.titles().map(t => t.id)).toEqual(['Anime/A']);
+		const cb = vi.fn(); idx.onLocalWrite(cb);
+		idx.applyLocal(idx.get('Anime/A')!);
+		expect(cb).toHaveBeenCalledTimes(1);
+	});
 });

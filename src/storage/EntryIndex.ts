@@ -38,6 +38,7 @@ function sameValue(a: unknown, b: unknown): boolean {
 export class EntryIndex {
 	private entries = new Map<string, Slot>();
 	private listeners: ((ids: Set<string>) => void)[] = [];
+	private localWriteCbs: (() => void)[] = [];
 	private pending = new Set<string>();
 	private timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -82,11 +83,17 @@ export class EntryIndex {
 
 	/** Optimistic update after an own write; the echo `changed` event then finds no difference. */
 	applyLocal(e: AnyEntry): void {
+		for (const cb of this.localWriteCbs) cb();
 		this.entries.set(e.entry.id, { value: e, invalid: this.invalidFields(e.entry.id) });
 	}
 
 	removeLocal(id: string): void {
 		this.entries.delete(id);
+	}
+
+	/** Fires on every own entry write (before the optimistic update). */
+	onLocalWrite(cb: () => void): void {
+		this.localWriteCbs.push(cb);
 	}
 
 	onChange(cb: (ids: Set<string>) => void): void {

@@ -2,7 +2,7 @@ import { TFile, type App, type EventRef } from 'obsidian';
 import type { SharedConfig, YamlIO } from './storageTypes';
 import type { VaultLayout } from './VaultLayout';
 import {
-	createBaseFile, findInFolderPath, readWatchlogBlock, replaceInFolderPath, writeWatchlogBlock,
+	createBaseFile, findInFolderPath, hasWatchlogKey, readWatchlogBlock, replaceInFolderPath, writeWatchlogBlock,
 } from './baseFile';
 
 /** Whitelist of settings synced via the base. Everything else (API keys, secrets, ids) stays local. */
@@ -50,10 +50,20 @@ function canon(v: unknown): string {
 	return JSON.stringify(v) ?? 'null';
 }
 
+/** Fresh install without a base: it is created on the first write; a synced one is adopted. */
+export interface DeferredBase {
+	/** Creates the base (folder, file); called at most once. */
+	create(): Promise<void>;
+	/** A base with a `watchlog:` block appeared (sync): adopt root and settings. */
+	appeared(): Promise<void> | void;
+}
+
 export class SharedConfigStore {
+	private deferred: DeferredBase | null = null;
 	private config: SharedConfig = { version: VERSION, settings: {} };
 	private listeners: (() => void)[] = [];
 	private modifyRef: EventRef | null = null;
+	private createRef: EventRef | null = null;
 
 	constructor(
 		private app: App,
@@ -90,14 +100,55 @@ export class SharedConfigStore {
 		return this.config;
 	}
 
+	/** Picked (whitelisted) entries of `patch` that differ from the loaded config. */
+	diff(patch: Record<string, unknown>): Record<string, unknown> {
+		const out: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(pick(patch))) {
+			if (canon(v) !== canon(this.config.settings[k])) out[k] = v;
+		}
+		return out;
+	}
+
+	/** Patches the given keys into the current `watchlog:` block; other keys and the file stay as they are. */
 	async update(patch: Record<string, unknown>): Promise<void> {
-		const settings = { ...this.config.settings, ...pick(patch) };
-		this.config = { version: this.config.version, settings };
+		const changes = pick(patch);
+		if (Object.keys(changes).length === 0) return;
+		this.config = { version: this.config.version, settings: { ...this.config.settings, ...changes } };
 		const f = this.file();
-		if (!f) return; // no base yet: memory only, creation is separate
-		const next = this.config;
-		await this.app.vault.process(f, (src) =>
-			writeWatchlogBlock(src, { version: next.version, ...next.settings }, this.yaml));
+		if (!f) {
+			// no base yet: memory only, until the first write creates it
+			await this.ensureBase();
+			return;
+		}
+		const version = this.config.version;
+		await this.app.vault.process(f, (src) => {
+			let current: Record<string, unknown> | null = null;
+			if (hasWatchlogKey(src)) {
+				try {
+					current = readWatchlogBlock(src, this.yaml);
+				} catch {
+					current = null;
+				}
+				if (!current) {
+					console.warn('[WL] unreadable watchlog block in the base; settings not written');
+					return src;
+				}
+			}
+			return writeWatchlogBlock(src, { version, ...current, ...changes }, this.yaml);
+		});
+	}
+
+	/** Without a base and with a deferred creator: creates the base now (first write). */
+	async ensureBase(): Promise<void> {
+		const d = this.deferred;
+		if (!d || this.file()) return;
+		this.deferred = null;
+		await d.create();
+	}
+
+	/** Marks the base as missing: created on the first write, or adopted when one syncs in. */
+	deferBase(d: DeferredBase): void {
+		this.deferred = d;
 	}
 
 	async ensureFilter(): Promise<'ok' | 'fixed' | 'missing'> {
@@ -127,15 +178,31 @@ export class SharedConfigStore {
 
 	start(): void {
 		this.modifyRef = this.app.vault.on('modify', (file: unknown) => {
-			if (!(file instanceof TFile) || file.path !== this.layout().basePath) return;
+			if (!(file instanceof TFile)) return;
+			if (this.deferred) void this.checkAppeared(file);
+			if (file.path !== this.layout().basePath) return;
 			void this.reload(file);
 		});
 		this.register(this.modifyRef);
+		this.createRef = this.app.vault.on('create', (file: unknown) => void this.checkAppeared(file));
+		this.register(this.createRef);
+	}
+
+	/** A `.base` with a `watchlog:` block shows up while the base is deferred (sync). */
+	private async checkAppeared(file: unknown): Promise<void> {
+		if (!this.deferred || !(file instanceof TFile) || file.extension !== 'base') return;
+		if (!hasWatchlogKey(await this.app.vault.read(file))) return;
+		const d = this.deferred;
+		if (!d) return;
+		this.deferred = null;
+		await d.appeared();
 	}
 
 	stop(): void {
 		if (this.modifyRef) this.app.vault.offref(this.modifyRef);
 		this.modifyRef = null;
+		if (this.createRef) this.app.vault.offref(this.createRef);
+		this.createRef = null;
 	}
 
 	onChange(cb: () => void): void {

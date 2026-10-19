@@ -116,5 +116,10 @@ export async function persistSettings(
 	}
 	local.data.settings = localPart;
 	local.queueSave();
-	await shared.update(all);
+	// only keys that differ from what the base (plus defaults) already yields; none: no write at all
+	const baseline = composeSettings({}, shared.get().settings) as unknown as Record<string, unknown>;
+	const changed = shared.diff(Object.fromEntries(
+		Object.entries(all).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(baseline[k])),
+	));
+	await shared.update(changed);
 }

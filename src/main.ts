@@ -33,6 +33,8 @@ export default class WatchLogPlugin extends Plugin {
 	settings: WatchLogPluginSettings = DEFAULT_SETTINGS;
 	// schema-1 data.json awaiting migration; LocalStore never writes data.json meanwhile
 	private legacyData: WatchLogData | null = null;
+	private indexReady = false;
+	private typeNamesKey: string | null = null;
 	private layout = new VaultLayout(DEFAULT_ROOT, () => this.settings.types.map((t) => t.name));
 	private local = new LocalStore({
 		loadData: () => this.loadData(),
@@ -216,8 +218,15 @@ export default class WatchLogPlugin extends Plugin {
 			);
 			if (legacy) await this.migrate(legacy);
 			if (root === null && !legacy) {
-				await this.dataManager.ensureFolder(this.layout.root);
-				await this.shared.createBase(this.settings as unknown as Record<string, unknown>);
+				// fresh install (or base not synced yet): no base until the first write; a synced one is adopted
+				this.shared.deferBase({
+					create: async () => {
+						await this.dataManager.ensureFolder(this.layout.root);
+						await this.shared.createBase(this.settings as unknown as Record<string, unknown>);
+					},
+					appeared: () => this.adoptSyncedBase(),
+				});
+				this.index.onLocalWrite(() => void this.shared.ensureBase());
 			}
 			await this.shared.load();
 			await this.applySharedSettings();
@@ -227,6 +236,7 @@ export default class WatchLogPlugin extends Plugin {
 			}
 			this.shared.start();
 			await this.index.build();
+			this.indexReady = true;
 			this.index.start();
 			await this.historyManager.start();
 			await this.dataManager.init();
@@ -237,6 +247,32 @@ export default class WatchLogPlugin extends Plugin {
 			console.error('[WL] vault storage failed to start', e);
 			new Notice('Watchlog could not load its notes. See the developer console for details.');
 		}
+	}
+
+	/** A base appeared by sync after startup: take over its root and settings, then rebuild and refresh. */
+	private async adoptSyncedBase(): Promise<void> {
+		try {
+			const root = await this.findRoot();
+			if (root !== null) {
+				this.layout = new VaultLayout(root, () => this.settings.types.map((t) => t.name));
+			}
+			await this.shared.load();
+			await this.applySharedSettings();
+			await this.shared.ensureFilter();
+			await this.index.rebuild();
+			activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
+		} catch (e) {
+			console.error('[WL] could not adopt the synced base', e);
+		}
+	}
+
+	/** Type names drive classification: a change (local or synced) needs a re-scan of all notes. */
+	private syncTypeNames(): void {
+		const key = this.settings.types.map((t) => t.name).join('\n');
+		const changed = this.typeNamesKey !== null && key !== this.typeNamesKey;
+		this.typeNamesKey = key;
+		if (!changed || !this.indexReady) return;
+		void this.index.rebuild().then(() => activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed')));
 	}
 
 	/** Moves a schema-1 data.json into notes, base and History.md; on failure it is retried next start. */
@@ -411,11 +447,13 @@ export default class WatchLogPlugin extends Plugin {
 		);
 		// mirror into types.ts so the pure formatters render in the chosen order without a settings ref
 		setActiveDateFormat(this.settings.dateFormat);
+		this.syncTypeNames();
 	}
 
 	async saveSettings(): Promise<void> {
 		// keep the date formatters in step with the setting on every save
 		setActiveDateFormat(this.settings.dateFormat);
+		this.syncTypeNames();
 		await persistSettings(this.settings, this.local, this.shared);
 	}
 

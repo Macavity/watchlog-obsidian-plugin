@@ -31,6 +31,25 @@ describe('settings split', () => {
 		expect(JSON.stringify(f.plugin.data)).not.toContain('Rewatch');
 	});
 
+	it('writes nothing when no shared key changed', async () => {
+		const src = 'watchlog:\n  version: 1\n  futureKey: 1\n';
+		const { f, local, shared } = await setup({ 'W/WatchLog.base': src });
+		const settings = composeSettings(local.data.settings, shared.get().settings);
+		settings.tmdbApiKey = 'K';
+		await persistSettings(settings, local, shared);
+		expect(f.files.get('W/WatchLog.base')).toBe(src);
+	});
+
+	it('writes only the changed shared key', async () => {
+		const { f, local, shared } = await setup({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n' });
+		const settings = composeSettings(local.data.settings, shared.get().settings);
+		settings.halfStarRatings = !settings.halfStarRatings;
+		await persistSettings(settings, local, shared);
+		const out = f.files.get('W/WatchLog.base')!;
+		expect(out).toContain('halfStarRatings');
+		expect(out).not.toContain('statuses');
+	});
+
 	it('lets shared keys win over local and drops removed folder settings', async () => {
 		const { local, shared } = await setup({
 			'W/WatchLog.base': 'watchlog:\n  version: 1\n  statuses:\n    - name: Shared\n      color: "#111111"\n',
