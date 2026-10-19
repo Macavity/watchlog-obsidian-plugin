@@ -68,4 +68,11 @@ describe('HistoryStore', () => {
 		await tick();
 		expect(cb).toHaveBeenCalledTimes(1);
 	});
+	it('links to the note path and loads the plain title name', async () => {
+		const f = createFakeApp({ 'W/TV Show/Dark.md': '---\ntype: TV Show\n---\n' });
+		const h = new HistoryStore(f.app, () => new VaultLayout('W', () => ['TV Show']), (n) => n === 'Dark');
+		await h.append(entry(1, { titleName: 'Dark' }));
+		expect(f.files.get('W/History.md')).toContain('[[TV Show/Dark]]');
+		expect((await h.load())[0]!.titleName).toBe('Dark');
+	});
 });

@@ -86,7 +86,7 @@ describe('migrateV1', () => {
 		// the 'once' schedule is dropped (E1)
 		expect(f.files.get('WatchLog/Movie/A.md')).not.toMatch(/airtime/);
 		expect(fmOf(f.files.get('WatchLog/TV Show/Dark.md'))).toMatchObject({ airtimeDay: 4, airtimeTime: '20:00', airtimeSeason: 2, airtimeEpisode: 3 });
-		expect(f.files.get('WatchLog/History.md')).toContain('[[Dark]]');
+		expect(f.files.get('WatchLog/History.md')).toContain('[[TV Show/Dark]]');
 	});
 
 	it('does not adopt the new format when a step fails', async () => {
@@ -95,5 +95,49 @@ describe('migrateV1', () => {
 		const r = await run();
 		expect(r.errors).not.toEqual([]);
 		expect((f.plugin.data as { schemaVersion?: number }).schemaVersion).toBeUndefined();
+	});
+	it('only moves known legacy notes and real custom lists', async () => {
+		const { run, f } = await setupMigration(legacy, {
+			'WatchLog/Reading/Books/Foreign.md': '# mine\n',
+			'Gaming/Other.md': '# mine\n',
+			'Lists/Readme.md': '# not a list\n',
+		});
+		await run();
+		expect(f.files.has('WatchLog/Reading/Books/Foreign.md')).toBe(true);
+		expect(f.files.has('Gaming/Other.md')).toBe(true);
+		expect(f.files.has('Lists/Readme.md')).toBe(true);
+		expect(f.files.has('WatchLog/Books/Foreign.md')).toBe(false);
+		expect(f.files.has('WatchLog/CustomLists/Readme.md')).toBe(false);
+		expect(f.files.has('WatchLog/Books/Dune.md')).toBe(true);
+		expect(f.files.has('WatchLog/CustomLists/Shopping.md')).toBe(true);
+	});
+
+	it('on a second device (base exists) creates no notes and only fills progress', async () => {
+		const first = await setupMigration(legacy, {});
+		await first.run();
+		const base = first.f.files.get('WatchLog/WatchLog.base') ?? '';
+		const { run, f } = await setupMigration(legacy, {
+			'WatchLog/WatchLog.base': base,
+			'WatchLog/TV Show/Dark.md': '---\ntitle: Dark\ntype: TV Show\nstatus: Watching\n---\n\nmine\n',
+			'WatchLog/Movie/Maybe Film.md': '---\ntitle: Maybe Film\ntype: Movie\n---\n',
+		});
+		const r = await run();
+		expect(r.errors).toEqual([]);
+		const dark = fmOf(f.files.get('WatchLog/TV Show/Dark.md'));
+		expect(dark.watched).toBe('S01E01-E10, S02E01-E02');
+		for (const k of ['groups', 'airtimeRecurrence', 'airtimeDay', 'maybe', 'releaseDate']) expect(dark).not.toHaveProperty(k);
+		expect(f.files.has('WatchLog/Movie/A.md')).toBe(false);
+		expect(f.files.get('WatchLog/Movie/Maybe Film.md')).not.toMatch(/maybe/);
+		expect(fmOf(f.files.get('WatchLog/Games/Hades.md'))).not.toHaveProperty('groups'); // moved legacy note stays as is
+		expect((f.plugin.data as LocalData).cache['TV Show/Dark']?.seasons).toHaveLength(2);
+	});
+
+	it('on a second device still creates a maybe title without a note', async () => {
+		const first = await setupMigration(legacy, {});
+		await first.run();
+		const base = first.f.files.get('WatchLog/WatchLog.base') ?? '';
+		const { run, f } = await setupMigration(legacy, { 'WatchLog/WatchLog.base': base });
+		await run();
+		expect(f.files.get('WatchLog/Movie/Maybe Film.md')).toMatch(/maybe: true/);
 	});
 });

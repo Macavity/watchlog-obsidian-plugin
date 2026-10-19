@@ -580,7 +580,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 		const filename = `watchlog-backup-${dateStr}.json`;
 
-		// notes plus shared settings and log; API keys stay out of the file
+		// notes, shared settings, log and the device-local settings including API keys (E7): keep the file private
 		const json = JSON.stringify(buildBackup(this.plugin.backupManagers()), null, 2);
 
 		// on mobile a browser download lands in an inaccessible sandbox — write into the vault
@@ -602,10 +602,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		new Notice(`Backup exported as ${filename}`);
 	}
 
-	/** Mobile path: write the backup into WatchLog/backups/, disambiguating on collision. */
+	/** Mobile path: write the backup into <root>/backups/, disambiguating on collision. */
 	private async exportBackupToVault(filename: string, json: string): Promise<void> {
 		const adapter = this.app.vault.adapter;
-		const folder = normalizePath('WatchLog/backups');
+		const folder = normalizePath(`${this.plugin.getLayout().root}/backups`);
 		if (!(await adapter.exists(folder))) {
 			try {
 				await adapter.mkdir(folder);

@@ -6,13 +6,14 @@ import type { VaultLayout } from './VaultLayout';
 export const MAX_HISTORY_ENTRIES = 1000;
 const GROUP_CREATED = /^Group "(.+)" was created$/;
 
-function toLine(e: HistoryEntry, isLink: boolean): HistoryLine {
+/** `target` is the wikilink target (the note path); history lines carry the title name for everything else. */
+function toLine(e: HistoryEntry, isLink: boolean, linkTarget?: string): HistoryLine {
 	const group = e.action ? null : GROUP_CREATED.exec(e.message);
 	const target = group ? (group[1] ?? '') : (e.titleName || '(unknown)');
 	const line: HistoryLine = {
 		timestamp: e.timestamp,
 		action: group ? 'group-created' : (e.action ?? 'added'),
-		target,
+		target: isLink && !group && linkTarget ? linkTarget : target,
 		isLink: isLink && !group && !!e.titleName,
 	};
 	// the group message is derived from the target on load
@@ -29,6 +30,8 @@ export function historyKey(e: HistoryEntry): string {
 
 function toEntry(l: HistoryLine, index: number): HistoryEntry {
 	const group = l.action === 'group-created';
+	// a link target is a note path ("TV Show/Dark"); the entry keeps the plain name
+	const name = l.isLink ? (l.target.split('|')[0] ?? '').split('/').pop() || l.target : l.target;
 	return {
 		id: `${l.timestamp}#${index}`,
 		timestamp: l.timestamp,
@@ -36,7 +39,7 @@ function toEntry(l: HistoryLine, index: number): HistoryEntry {
 		source: l.source,
 		// group-created has no HistoryAction; the Log tab infers 'added' from the message
 		action: l.action === 'group-created' ? undefined : l.action,
-		titleName: group ? undefined : l.target,
+		titleName: group ? undefined : name,
 	};
 }
 
@@ -57,6 +60,20 @@ export class HistoryStore {
 		return f instanceof TFile ? f : null;
 	}
 
+	/** Links to the title note by path (unambiguous when two notes share a name); falls back to the name. */
+	private format(e: HistoryEntry): string {
+		const name = e.titleName ?? '';
+		const isLink = this.titleExists(name);
+		let target: string | undefined;
+		if (isLink) {
+			const layout = this.layout();
+			const note = this.app.vault.getMarkdownFiles()
+				.find((f) => f.basename === name && layout.classify(f.path)?.kind === 'title');
+			if (note) target = layout.idFromPath(note.path);
+		}
+		return formatHistoryLine(toLine(e, isLink, target));
+	}
+
 	async load(): Promise<HistoryEntry[]> {
 		const f = this.file();
 		if (!f) return [];
@@ -75,7 +92,7 @@ export class HistoryStore {
 	/** Appends several entries in one write. */
 	async appendMany(entries: HistoryEntry[]): Promise<void> {
 		if (entries.length === 0) return;
-		const texts = entries.map((e) => formatHistoryLine(toLine(e, this.titleExists(e.titleName ?? ''))));
+		const texts = entries.map((e) => this.format(e));
 		await this.write((src) => {
 			const lines = (src === '' || src.endsWith('\n') ? src : src + '\n').split('\n');
 			lines.splice(lines.length - 1, 0, ...texts); // before the trailing empty element
@@ -85,7 +102,7 @@ export class HistoryStore {
 
 	/** Replaces all history lines with `entries`, keeping foreign lines in place. */
 	async replaceAll(entries: HistoryEntry[]): Promise<void> {
-		const lines = entries.slice(-MAX_HISTORY_ENTRIES).map((e) => formatHistoryLine(toLine(e, this.titleExists(e.titleName ?? ''))));
+		const lines = entries.slice(-MAX_HISTORY_ENTRIES).map((e) => this.format(e));
 		await this.write((src) => {
 			const out: string[] = [];
 			let inserted = false;

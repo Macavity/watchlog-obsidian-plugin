@@ -14,6 +14,7 @@ import { encodeTitle, splitCache } from './titleCodec';
 import { encodeBook, encodeManga } from './readingCodec';
 import { encodeGame } from './gameCodec';
 import { externalIdFromLink } from './externalId';
+import { hasWatchlogKey } from './baseFile';
 
 export interface MigrationReport {
 	notesCreated: number;
@@ -41,6 +42,9 @@ export interface MigrationContext extends ImportContext {
 type Fm = Record<string, unknown>;
 
 const BACKUP_FILE = 'data.v1-backup.json';
+const CUSTOM_LIST_DATA = /^## Data\r?\n```json/m;
+/** A second device must not re-add what the first one migrated (and the user may have changed since). */
+const JOINED_KEYS = ['watched', 'skipped', 'seasons'];
 const FM_RE = /^---\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(\r?\n|$)/;
 const UNSAFE = /[*"\\/<>:|?]/g;
 /** Settings dropped in schema 2 (the folders are central now). */
@@ -100,6 +104,8 @@ interface IdMaps {
 class Migration {
 	private cache: Record<string, EntryCache> = {};
 	private claimed = new Set<string>();
+	/** A base with `watchlog:` existed before this run: another device migrated already. */
+	private joined = false;
 	private ids: IdMaps = { title: new Map(), book: new Map(), manga: new Map(), game: new Map(), group: new Map() };
 
 	constructor(
@@ -111,6 +117,7 @@ class Migration {
 
 	async run(): Promise<void> {
 		await this.backup();
+		this.joined = await this.baseExists();
 		const data = await this.prepare(true);
 		await this.centralizeFolders(data);
 		await this.importData(data);
@@ -135,9 +142,16 @@ class Migration {
 	}
 
 	private async importData(data: WatchLogData): Promise<void> {
-		await this.ensureBase(data);
 		await this.importEntries(data);
 		await this.importHistory(data);
+		// last: an interrupted run must not look like a finished migration on the retry
+		await this.ensureBase(data);
+	}
+
+	private async baseExists(): Promise<boolean> {
+		const { vault } = this.ctx.app;
+		const base = vault.getAbstractFileByPath(this.ctx.layout.basePath);
+		return base instanceof TFile && hasWatchlogKey(await vault.read(base));
 	}
 
 	private dir(): string {
@@ -211,21 +225,27 @@ class Migration {
 		await this.moveFolder(books, layout.folderFor('book'), legacyPaths(books, reading.books.map((b) => b.title), 'book'));
 		await this.moveFolder(manga, layout.folderFor('manga'), legacyPaths(manga, reading.manga.map((m) => m.title), 'manga'));
 		await this.moveFolder(gamesFolder, layout.folderFor('game'), legacyPaths(gamesFolder, games.games.map((g) => g.title), 'game'));
-		await this.moveFolder(listsFolder, layout.customListsFolder, new Set());
+		await this.moveFolder(listsFolder, layout.customListsFolder, 'lists');
 		await this.pruneEmpty(readingRoot);
 	}
 
 	/**
-	 * Moves the files of `from` into `to`; a file whose name exists there stays and is reported. A
-	 * folder that contains the root (and so the base and History.md) gives up only its legacy notes.
+	 * Moves the files of `from` into `to`; a file whose name exists there stays and is reported. Only
+	 * the legacy notes move (for the custom lists: files with a `## Data` JSON block), foreign files stay.
 	 */
-	private async moveFolder(from: string, to: string, legacyNotes: Set<string>): Promise<void> {
+	private async moveFolder(from: string, to: string, legacyNotes: Set<string> | 'lists'): Promise<void> {
 		if (from === to) return;
 		const { vault, fileManager } = this.ctx.app;
 		const src = vault.getAbstractFileByPath(from);
 		if (!(src instanceof TFolder)) return;
-		const holdsRoot = this.holdsRoot(from);
-		const files = src.children.filter((c): c is TFile => c instanceof TFile && (!holdsRoot || legacyNotes.has(c.path)));
+		const files: TFile[] = [];
+		for (const c of src.children) {
+			if (!(c instanceof TFile)) continue;
+			const own = legacyNotes === 'lists'
+				? c.extension === 'md' && CUSTOM_LIST_DATA.test(await vault.read(c))
+				: legacyNotes.has(c.path);
+			if (own) files.push(c);
+		}
 		let moved = false;
 		for (const file of files) {
 			const target = normalizePath(`${to}/${file.name}`);
@@ -315,6 +335,7 @@ class Migration {
 			airtime.set(`${kind}:${e.titleId}`, toEntryAirtime(e));
 		}
 		const extras = <T extends { groups?: string[]; airtime?: EntryAirtime }>(item: T, key: string): T => {
+			if (this.joined) return item;
 			const groups = groupsOf.get(key);
 			if (groups) item.groups = groups;
 			const a = airtime.get(key);
@@ -335,6 +356,10 @@ class Migration {
 				continue;
 			}
 			this.claim(path);
+			if (this.joined && this.ctx.app.vault.getAbstractFileByPath(path)) {
+				this.report.skipped.push(`maybe "${m.title}": ${path} already exists`);
+				continue;
+			}
 			const title = normalizeTitle({
 				title: m.title, type: m.type, status: 'Plan to watch', priority: '', dateAdded: m.dateAdded,
 				dateModified: m.dateAdded, totalEpisodes: m.totalEpisodes, episodeDuration: m.episodeDuration,
@@ -345,6 +370,7 @@ class Migration {
 			await this.writeTitle(path, title);
 		}
 		for (const b of reading.books) {
+			if (this.joined) break;
 			const path = this.claim(layout.notePath('book', b.title));
 			const id = layout.idFromPath(path);
 			this.ids.book.set(b.id, id);
@@ -352,6 +378,7 @@ class Migration {
 			await this.writeNote(path, encodeBook(book), '## Notes\n\n\n## Quotes\n');
 		}
 		for (const m of reading.manga) {
+			if (this.joined) break;
 			const path = this.claim(layout.notePath('manga', m.title));
 			const id = layout.idFromPath(path);
 			this.ids.manga.set(m.id, id);
@@ -359,6 +386,7 @@ class Migration {
 			await this.writeNote(path, encodeManga(manga), '## Notes\n\n\n## Quotes\n');
 		}
 		for (const g of games.games) {
+			if (this.joined) break;
 			const path = this.claim(layout.notePath('game', g.title));
 			const id = layout.idFromPath(path);
 			this.ids.game.set(g.id, id);
@@ -371,9 +399,18 @@ class Migration {
 		// without an API identity nothing can refetch the seasons: they belong in the note
 		const fetchable = !!title.tmdbId || !!title.malId || !!title.anilistId || externalIdFromLink(title.externalLink) !== null;
 		if (!fetchable && title.seasons.length > 0) title.seasonsOverride = true;
+		const fm = encodeTitle(title, progressOf(title));
+		if (this.joined && !title.maybe) {
+			// another device migrated: only progress for notes that exist, the cache for those
+			if (!(this.ctx.app.vault.getAbstractFileByPath(path) instanceof TFile)) {
+				this.report.skipped.push(`${path}: no note, not recreated`);
+				return;
+			}
+			for (const k of Object.keys(fm)) if (!JOINED_KEYS.includes(k)) delete fm[k];
+		}
 		const cache = splitCache(title);
 		if (Object.keys(cache).length > 0) this.cache[title.id] = cache;
-		await this.writeNote(path, encodeTitle(title, progressOf(title)), `## Notes\n\n${title.notes}\n`);
+		await this.writeNote(path, fm, `## Notes\n\n${title.notes}\n`);
 	}
 
 	/** Creates the note, or adds only the keys it lacks; existing values are never touched. */
