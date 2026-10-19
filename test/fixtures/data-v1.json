@@ -1,0 +1,144 @@
+{
+	"settings": {
+		"rootFolder": "WatchLog",
+		"customListsFolder": "Lists",
+		"tmdbApiKey": "tmdb-SecretValue",
+		"omdbApiKey": "omdb-SecretValue",
+		"igdbClientSecret": "igdb-SecretValue",
+		"steamId": "76561190000000000",
+		"types": [
+			{ "name": "Movie", "color": "#378ADD" },
+			{ "name": "TV Show", "color": "#1D9E75" }
+		],
+		"statuses": [
+			{ "name": "Watching", "color": "#1D9E75" },
+			{ "name": "Completed", "color": "#7F77DD" },
+			{ "name": "Plan to watch", "color": "#00A9A5" },
+			{ "name": "Rewatching", "color": "#123456" }
+		],
+		"cardSize": 1,
+		"gamesFilters": {
+			"genreExclude": [], "statusExclude": ["Wishlist", "Dropped"], "ratingExclude": [],
+			"priorityExclude": [], "platformExclude": [], "groupExclude": [], "sort": "title"
+		}
+	},
+	"titles": [
+		{
+			"id": "a", "title": "A", "type": "Movie", "status": "Completed", "priority": "Medium",
+			"review": "", "rating": 2, "notes": "", "dateStarted": null, "dateFinished": "2025-01-05",
+			"dateAdded": "2025-01-01T09:00:00.000Z", "dateModified": "2025-01-05T09:00:00.000Z",
+			"totalEpisodes": 1, "episodeDuration": 120, "releaseDate": null,
+			"externalLink": "https://www.themoviedb.org/movie/1", "seasons": [], "watchedEpisodes": [1],
+			"tmdbId": 1, "tmdbMediaType": "movie", "posterUrl": "https://img.example/a.jpg",
+			"director": ["Some Director"]
+		},
+		{
+			"id": "dark", "title": "Dark", "type": "TV Show", "status": "Watching", "priority": "High",
+			"review": "", "rating": 0, "notes": "Great show", "dateStarted": "2025-02-01", "dateFinished": null,
+			"dateAdded": "2025-02-01T12:00:00.000Z", "dateModified": "2025-02-10T12:00:00.000Z",
+			"totalEpisodes": 18, "episodeDuration": 55, "releaseDate": null,
+			"externalLink": "https://www.themoviedb.org/tv/70523",
+			"seasons": [
+				{ "name": "Season 1", "episodes": 10, "offset": 0 },
+				{ "name": "Season 2", "episodes": 8, "offset": 10 }
+			],
+			"watchedEpisodes": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+			"tmdbId": 70523, "tmdbMediaType": "tv"
+		},
+		{
+			"id": "das-doppelte-lottchen", "title": "Das doppelte Lottchen", "type": "Movie",
+			"status": "Completed", "priority": "Low", "review": "", "rating": 4, "notes": "",
+			"dateStarted": null, "dateFinished": null,
+			"dateAdded": "2025-03-01T08:00:00.000Z", "dateModified": "2025-03-01T08:00:00.000Z",
+			"totalEpisodes": 1, "episodeDuration": 90, "releaseDate": null, "externalLink": "",
+			"seasons": [], "watchedEpisodes": [1]
+		}
+	],
+	"groups": [
+		{ "id": "group-marvel", "name": "Marvel", "titleIds": ["a"], "dateAdded": "2025-01-02T10:00:00.000Z" }
+	],
+	"airtime": [
+		{
+			"id": "airtime-dark", "titleId": "dark", "source": "watchlist",
+			"schedule": { "recurrence": "weekly", "dayOfWeek": 4, "releaseTime": "20:00" },
+			"currentSeason": 2, "currentEpisode": 3, "dateAdded": "2025-02-01T12:00:00.000Z"
+		},
+		{
+			"id": "airtime-a", "titleId": "a",
+			"schedule": { "recurrence": "once", "releaseDate": "2030-01-01" },
+			"dateAdded": "2025-01-01T09:00:00.000Z"
+		}
+	],
+	"maybe": [
+		{
+			"id": "maybe-maybe-film", "title": "Maybe Film", "type": "Movie", "releaseDate": null,
+			"externalLink": "", "totalEpisodes": 1, "episodeDuration": 100,
+			"dateAdded": "2025-04-01T08:00:00.000Z"
+		}
+	],
+	"pinnedGroupId": "group-marvel",
+	"savedFilterPreset": null,
+	"recommendedDaily": { "date": "2025-05-01", "ids": ["a", "dark", "gone"] },
+	"collapsedSeasons": { "dark": [0] },
+	"drafts": { "dismissed": ["x"], "added": [], "firstSeen": {}, "titleDisplay": {} },
+	"history": [
+		{
+			"id": "h1", "timestamp": "2025-02-01T12:00:00.000Z", "message": "\"Dark\" was added",
+			"source": "Watchlist", "action": "added", "titleName": "Dark"
+		}
+	],
+	"migratedReadingHistory": true,
+	"reading": {
+		"books": [
+			{
+				"id": "dune", "title": "Dune", "author": "Frank Herbert", "status": "Reading", "rating": 0,
+				"progressUnit": "pages", "pagesRead": 120, "totalPages": 600, "wordsRead": 0, "totalWords": 0,
+				"chaptersRead": 0, "totalChapters": 0, "coverUrl": "", "googleBooksId": "B1",
+				"vaultPage": "", "dateStarted": null, "dateFinished": null, "releaseDate": null,
+				"dateAdded": "2025-01-10T08:00:00.000Z", "dateModified": "2025-01-10T08:00:00.000Z",
+				"customFields": {}
+			}
+		],
+		"manga": [
+			{
+				"id": "berserk", "title": "Berserk", "author": "Kentaro Miura", "status": "On Hold", "rating": 5,
+				"chaptersRead": 100, "totalChapters": 380, "volumesRead": 10, "totalVolumes": 42,
+				"coverUrl": "", "malId": "2", "vaultPage": "", "dateStarted": null, "dateFinished": null,
+				"releaseDate": null, "dateAdded": "2025-01-11T08:00:00.000Z",
+				"dateModified": "2025-01-11T08:00:00.000Z", "customFields": {}
+			}
+		],
+		"bookColumns": [],
+		"mangaColumns": [],
+		"settings": { "defaultFolder": "WatchLog/Reading", "defaultStatus": "Plan to Read" }
+	},
+	"games": {
+		"games": [
+			{
+				"id": "hades", "title": "Hades", "developer": "Supergiant", "publisher": "Supergiant",
+				"type": "Indie", "status": "Wishlist", "priority": "", "favorite": false, "wishlist": false,
+				"rating": 0, "progress": 0, "playtime": "12h 30m", "achievementsEarned": 0,
+				"achievementsTotal": 0, "platforms": ["Windows PC"], "singleplayer": true, "coop": false,
+				"multiplayer": false, "coverUrl": "", "apiSource": "", "apiId": "", "steamAppId": "",
+				"lastPlayed": null, "storeUrl": "", "externalLink": "", "vaultPage": "",
+				"releaseDate": null, "dateStarted": null, "dateFinished": null,
+				"dateAdded": "2025-01-12T08:00:00.000Z", "dateModified": "2025-01-12T08:00:00.000Z"
+			}
+		],
+		"groups": [
+			{ "id": "game-group-rogue", "name": "Roguelikes", "gameIds": ["hades"], "dateAdded": "2025-01-13T08:00:00.000Z" }
+		],
+		"settings": {
+			"defaultFolder": "Gaming",
+			"defaultStatus": "Not started",
+			"statuses": [
+				{ "name": "Playing", "color": "#3B82F6" },
+				{ "name": "Not started", "color": "#6B7280" },
+				{ "name": "Wishlist", "color": "#EAB308" }
+			],
+			"types": [{ "name": "Indie", "color": "#D4537E" }],
+			"platforms": ["Windows PC", "Steam Deck"]
+		},
+		"recommendedDaily": { "date": "2025-05-01", "ids": ["hades"] }
+	}
+}

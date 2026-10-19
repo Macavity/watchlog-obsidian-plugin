@@ -21,6 +21,12 @@ function toLine(e: HistoryEntry, isLink: boolean): HistoryLine {
 	return line;
 }
 
+/** Identity of an event for de-duplication: timestamp, action and target. */
+export function historyKey(e: HistoryEntry): string {
+	const l = toLine(e, false);
+	return `${l.timestamp}|${l.action}|${l.target}`;
+}
+
 function toEntry(l: HistoryLine, index: number): HistoryEntry {
 	const group = l.action === 'group-created';
 	return {
@@ -63,10 +69,16 @@ export class HistoryStore {
 	}
 
 	async append(e: HistoryEntry): Promise<void> {
-		const text = formatHistoryLine(toLine(e, this.titleExists(e.titleName ?? '')));
+		await this.appendMany([e]);
+	}
+
+	/** Appends several entries in one write. */
+	async appendMany(entries: HistoryEntry[]): Promise<void> {
+		if (entries.length === 0) return;
+		const texts = entries.map((e) => formatHistoryLine(toLine(e, this.titleExists(e.titleName ?? ''))));
 		await this.write((src) => {
 			const lines = (src === '' || src.endsWith('\n') ? src : src + '\n').split('\n');
-			lines.splice(lines.length - 1, 0, text); // before the trailing empty element
+			lines.splice(lines.length - 1, 0, ...texts); // before the trailing empty element
 			return this.cap(lines).join('\n');
 		});
 	}

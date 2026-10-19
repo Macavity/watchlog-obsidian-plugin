@@ -25,9 +25,18 @@ describe('LocalStore', () => {
 		const p = plugin(legacy); const s = new LocalStore(p);
 		const r = await s.load();
 		expect(r).toEqual({ schema: 1, legacy });
+		s.setCache('Movie/A', { posterUrl: 'u' });
 		await s.flush();
 		expect(p.data).toBe(legacy);
 		await s.adoptV2({ schemaVersion: 2, settings: {}, cache: {}, ui: {} });
 		expect(p.data).toMatchObject({ schemaVersion: 2 });
+	});
+	it('never writes a data.json from a newer version', async () => {
+		const newer = { schemaVersion: 3, settings: { x: 1 } };
+		const p = plugin(newer); const s = new LocalStore(p);
+		expect(await s.load()).toEqual({ schema: 'newer' });
+		s.setCache('Movie/A', { posterUrl: 'u' });
+		await s.flush();
+		expect(p.data).toBe(newer);
 	});
 });

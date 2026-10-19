@@ -1,8 +1,7 @@
-import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, normalizePath, parseYaml, setIcon, stringifyYaml } from 'obsidian';
+import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, TFile, parseYaml, setIcon, stringifyYaml } from 'obsidian';
 import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, AirtimeSchedule, setActiveDateFormat } from './types';
 import { cardSizeToMinWidth } from './VirtualGrid';
-import type { ReadingData, CardStyleTab, WatchLogData } from './types';
-import type { HistoryEntry } from './HistoryManager';
+import type { CardStyleTab, WatchLogData } from './types';
 import { DataManager } from './DataManager';
 import { ReadingDataManager } from './ReadingDataManager';
 import { GameDataManager } from './GameDataManager';
@@ -22,6 +21,7 @@ import { SharedConfigStore } from './storage/SharedConfigStore';
 import { EntryIndex } from './storage/EntryIndex';
 import { HistoryStore } from './storage/HistoryStore';
 import { hasWatchlogKey } from './storage/baseFile';
+import { legacyRoot, migrateV1 } from './storage/migrateV1';
 import { composeSettings, persistSettings } from './settingsSplit';
 
 /** Root folder created on a fresh install (no `.base` with a `watchlog:` key found). */
@@ -29,17 +29,18 @@ const DEFAULT_ROOT = 'WatchLog';
 
 export default class WatchLogPlugin extends Plugin {
 	settings: WatchLogPluginSettings = DEFAULT_SETTINGS;
-	// schema-1 data.json awaiting migration; while set, data.json is never written
+	// schema-1 data.json awaiting migration; LocalStore never writes data.json meanwhile
 	private legacyData: WatchLogData | null = null;
 	private layout = new VaultLayout(DEFAULT_ROOT, () => this.settings.types.map((t) => t.name));
 	private local = new LocalStore({
 		loadData: () => this.loadData(),
-		saveData: (d) => (this.legacyData ? Promise.resolve() : this.saveData(d)),
+		saveData: (d) => this.saveData(d),
 	});
+	private yaml = { parse: parseYaml, stringify: stringifyYaml };
 	private shared = new SharedConfigStore(
 		this.app,
 		() => this.layout,
-		{ parse: parseYaml, stringify: stringifyYaml },
+		this.yaml,
 		(ref) => this.registerEvent(ref),
 	);
 	private index = new EntryIndex(this.app, () => this.layout, this.local, (ref) => this.registerEvent(ref));
@@ -83,20 +84,16 @@ export default class WatchLogPlugin extends Plugin {
 	async onload(): Promise<void> {
 		const loaded = await this.local.load();
 		if (loaded.schema === 1) {
-			// migration (Task 16): convert the legacy data.json here. Until then it is kept in memory and
-			// on disk untouched (saves are suppressed) while the plugin runs like a fresh install.
+			// migrated in startVaultStorage, once the vault is ready; until then its settings act as local
 			this.legacyData = loaded.legacy;
+		} else if (loaded.schema === 'newer') {
+			new Notice('Watchlog: data.json was written by a newer plugin version. Device settings are not saved until you update.', 0);
 		}
 		// local + defaults only; shared keys are re-composed once the base is loaded (startVaultStorage)
 		await this.loadSettings();
 		// the card-size CSS var must be live before any view or modal renders a grid
 		this.applyCardSizeCssVar();
 		this.register(() => activeDocument.body.style.removeProperty('--wl-card-min-width'));
-
-		// one-time migration: pull legacy reading.json / history.json into data.json so Sync replicates
-		// them. After data.json loads, before the reading/history managers bind. Idempotent — gated by a
-		// flag in data.json.
-		await this.migrateReadingHistory();
 
 		this.apiService = new ApiService(
 			this.settings.omdbApiKey,
@@ -210,8 +207,13 @@ export default class WatchLogPlugin extends Plugin {
 	private async startVaultStorage(): Promise<void> {
 		try {
 			const root = await this.findRoot();
-			this.layout = new VaultLayout(root ?? DEFAULT_ROOT, () => this.settings.types.map((t) => t.name));
-			if (root === null && !this.legacyData) {
+			const legacy = this.legacyData;
+			this.layout = new VaultLayout(
+				root ?? (legacy ? legacyRoot(legacy) : DEFAULT_ROOT),
+				() => this.settings.types.map((t) => t.name),
+			);
+			if (legacy) await this.migrate(legacy);
+			if (root === null && !legacy) {
 				await this.dataManager.ensureFolder(this.layout.root);
 				await this.shared.createBase(this.settings as unknown as Record<string, unknown>);
 			}
@@ -233,6 +235,36 @@ export default class WatchLogPlugin extends Plugin {
 			console.error('[WL] vault storage failed to start', e);
 			new Notice('Watchlog could not load its notes. See the developer console for details.');
 		}
+	}
+
+	/** Moves a schema-1 data.json into notes, base and History.md; on failure it is retried next start. */
+	private async migrate(legacy: WatchLogData): Promise<void> {
+		const report = await migrateV1({
+			app: this.app,
+			plugin: this,
+			local: this.local,
+			legacy,
+			shared: this.shared,
+			// links only to title notes that exist after the import
+			history: new HistoryStore(this.app, () => this.layout, (name) => this.isTitleNote(name)),
+			yaml: this.yaml,
+			layout: this.layout,
+		});
+		if (report.skipped.length > 0) console.warn('[WL] migration skipped', report.skipped);
+		if (report.errors.length > 0) {
+			console.error('[WL] migration failed; data.json is kept and the migration retried next start', report.errors);
+			new Notice('Watchlog could not migrate its data to notes. It will retry on the next start; see the developer console.', 0);
+			return;
+		}
+		this.legacyData = null;
+		await this.loadSettings();
+		const skipped = report.skipped.length > 0 ? ` ${report.skipped.length} item(s) were skipped, see the developer console.` : '';
+		new Notice(`Watchlog moved its data into notes (backup: data.v1-backup.json).${skipped}`, 10000);
+	}
+
+	private isTitleNote(name: string): boolean {
+		return this.app.vault.getMarkdownFiles()
+			.some((f: TFile) => f.basename === name && this.layout.classify(f.path)?.kind === 'title');
 	}
 
 	/** Current vault layout (root and central folders). */
@@ -448,89 +480,6 @@ export default class WatchLogPlugin extends Plugin {
 			return exists(this.settings.lastAddedType) ? this.settings.lastAddedType : firstAvailable;
 		}
 		return exists(choice) ? choice : firstAvailable;
-	}
-
-	/**
-	 * One-time migration of legacy `reading.json` / `history.json` into `data.json`.
-	 *
-	 * Obsidian Sync replicates data.json (the saveData channel) but NOT the raw adapter-written files,
-	 * so their contents are copied into the single saveData object.
-	 *
-	 * Gated by `data.migratedReadingHistory`. Flag and migrated data are written together in ONE atomic
-	 * saveData(), so an interrupted load simply re-runs the idempotent migration. The flag is only set
-	 * when both legacy reads succeeded (an absent file counts as success); a parse failure leaves it
-	 * unset to preserve a recovery chance. Legacy files are left on disk as a backup.
-	 */
-	private async migrateReadingHistory(): Promise<void> {
-		const master = this.dataManager.getData();
-		if (master.migratedReadingHistory === true) {
-			return;
-		}
-
-		const adapter = this.app.vault.adapter;
-		const dir = `${this.app.vault.configDir}/plugins/watchlog`;
-		const readingPath = normalizePath(`${dir}/reading.json`);
-		const historyPath = normalizePath(`${dir}/history.json`);
-
-		// read legacy reading.json
-		let readingOk = false;
-		let readingData: ReadingData | null = null;
-		try {
-			if (await adapter.exists(readingPath)) {
-				const raw = await adapter.read(readingPath);
-				readingData = JSON.parse(raw) as ReadingData;
-				readingOk = true;
-			} else {
-				readingOk = true; // absent = nothing to migrate (still a success)
-			}
-		} catch (e) {
-			readingOk = false;
-			console.warn('[WL] reading.json read/parse failed; migration will retry next load:', e);
-		}
-
-		// read legacy history.json
-		let historyOk = false;
-		let historyEntries: HistoryEntry[] | null = null;
-		try {
-			if (await adapter.exists(historyPath)) {
-				const raw = await adapter.read(historyPath);
-				const parsed = JSON.parse(raw) as { entries?: HistoryEntry[] };
-				historyEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
-				historyOk = true;
-			} else {
-				historyOk = true;
-			}
-		} catch (e) {
-			historyOk = false;
-			console.warn('[WL] history.json read/parse failed; migration will retry next load:', e);
-		}
-
-		// copy into the saveData object (with the don't-overwrite-with-empty belt)
-		if (readingOk && readingData) {
-			const legacyHasReading =
-				(readingData.books?.length ?? 0) > 0 || (readingData.manga?.length ?? 0) > 0 ||
-				(readingData.bookColumns?.length ?? 0) > 0 || (readingData.mangaColumns?.length ?? 0) > 0;
-			const masterHasReading = !!master.reading &&
-				(((master.reading.books?.length ?? 0) > 0) || ((master.reading.manga?.length ?? 0) > 0));
-			if (legacyHasReading || !masterHasReading) {
-				master.reading = readingData;
-			}
-		}
-
-		if (historyOk && historyEntries) {
-			const masterHasHistory = Array.isArray(master.history) && master.history.length > 0;
-			if (historyEntries.length > 0 || !masterHasHistory) {
-				master.history = historyEntries;
-			}
-		}
-
-		// only mark migrated when both reads succeeded; otherwise retry next load
-		if (readingOk && historyOk) {
-			master.migratedReadingHistory = true;
-		}
-
-		// single atomic write: migrated data AND flag together
-		await this.dataManager.persist();
 	}
 
 	private openWidgetPalette(editor: Editor): void {

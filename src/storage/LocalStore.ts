@@ -1,7 +1,8 @@
 import type { WatchLogData } from '../types';
 import type { EntryCache, LocalData } from './storageTypes';
 
-export type LoadResult = { schema: 2 } | { schema: 1; legacy: WatchLogData };
+/** `newer`: data.json from a later plugin version; it is never written by this one. */
+export type LoadResult = { schema: 2 } | { schema: 1; legacy: WatchLogData } | { schema: 'newer' };
 
 interface DataPlugin {
 	loadData(): Promise<unknown>;
@@ -23,6 +24,8 @@ export class LocalStore {
 	data: LocalData = emptyData();
 	private timer: ReturnType<typeof setTimeout> | null = null;
 	private dirty = false;
+	// false while data.json holds a legacy or newer format that must not be overwritten
+	private writable = true;
 
 	constructor(private readonly plugin: DataPlugin) {}
 
@@ -30,7 +33,13 @@ export class LocalStore {
 		const raw = await this.plugin.loadData();
 		if (isRecord(raw) && raw.schemaVersion === undefined && Array.isArray(raw.titles)) {
 			// legacy stays in memory only; data stays empty and unsaved until adoptV2
+			this.writable = false;
 			return { schema: 1, legacy: raw as unknown as WatchLogData };
+		}
+		if (isRecord(raw) && typeof raw.schemaVersion === 'number' && raw.schemaVersion > 2) {
+			this.writable = false;
+			this.data = emptyData();
+			return { schema: 'newer' };
 		}
 		if (isRecord(raw) && raw.schemaVersion === 2) {
 			const d = raw as unknown as LocalData;
@@ -43,6 +52,7 @@ export class LocalStore {
 
 	async adoptV2(data: LocalData): Promise<void> {
 		this.data = data;
+		this.writable = true;
 		this.clearTimer();
 		await this.save();
 	}
@@ -93,6 +103,7 @@ export class LocalStore {
 	}
 
 	private async save(): Promise<void> {
+		if (!this.writable) return;
 		this.dirty = false;
 		await this.plugin.saveData(this.data);
 	}
