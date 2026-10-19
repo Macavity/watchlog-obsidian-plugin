@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { setupDataManager, makeTitle, tick } from './helpers/setupDataManager';
 
 describe('DataManager on vault storage', () => {
@@ -129,5 +129,140 @@ describe('DataManager on vault storage', () => {
 		expect(content).toContain('foo: bar');
 		expect(content).not.toContain('maybe');
 		expect(content).toContain('status: Plan to watch');
+	});
+
+	it('derives maybe, groups and airtime', async () => {
+		const { dm } = await setupDataManager({
+			'W/Movie/A.md': '---\ntitle: A\ntype: Movie\ngroups: [Marvel]\n---\n',
+			'W/Movie/B.md': '---\ntitle: B\ntype: Movie\nmaybe: true\nreleaseDate: 2099-01-01\n---\n',
+			'W/TV Show/C.md': '---\ntitle: C\ntype: TV Show\nairtimeRecurrence: weekly\nairtimeDay: 3\n---\n' });
+		expect(dm.getTitles().map(t => t.id).sort()).toEqual(['Movie/A', 'TV Show/C']);
+		expect(dm.getMaybeTitles().map(m => m.title)).toEqual(['B']);
+		expect(dm.getGroups()).toEqual([expect.objectContaining({ id: 'Marvel', name: 'Marvel', titleIds: ['Movie/A'] })]);
+		expect(dm.getAirtimeEntries().find(e => e.titleId === 'TV Show/C')?.schedule).toMatchObject({ recurrence: 'weekly', dayOfWeek: 3 });
+	});
+
+	it('derives a once entry from "To be released" + releaseDate; removing it sets the plan status', async () => {
+		const { dm, f } = await setupDataManager({
+			'W/Movie/A.md': '---\ntitle: A\ntype: Movie\nstatus: To be released\nreleaseDate: 2099-01-01\n---\n',
+			'W/Movie/B.md': '---\ntitle: B\ntype: Movie\nstatus: Plan to watch\nreleaseDate: 2099-01-01\n---\n',
+		});
+		const entries = dm.getAirtimeEntries();
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({ titleId: 'Movie/A', schedule: { recurrence: 'once', releaseDate: '2099-01-01' } });
+		await dm.removeAirtimeEntry(entries[0]!.id);
+		expect(f.files.get('W/Movie/A.md')).toContain('status: Plan to watch');
+		expect(f.files.get('W/Movie/A.md')).not.toContain('airtime');
+		expect(dm.getAirtimeEntries()).toEqual([]);
+	});
+
+	it('writes manual schedules as airtime keys and removes them again', async () => {
+		const { dm, f } = await setupDataManager({ 'W/TV Show/C.md': '---\ntitle: C\ntype: TV Show\n---\n' });
+		await dm.addAirtimeEntry({
+			id: dm.generateAirtimeId('TV Show/C'), titleId: 'TV Show/C',
+			schedule: { recurrence: 'weekly', dayOfWeek: 2, releaseTime: '20:15' },
+			currentSeason: 1, currentEpisode: 4, dateAdded: '2026-01-01',
+		});
+		expect(f.files.get('W/TV Show/C.md')).toMatch(/airtimeRecurrence: weekly[\s\S]*airtimeDay: 2/);
+		const [entry] = dm.getAirtimeEntries();
+		expect(entry).toMatchObject({ titleId: 'TV Show/C', currentSeason: 1, currentEpisode: 4, schedule: { releaseTime: '20:15' } });
+		entry!.currentEpisode = 5;
+		entry!.lastAcknowledgedDate = '2026-10-19';
+		await dm.updateAirtimeEntry(entry!);
+		expect(f.files.get('W/TV Show/C.md')).toMatch(/airtimeEpisode: 5/);
+		expect(f.files.get('W/TV Show/C.md')).toMatch(/airtimeAcknowledged: 2026-10-19/);
+		await dm.removeAirtimeEntry(entry!.id);
+		expect(f.files.get('W/TV Show/C.md')).not.toContain('airtime');
+		expect(dm.getAirtimeEntries()).toEqual([]);
+	});
+
+	it('stores a reading schedule in the book note', async () => {
+		const { dm, f } = await setupDataManager({ 'W/Books/Dune.md': '---\ntitle: Dune\ntype: book\nstatus: Reading\n---\n' });
+		await dm.addAirtimeEntry({
+			id: dm.generateReadingAirtimeId('Books/Dune'), titleId: 'Books/Dune', source: 'reading', readingKind: 'book',
+			schedule: { recurrence: 'monthly', dayOfMonth: 15 }, currentEpisode: 7, dateAdded: '2026-01-01',
+		});
+		const content = f.files.get('W/Books/Dune.md')!;
+		expect(content).toMatch(/airtimeRecurrence: monthly/);
+		expect(content).toMatch(/airtimeDay: 15/);
+		expect(content).toMatch(/airtimeEpisode: 7/);
+		expect(dm.getAirtimeEntries()).toEqual([expect.objectContaining({
+			titleId: 'Books/Dune', source: 'reading', readingKind: 'book', currentEpisode: 7,
+			schedule: expect.objectContaining({ recurrence: 'monthly', dayOfMonth: 15 }),
+		})]);
+		expect(JSON.stringify(f.plugin.data ?? {})).not.toContain('airtime');
+	});
+
+	it('derives reading and game entries from their release status', async () => {
+		const { dm } = await setupDataManager({
+			'W/Books/Dune.md': '---\ntitle: Dune\ntype: book\nstatus: To be released\nreleaseDate: 2099-01-01\n---\n',
+			'W/Games/Hades.md': '---\ntitle: Hades\nstatus: To be released\nreleaseDate: 2099-02-01\n---\n',
+		});
+		const entries = dm.getAirtimeEntries();
+		expect(entries.find((e) => e.titleId === 'Books/Dune')).toMatchObject({ source: 'reading', readingKind: 'book', schedule: { recurrence: 'once', releaseDate: '2099-01-01' } });
+		expect(entries.find((e) => e.titleId === 'Games/Hades')).toMatchObject({ source: 'game', schedule: { recurrence: 'once', releaseDate: '2099-02-01' } });
+	});
+
+	it('adds a maybe title as a note and adopts it without a second note', async () => {
+		const { dm, f } = await setupDataManager({});
+		await dm.addMaybeTitle({ id: dm.generateMaybeId('B'), title: 'B', type: 'Movie', releaseDate: '2099-01-01', externalLink: '', totalEpisodes: 1, episodeDuration: 120, dateAdded: '2026-01-01' });
+		expect(f.files.get('W/Movie/B.md')).toContain('maybe: true');
+		expect(dm.getMaybeTitles().map((m) => m.id)).toEqual(['Movie/B']);
+		expect(dm.getTitles()).toEqual([]);
+		await dm.addTitle(makeTitle({ title: 'B', type: 'Movie', status: 'Watching', rating: 4 }));
+		expect(f.files.has('W/Movie/B 2.md')).toBe(false);
+		const content = f.files.get('W/Movie/B.md')!;
+		expect(content).not.toContain('maybe');
+		expect(content).toContain('rating: 4');
+		expect(dm.getMaybeTitles()).toEqual([]);
+		expect(dm.getTitles().map((t) => t.id)).toEqual(['Movie/B']);
+	});
+
+	it('removes a maybe title by trashing its note', async () => {
+		const { dm, f } = await setupDataManager({ 'W/Movie/B.md': '---\ntitle: B\ntype: Movie\nmaybe: true\n---\n' });
+		await dm.removeMaybeTitle('Movie/B');
+		expect(f.files.has('W/Movie/B.md')).toBe(false);
+		expect(dm.getMaybeTitles()).toEqual([]);
+	});
+
+	it('writes group membership to the groups property', async () => {
+		const { dm, f } = await setupDataManager({
+			'W/Movie/A.md': '---\ntitle: A\ntype: Movie\n---\n',
+			'W/Movie/B.md': '---\ntitle: B\ntype: Movie\n---\n',
+		});
+		const log = vi.fn(() => Promise.resolve());
+		dm.setHistoryManager({ log } as never);
+		await dm.addGroup({ id: dm.generateGroupId('Marvel'), name: 'Marvel', titleIds: ['Movie/A'], dateAdded: '' });
+		expect(f.files.get('W/Movie/A.md')).toMatch(/groups:\n\s+- Marvel/);
+		await dm.addTitleToGroup('Marvel', 'Movie/B');
+		expect(dm.getGroup('Marvel')?.titleIds.sort()).toEqual(['Movie/A', 'Movie/B']);
+		await dm.updateGroup({ ...dm.getGroup('Marvel')!, name: 'MCU', titleIds: ['Movie/B'] });
+		expect(f.files.get('W/Movie/A.md')).not.toContain('groups');
+		expect(f.files.get('W/Movie/B.md')).toMatch(/- MCU/);
+		expect(dm.getGroups().map((g) => g.id)).toEqual(['MCU']);
+		await dm.removeGroup('MCU');
+		expect(f.files.get('W/Movie/B.md')).not.toContain('groups');
+		expect(dm.getGroups()).toEqual([]);
+		expect(JSON.stringify(f.plugin.data ?? {})).not.toContain('Marvel');
+	});
+
+	it('logs group-created for a group without members', async () => {
+		const { dm } = await setupDataManager({});
+		const log = vi.fn(() => Promise.resolve());
+		dm.setHistoryManager({ log } as never);
+		await dm.addGroup({ id: 'Empty', name: 'Empty', titleIds: [], dateAdded: '' });
+		expect(log).toHaveBeenCalledWith('Group "Empty" was created', expect.anything());
+	});
+
+	it('queues poster fetches for identified titles without a cached poster', async () => {
+		const { dm, f, posterQueue } = await setupDataManager({
+			'W/Movie/A.md': '---\ntitle: A\ntype: Movie\nexternalId: tmdb:movie:603\n---\n',
+			'W/Movie/B.md': '---\ntitle: B\ntype: Movie\n---\n',
+		});
+		expect(posterQueue).toEqual(['Movie/A']);
+		expect(dm.getTitle('Movie/A')?.posterUrl).toBe('');
+		f.externalWrite('W/Movie/C.md', '---\ntitle: C\ntype: Movie\nexternalId: tmdb:movie:604\n---\n');
+		await tick();
+		expect(posterQueue).toEqual(['Movie/A', 'Movie/C']);
 	});
 });

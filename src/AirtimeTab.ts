@@ -1165,10 +1165,18 @@ export class AirtimeTab {
 		deleteBtn.title = 'Remove from upcoming';
 		deleteBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
-			new ConfirmModal(this.plugin.app, `Remove "${r.title}" from Upcoming?`, () => {
-				void this.dataManager.removeAirtimeEntry(entry.id).then(() => this.render());
-			}).open();
+			this.confirmRemove(entry, r);
 		});
+	}
+
+	/** An entry that is only there because its item awaits release leaves via the plan status. */
+	private confirmRemove(entry: AirtimeEntry, r: ResolvedUpcoming): void {
+		const msg = this.dataManager.removeChangesStatus(entry)
+			? `Remove "${r.title}" from Upcoming and set status to ${r.planStatus}?`
+			: `Remove "${r.title}" from Upcoming?`;
+		new ConfirmModal(this.plugin.app, msg, () => {
+			void this.dataManager.removeAirtimeEntry(entry.id).then(() => this.render());
+		}).open();
 	}
 
 	/** Tick confirm + apply, shared by the List row button and the Cards overlay button/menu. */
@@ -1513,11 +1521,7 @@ export class AirtimeTab {
 		openCardMenu(card, anchorBtn, [
 			{
 				label: 'Remove from upcoming',
-				onClick: () => {
-					new ConfirmModal(this.plugin.app, `Remove "${r.title}" from Upcoming?`, () => {
-						void this.dataManager.removeAirtimeEntry(entry.id).then(() => this.render());
-					}).open();
-				},
+				onClick: () => this.confirmRemove(entry, r),
 			},
 		], { container: this.container, cleanups: this.activeCleanups });
 	}

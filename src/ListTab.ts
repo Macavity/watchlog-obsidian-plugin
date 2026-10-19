@@ -36,6 +36,11 @@ type DisplayItem =
 
 const PRIORITY_ORDER = ['High', 'Medium', 'Low'] as const;
 
+// selection key of a group: its id is its name, which could equal a title id
+const GROUP_KEY_PREFIX = 'group:';
+const groupKey = (id: string): string => GROUP_KEY_PREFIX + id;
+const itemKey = (item: DisplayItem): string => (item.kind === 'group' ? groupKey(item.data.id) : item.data.id);
+
 
 export class ListTab {
 	private container: HTMLElement;
@@ -62,7 +67,7 @@ export class ListTab {
 	selectionMode = false;
 	// header select-all boxes of the current Rows render; re-synced on every selection change
 	private shelfSelectRefreshers: (() => void)[] = [];
-	selectedItems: Set<string> = new Set(); // title ids or group ids
+	selectedItems: Set<string> = new Set(); // title ids or groupKey(group id)
 
 	// pinned groups (persisted via DataManager)
 	pinnedGroupId: string | null = null;
@@ -497,7 +502,7 @@ export class ListTab {
 	): void {
 		if (filtering && groups.length === 0) return;
 		const shelf = parent.createDiv({ cls: 'wl-rows-shelf' });
-		renderShelfTitle(shelf, 'Groups', groups.length, this.shelfSelect(groups.map((g) => g.id)));
+		renderShelfTitle(shelf, 'Groups', groups.length, this.shelfSelect(groups.map((g) => groupKey(g.id))));
 		if (groups.length === 0) {
 			shelf.createDiv({
 				cls: 'wl-rows-shelf-empty',
@@ -621,7 +626,7 @@ export class ListTab {
 			return;
 		}
 		const section = parent.createDiv({ cls: 'wl-rows-bytype' });
-		if (titled) renderShelfTitle(section, 'All titles', items.length, this.shelfSelect(items.map((i) => i.data.id)));
+		if (titled) renderShelfTitle(section, 'All titles', items.length, this.shelfSelect(items.map(itemKey)));
 		const spacer = section.createDiv({ cls: 'wl-rows-bytype-spacer' });
 		const grid = spacer.createDiv({ cls: 'wl-cards-grid wl-cards-grid-virtual' });
 		const vgrid = new VirtualGrid(spacer, grid, items.length, {
@@ -905,7 +910,7 @@ export class ListTab {
 			: null;
 		const card = (cell ?? parent).createDiv({ cls: 'wl-card wl-card-group' });
 		card.dataset.groupId = group.id;
-		if (this.selectedItems.has(group.id)) card.addClass('wl-card-selected');
+		if (this.selectedItems.has(groupKey(group.id))) card.addClass('wl-card-selected');
 		if (cardHeight !== undefined) (cell ?? card).style.height = `${cardHeight}px`;
 
 		const letter = (group.name.trim().charAt(0) || '?').toUpperCase();
@@ -953,7 +958,7 @@ export class ListTab {
 		// under mode: the whole cell opens the group
 		(cell ?? card).addEventListener('click', () => {
 			if (this.selectionMode) {
-				this.toggleCardSelection(card, group.id);
+				this.toggleCardSelection(card, groupKey(group.id));
 				return;
 			}
 			new GroupDetailModal(this.plugin.app, this.plugin, group, members, () => {
@@ -1103,7 +1108,8 @@ export class ListTab {
 	/** Sync wl-card-selected across the whole tab (Cards grid, shelves, By-type grids). */
 	private syncCardSelectionClasses(): void {
 		this.container.querySelectorAll<HTMLElement>('.wl-card').forEach((card) => {
-			const id = card.dataset.titleId ?? card.dataset.groupId;
+			const groupId = card.dataset.groupId;
+			const id = card.dataset.titleId ?? (groupId !== undefined ? groupKey(groupId) : undefined);
 			card.classList.toggle('wl-card-selected', !!id && this.selectedItems.has(id));
 		});
 		this.refreshShelfSelects();
@@ -1120,11 +1126,11 @@ export class ListTab {
 			this.selectedItems.add(id);
 		}
 		const selected = this.selectedItems.has(id);
-		const esc = CSS.escape(id);
+		const selector = id.startsWith(GROUP_KEY_PREFIX)
+			? `.wl-card[data-group-id="${CSS.escape(id.slice(GROUP_KEY_PREFIX.length))}"]`
+			: `.wl-card[data-title-id="${CSS.escape(id)}"]`;
 		this.container
-			.querySelectorAll<HTMLElement>(
-				`.wl-card[data-title-id="${esc}"], .wl-card[data-group-id="${esc}"]`,
-			)
+			.querySelectorAll<HTMLElement>(selector)
 			.forEach((el) => el.classList.toggle('wl-card-selected', selected));
 		this.refreshShelfSelects();
 		this.refreshToolbarActions();
@@ -1185,7 +1191,7 @@ export class ListTab {
 					this.selectedItems.clear();
 				} else {
 					for (const item of this.getDisplayItems()) {
-						this.selectedItems.add(item.data.id);
+						this.selectedItems.add(itemKey(item));
 					}
 				}
 				this.refreshToolbarActions();
@@ -1472,12 +1478,13 @@ export class ListTab {
 			const count = this.selectedItems.size;
 			new ConfirmModal(this.plugin.app, `Delete ${count} selected item${count !== 1 ? 's' : ''}? This cannot be undone.`, () => {
 				void (async () => {
-					const groupIds = new Set(this.dataManager.getGroups().map((g) => g.id));
+					const groupIds = new Map(this.dataManager.getGroups().map((g) => [groupKey(g.id), g.id]));
 					const titleIds: string[] = [];
 					for (const id of Array.from(this.selectedItems)) {
-						if (groupIds.has(id)) {
-							await this.dataManager.removeGroup(id);
-							this.expandedGroups.delete(id);
+						const groupId = groupIds.get(id);
+						if (groupId !== undefined) {
+							await this.dataManager.removeGroup(groupId);
+							this.expandedGroups.delete(groupId);
 						} else {
 							titleIds.push(id);
 							if (this.expandedId === id) this.expandedId = null;
@@ -1501,7 +1508,7 @@ export class ListTab {
 			void (async () => {
 				const newStatus = statusSelect.value;
 				if (!newStatus) return;
-				const groupIds = new Set(this.dataManager.getGroups().map((g) => g.id));
+				const groupIds = new Set(this.dataManager.getGroups().map((g) => groupKey(g.id)));
 				const updated: WatchLogTitle[] = [];
 				for (const id of this.selectedItems) {
 					if (groupIds.has(id)) continue;
@@ -1524,7 +1531,7 @@ export class ListTab {
 
 		const allGroups = this.dataManager.getGroups();
 		const hasGroupSelected = Array.from(this.selectedItems).some((id) =>
-			this.dataManager.getGroups().some((g) => g.id === id),
+			allGroups.some((g) => groupKey(g.id) === id),
 		);
 		const moveSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
 		if (hasGroupSelected) {
@@ -1540,7 +1547,7 @@ export class ListTab {
 			void (async () => {
 				const value = moveSelect.value;
 				if (!value) return;
-				const groupIds = new Set(allGroups.map((g) => g.id));
+				const groupIds = new Set(allGroups.map((g) => groupKey(g.id)));
 				const titleIds = Array.from(this.selectedItems).filter((id) => !groupIds.has(id));
 
 				if (value === '__new__') {
@@ -2252,7 +2259,7 @@ export class ListTab {
 		members: WatchLogTitle[],
 	): void {
 		const isExpanded = this.expandedGroups.has(group.id);
-		const isSelected = this.selectedItems.has(group.id);
+		const isSelected = this.selectedItems.has(groupKey(group.id));
 		const row = parent.createDiv({
 			cls: `wl-row wl-group-row${isExpanded ? ' is-expanded' : ''}${isSelected ? ' wl-row-selected' : ''}`,
 		});
@@ -2270,7 +2277,7 @@ export class ListTab {
 			cb.checked = isSelected;
 			cb.addEventListener('click', (e) => e.stopPropagation());
 			cb.addEventListener('change', () => {
-				this.toggleRowSelection(row, group.id);
+				this.toggleRowSelection(row, groupKey(group.id));
 			});
 		}
 
@@ -2440,7 +2447,7 @@ export class ListTab {
 		row.addEventListener('click', () => {
 			if (this.renamingGroupId === group.id) return;
 			if (this.selectionMode) {
-				this.toggleRowSelection(row, group.id);
+				this.toggleRowSelection(row, groupKey(group.id));
 				return;
 			}
 			if (isExpanded) {

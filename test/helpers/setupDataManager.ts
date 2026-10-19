@@ -21,11 +21,16 @@ export async function setupDataManager(files: Record<string, string>) {
 		...DEFAULT_SETTINGS,
 		types: [{ name: 'Movie', color: '#000' }, { name: 'TV Show', color: '#000' }],
 	};
+	// ids handed to the poster fetch queue
+	const posterQueue: string[] = [];
 	const plugin = {
 		app: f.app,
 		settings,
 		manifest: f.plugin.manifest,
 		registerEvent: f.plugin.registerEvent,
+		posterService: {
+			enqueue: (t: WatchLogTitle) => { posterQueue.push(t.id); return Promise.resolve(null); },
+		},
 	} as unknown as WatchLogPlugin;
 	const local = new LocalStore(f.plugin);
 	await local.load();
@@ -36,7 +41,7 @@ export async function setupDataManager(files: Record<string, string>) {
 	index.start();
 	const dm = new DataManager(plugin, { index, local, shared, layout: () => layout });
 	await dm.init();
-	return { dm, f, local, index, settings };
+	return { dm, f, local, index, settings, posterQueue };
 }
 
 export function makeTitle(over: Partial<WatchLogTitle>): WatchLogTitle {

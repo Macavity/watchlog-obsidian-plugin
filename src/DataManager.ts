@@ -1,16 +1,18 @@
 import { App, Notice, TAbstractFile, TFile, normalizePath, stringifyYaml } from 'obsidian';
 import type WatchLogPlugin from './main';
-import type { WatchLogData, WatchLogTitle, WatchLogGroup, AirtimeEntry, MaybeTitle, RecommendedDaily, SavedFilterPreset, WatchLogPluginSettings, Book, Manga, Game } from './types';
+import type { WatchLogData, WatchLogTitle, WatchLogGroup, AirtimeEntry, AirtimeSchedule, EntryAirtime, MaybeTitle, RecommendedDaily, SavedFilterPreset, WatchLogPluginSettings, Book, Manga, Game } from './types';
 import type { HistoryManager } from './HistoryManager';
 import { formatHistoryDate } from './HistoryManager';
-import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso } from './types';
+import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso, GAME_AUTO_STATUS } from './types';
 import type { CreditsField } from './types';
-import type { EntryIndex } from './storage/EntryIndex';
+import type { AnyEntry, EntryIndex } from './storage/EntryIndex';
 import type { LocalStore } from './storage/LocalStore';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { decodeTitle, encodeTitle, splitCache } from './storage/titleCodec';
 import { externalIdFromLink } from './storage/externalId';
+import { decodeBook, decodeManga, encodeAirtime } from './storage/readingCodec';
+import { decodeGame } from './storage/gameCodec';
 
 export interface DataStores {
 	index: EntryIndex;
@@ -19,12 +21,9 @@ export interface DataStores {
 	layout: () => VaultLayout;
 }
 
-/** Interim: groups, Upcoming and Maybe still live in data.json until they move to frontmatter. */
-interface LegacyLists {
-	groups?: WatchLogGroup[];
-	airtime?: AirtimeEntry[];
-	maybe?: MaybeTitle[];
-}
+const AIRTIME_KEYS: readonly string[] = [
+	'airtimeRecurrence', 'airtimeDay', 'airtimeTime', 'airtimeSeason', 'airtimeEpisode', 'airtimeAcknowledged',
+];
 
 /** Every frontmatter key encodeTitle can emit; the full rewrite deletes the ones it omits. */
 const TITLE_KEYS: readonly string[] = [
@@ -33,8 +32,30 @@ const TITLE_KEYS: readonly string[] = [
 	'communityRating', 'communityVotes', 'communitySource', 'director', 'cast', 'studio', 'poster', 'trailer',
 	'externalLink', 'pinned', 'favorite', 'dateFavorited', 'externalId', 'groups', 'maybe', 'watched', 'skipped',
 	'seasons', 'manualPosterUrl', 'manualTrailerUrl', 'manualDirector', 'manualCast', 'manualStudio',
-	'airtimeRecurrence', 'airtimeDay', 'airtimeTime', 'airtimeSeason', 'airtimeEpisode', 'airtimeAcknowledged',
+	...AIRTIME_KEYS,
 ];
+
+/** The note-side schedule of an Upcoming entry; the 'once' date lives in the note's releaseDate. */
+function toEntryAirtime(e: AirtimeEntry): EntryAirtime {
+	const s = e.schedule;
+	const a: EntryAirtime = { recurrence: s.recurrence };
+	const day = s.recurrence === 'weekly' ? s.dayOfWeek : s.recurrence === 'monthly' ? s.dayOfMonth : undefined;
+	if (day !== undefined) a.day = day;
+	if (s.releaseTime) a.time = s.releaseTime;
+	if (e.currentSeason !== undefined) a.season = e.currentSeason;
+	if (e.currentEpisode !== undefined) a.episode = e.currentEpisode;
+	if (e.lastAcknowledgedDate) a.acknowledged = e.lastAcknowledgedDate;
+	return a;
+}
+
+function scheduleOf(a: EntryAirtime, releaseDate: string | null): AirtimeSchedule {
+	const s: AirtimeSchedule = { recurrence: a.recurrence };
+	if (a.recurrence === 'once' && releaseDate) s.releaseDate = releaseDate;
+	if (a.time) s.releaseTime = a.time;
+	if (a.day !== undefined && a.recurrence === 'weekly') s.dayOfWeek = a.day;
+	if (a.day !== undefined && a.recurrence === 'monthly') s.dayOfMonth = a.day;
+	return s;
+}
 
 const NOTES_RE = /(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/;
 
@@ -92,6 +113,8 @@ export class DataManager {
 	private notes: Map<string, string> = new Map();
 	// titles changed via updateTitleSilent, written on the next save()
 	private dirty: Set<string> = new Set();
+	// ids already handed to the poster queue this session
+	private posterRequested: Set<string> = new Set();
 
 	// debounced save for high-frequency edits (rapid episode clicks): memory now, note coalesced
 	private pendingSaveTimer: number | null = null;
@@ -122,12 +145,33 @@ export class DataManager {
 	/** After index.build(): reads note bodies and follows index/vault changes. */
 	async init(): Promise<void> {
 		await Promise.all(this.index.titles().map((t) => this.readNotes(t.id)));
-		this.index.onChange(() => this.notifyListeners());
+		this.index.onChange((ids) => {
+			this.queueMissingPosters([...ids].map((id) => this.getTitle(id)).filter((t): t is WatchLogTitle => !!t));
+			this.notifyListeners();
+		});
 		const { vault } = this.app;
 		this.plugin.registerEvent(vault.on('modify', (f) => void this.refreshNotes(f)));
 		this.plugin.registerEvent(vault.on('create', (f) => void this.refreshNotes(f)));
 		this.plugin.registerEvent(vault.on('rename', (f, oldPath) => this.onVaultRename(f, oldPath)));
+		this.queueMissingPosters(this.getTitles());
 		this.notifyListeners();
+	}
+
+	/**
+	 * Hands titles with an API identity but no cached poster (a fresh device, a note from elsewhere)
+	 * to the poster queue, once per id and session.
+	 */
+	private queueMissingPosters(titles: WatchLogTitle[]): void {
+		const service = this.plugin.posterService;
+		if (!service) return;
+		for (const t of titles) {
+			if (t.maybe || this.posterRequested.has(t.id)) continue;
+			if (t.manualPosterUrl?.trim() || this.local.getCache(t.id)?.posterUrl) continue;
+			const identified = !!t.tmdbId || !!t.malId || !!t.anilistId || externalIdFromLink(t.externalLink) !== null;
+			if (!identified) continue;
+			this.posterRequested.add(t.id);
+			void service.enqueue(t);
+		}
 	}
 
 	/** Re-reads data.json (backup restore). */
@@ -135,10 +179,6 @@ export class DataManager {
 		await this.local.load();
 		this.views.clear();
 		this.notifyListeners();
-	}
-
-	private get lists(): LegacyLists {
-		return this.local.data as unknown as LegacyLists;
 	}
 
 	// Rows-view daily recommendations
@@ -397,12 +437,15 @@ export class DataManager {
 		if (slot && (this.dirty.has(src.id) || this.pendingMdTitleIds.has(src.id))) return slot.view;
 		const view = structuredClone(src);
 		view.notes = this.notes.get(src.id) ?? '';
+		// nothing cached yet: '' (not undefined) lets the lazy poster fetch pick it up
+		if (view.posterUrl === undefined) view.posterUrl = '';
 		this.views.set(src.id, { src, view });
 		return view;
 	}
 
+	/** Library titles; Maybe notes are listed by getMaybeTitles. */
 	getTitles(): WatchLogTitle[] {
-		return this.index.titles().map((t) => this.viewOf(t));
+		return this.index.titles().filter((t) => !t.maybe).map((t) => this.viewOf(t));
 	}
 
 	getTitle(id: string): WatchLogTitle | undefined {
@@ -416,14 +459,9 @@ export class DataManager {
 		if (title.posterUrl === undefined) title.posterUrl = '';
 		if (title.trailerUrl === undefined) title.trailerUrl = '';
 		if (title.manualTrailerUrl === undefined) title.manualTrailerUrl = '';
-		const autoUpcoming = this.canAutoAddToUpcoming(title);
-		if (autoUpcoming) {
-			title.status = 'To be released';
-		}
-		await this.createNote(title);
-		if (autoUpcoming) {
-			await this.autoAddToUpcoming(title);
-		}
+		// a future release date makes it "To be released", which puts it in Upcoming
+		if (this.canAutoAddToUpcoming(title)) title.status = 'To be released';
+		await this.insertNote(title);
 		this.notifyListeners();
 		const now = new Date().toISOString();
 		void this.historyManager?.log(
@@ -434,14 +472,27 @@ export class DataManager {
 
 	/** Add without re-rendering. Caller must call notifyChange() after the batch. */
 	async addTitleSilent(title: WatchLogTitle): Promise<void> {
-		const autoUpcoming = this.canAutoAddToUpcoming(title);
-		if (autoUpcoming) {
-			title.status = 'To be released';
+		if (this.canAutoAddToUpcoming(title)) title.status = 'To be released';
+		await this.insertNote(title);
+	}
+
+	/**
+	 * Creates the title's note, or takes over a Maybe note at the same path: same note, `maybe`
+	 * dropped, fields from `title`; its `## Notes` survive when `title` brings none.
+	 */
+	private async insertNote(title: WatchLogTitle): Promise<void> {
+		const layout = this.layout();
+		const id = layout.idFromPath(layout.notePath('title', title.title, title.type));
+		const maybe = this.index.get(id);
+		if (maybe?.kind !== 'title' || !maybe.entry.maybe) {
+			await this.createNote(title);
+			return;
 		}
-		await this.createNote(title);
-		if (autoUpcoming) {
-			await this.autoAddToUpcoming(title);
-		}
+		title.id = id;
+		delete title.maybe;
+		if (!title.notes) title.notes = this.notes.get(id) ?? '';
+		this.views.set(id, { src: maybe.entry, view: title });
+		await this.writeTitle(title);
 	}
 
 	/** Batch-add: one note per title; ids are rewritten to the created note paths. */
@@ -485,161 +536,71 @@ export class DataManager {
 		return release > today;
 	}
 
-	async autoAddToUpcoming(title: WatchLogTitle): Promise<void> {
-		if (!this.lists.airtime) this.lists.airtime = [];
-		// avoid duplicates
-		if (this.lists.airtime.some((e) => e.titleId === title.id)) return;
-		const entry: AirtimeEntry = {
-			id: this.generateAirtimeId(title.id),
-			titleId: title.id,
-			schedule: {
-				recurrence: 'once',
-				releaseDate: title.releaseDate ?? undefined,
-			},
-			dateAdded: new Date().toISOString(),
-		};
-		this.lists.airtime.push(entry);
-		await this.persist();
-	}
+	/** Upcoming is derived from "To be released" + releaseDate (see getAirtimeEntries): nothing to add. */
+	async autoAddToUpcoming(_title: WatchLogTitle): Promise<void> {}
 
 	/**
-	 * Reconciles everything a release-date edit ripples into: an existing 'once' Upcoming entry's
-	 * date, the auto "To be released" status, and whether the title belongs in Upcoming at all. A
-	 * future full date forces the status and adds the entry; a past or cleared date reverts a
-	 * "To be released" title to "Plan to watch" and drops its entry.
+	 * Reconciles the auto "To be released" status with a release-date edit; Upcoming follows from it.
+	 * A future full date forces the status; a past or cleared date reverts a "To be released" title
+	 * to "Plan to watch" and drops its manual schedule.
 	 *
 	 * Call after `releaseDate` has been written and persisted.
 	 */
 	async applyReleaseDateChange(title: WatchLogTitle): Promise<void> {
-		// keep a one-off Upcoming entry pointing at the new date
-		const existing = this.getAirtimeEntries().find((e) => e.titleId === title.id);
-		if (existing && existing.schedule.recurrence === 'once') {
-			const next = title.releaseDate ?? undefined;
-			if (existing.schedule.releaseDate !== next) {
-				existing.schedule.releaseDate = next;
-				await this.updateAirtimeEntry(existing);
-			}
-		}
-
 		const releaseDate = title.releaseDate;
 		const isFullDate = !!releaseDate && /^\d{4}-\d{2}-\d{2}$/.test(releaseDate);
-
-		if (isFullDate) {
-			if (isReleaseDateFuture(releaseDate)) {
-				if (title.status !== 'To be released') {
-					title.status = 'To be released';
-					await this.updateTitle(title);
-				}
-				if (!this.getAirtimeEntries().some((e) => e.titleId === title.id)) {
-					await this.autoAddToUpcoming(title);
-				}
-			} else if (title.status === 'To be released') {
-				// date is past/today — the auto status no longer applies
-				title.status = 'Plan to watch';
+		if (isFullDate && isReleaseDateFuture(releaseDate)) {
+			if (title.status !== 'To be released') {
+				title.status = 'To be released';
 				await this.updateTitle(title);
-				await this.removeAirtimeEntriesForTitle(title.id);
 			}
-		} else if (!releaseDate && title.status === 'To be released') {
+		} else if ((isFullDate || !releaseDate) && title.status === 'To be released') {
+			// date is past/today or cleared — the auto status no longer applies
 			title.status = 'Plan to watch';
+			delete title.airtime;
 			await this.updateTitle(title);
-			await this.removeAirtimeEntriesForTitle(title.id);
 		}
 	}
 
-	/** Remove all Upcoming entries for a title (e.g. when the date goes past). */
+	/** Drops a title's manual Upcoming schedule (e.g. when the date goes past). */
 	async removeAirtimeEntriesForTitle(titleId: string): Promise<void> {
-		const before = (this.lists.airtime ?? []).length;
-		this.lists.airtime = (this.lists.airtime ?? []).filter(
-			(e) => e.titleId !== titleId || (e.source !== undefined && e.source !== 'watchlist'),
-		);
-		if ((this.lists.airtime ?? []).length !== before) {
-			await this.persist();
-			this.notifyListeners();
-		}
+		const title = this.getTitle(titleId);
+		if (!title?.airtime) return;
+		delete title.airtime;
+		await this.writeTitle(title);
+		this.notifyListeners();
 	}
 
-	// Reading → Upcoming bridge. Reading items live under data.reading, but their Upcoming entries
-	// share the airtime list with watch titles — mirroring autoAddToUpcoming.
+	// Reading / Games → Upcoming bridge. Their schedules live on their own notes; a future release
+	// date shows up on its own, so the auto-add calls are no-ops.
 
-	/** Auto-adds a reading item with a future release date to Upcoming. No-op if one exists. */
-	async autoAddReadingToUpcoming(item: Book | Manga, kind: 'book' | 'manga'): Promise<void> {
-		if (!this.lists.airtime) this.lists.airtime = [];
-		if (this.lists.airtime.some((e) => e.source === 'reading' && e.titleId === item.id)) return;
-		const entry: AirtimeEntry = {
-			id: this.generateReadingAirtimeId(item.id),
-			titleId: item.id,
-			source: 'reading',
-			readingKind: kind,
-			schedule: {
-				recurrence: 'once',
-				releaseDate: item.releaseDate ?? undefined,
-			},
-			dateAdded: new Date().toISOString(),
-		};
-		this.lists.airtime.push(entry);
-		await this.persist();
-	}
+	async autoAddReadingToUpcoming(_item: Book | Manga, _kind: 'book' | 'manga'): Promise<void> {}
 
-	/** Remove all Upcoming entries for a reading item (book/manga id). */
+	/** Drops a reading item's manual schedule (release date gone past, or item deleted). */
 	async removeReadingAirtimeEntries(itemId: string): Promise<void> {
-		const before = (this.lists.airtime ?? []).length;
-		this.lists.airtime = (this.lists.airtime ?? []).filter(
-			(e) => !(e.source === 'reading' && e.titleId === itemId),
-		);
-		if ((this.lists.airtime ?? []).length !== before) {
-			await this.persist();
-			this.notifyListeners();
-		}
+		await this.removeNoteAirtime(itemId);
 	}
 
 	generateReadingAirtimeId(itemId: string): string {
-		const base = `airtime-reading-${itemId}`;
-		const existing = (this.lists.airtime ?? []).map((e) => e.id);
-		if (!existing.includes(base)) return base;
-		let counter = 2;
-		while (existing.includes(`${base}-${counter}`)) counter++;
-		return `${base}-${counter}`;
+		return `airtime-reading-${itemId}`;
 	}
 
-	// Games → Upcoming bridge — the Reading-bridge pattern exactly.
+	async autoAddGameToUpcoming(_game: Game): Promise<void> {}
 
-	/** Auto-adds a game with a future release date to Upcoming. No-op if one exists. */
-	async autoAddGameToUpcoming(game: Game): Promise<void> {
-		if (!this.lists.airtime) this.lists.airtime = [];
-		if (this.lists.airtime.some((e) => e.source === 'game' && e.titleId === game.id)) return;
-		const entry: AirtimeEntry = {
-			id: this.generateGameAirtimeId(game.id),
-			titleId: game.id,
-			source: 'game',
-			schedule: {
-				recurrence: 'once',
-				releaseDate: game.releaseDate ?? undefined,
-			},
-			dateAdded: new Date().toISOString(),
-		};
-		this.lists.airtime.push(entry);
-		await this.persist();
-	}
-
-	/** Remove all Upcoming entries for a game id. */
+	/** Drops a game's manual schedule (release date gone past, or game deleted). */
 	async removeGameAirtimeEntries(gameId: string): Promise<void> {
-		const before = (this.lists.airtime ?? []).length;
-		this.lists.airtime = (this.lists.airtime ?? []).filter(
-			(e) => !(e.source === 'game' && e.titleId === gameId),
-		);
-		if ((this.lists.airtime ?? []).length !== before) {
-			await this.persist();
-			this.notifyListeners();
-		}
+		await this.removeNoteAirtime(gameId);
 	}
 
 	generateGameAirtimeId(gameId: string): string {
-		const base = `airtime-game-${gameId}`;
-		const existing = (this.lists.airtime ?? []).map((e) => e.id);
-		if (!existing.includes(base)) return base;
-		let counter = 2;
-		while (existing.includes(`${base}-${counter}`)) counter++;
-		return `${base}-${counter}`;
+		return `airtime-game-${gameId}`;
+	}
+
+	private async removeNoteAirtime(id: string): Promise<void> {
+		const e = this.index.get(id);
+		if (!e?.entry.airtime) return;
+		if (e.kind === 'title') await this.removeAirtimeEntriesForTitle(id);
+		else if (await this.writeAirtime(e, undefined, null)) this.notifyListeners();
 	}
 
 	/** Logs rating / completion changes against the stored state. */
@@ -702,46 +663,87 @@ export class DataManager {
 		this.notifyListeners();
 	}
 
-	// Group CRUD
+	// Groups: derived from the titles' `groups` property; a group's id is its name
 
 	getGroups(): WatchLogGroup[] {
-		return this.lists.groups ?? [];
+		const byName = new Map<string, WatchLogGroup>();
+		for (const t of this.index.titles()) {
+			if (t.maybe) continue;
+			for (const name of t.groups ?? []) {
+				let g = byName.get(name);
+				if (!g) {
+					g = { id: name, name, titleIds: [], dateAdded: t.dateAdded };
+					byName.set(name, g);
+				}
+				g.titleIds.push(t.id);
+				// a group is as old as its oldest member
+				if (t.dateAdded && (!g.dateAdded || t.dateAdded < g.dateAdded)) g.dateAdded = t.dateAdded;
+			}
+		}
+		return [...byName.values()].sort((a, b) => a.dateAdded.localeCompare(b.dateAdded) || a.name.localeCompare(b.name));
 	}
 
 	getGroup(id: string): WatchLogGroup | undefined {
-		return (this.lists.groups ?? []).find((g) => g.id === id);
+		return this.getGroups().find((g) => g.id === id);
 	}
 
+	/** Writes the group name onto its members. A group without members only leaves a history line. */
 	async addGroup(group: WatchLogGroup): Promise<void> {
-		if (!this.lists.groups) this.lists.groups = [];
-		this.lists.groups.push(group);
-		await this.persist();
+		if (!this.getGroup(group.name)) {
+			void this.historyManager?.log(`Group "${group.name}" was created`, { source: 'Watchlist' });
+		}
+		group.id = group.name;
+		for (const id of group.titleIds) {
+			await this.setTitleGroups(id, (names) => [...names, group.name]);
+		}
 		this.notifyListeners();
 	}
 
+	/** Applies a rename (new `name`, same `id`) and membership changes to the members' `groups`. */
 	async updateGroup(updated: WatchLogGroup): Promise<void> {
-		const groups = this.lists.groups ?? [];
-		const idx = groups.findIndex((g) => g.id === updated.id);
-		if (idx >= 0) {
-			groups[idx] = updated;
-			await this.persist();
-			this.notifyListeners();
+		const old = this.getGroup(updated.id);
+		if (!old) return;
+		const keep = new Set(updated.titleIds);
+		for (const id of new Set([...old.titleIds, ...updated.titleIds])) {
+			await this.setTitleGroups(id, (names) => {
+				const i = names.indexOf(old.name);
+				const rest = names.filter((n) => n !== old.name);
+				if (!keep.has(id)) return rest;
+				rest.splice(i < 0 ? rest.length : i, 0, updated.name);
+				return rest;
+			});
 		}
+		if (old.name !== updated.name && this.local.data.ui.pinnedGroup === old.id) {
+			this.local.data.ui.pinnedGroup = updated.name;
+			this.local.queueSave();
+		}
+		this.notifyListeners();
 	}
 
 	async removeGroup(id: string): Promise<void> {
-		this.lists.groups = (this.lists.groups ?? []).filter((g) => g.id !== id);
-		await this.persist();
+		const group = this.getGroup(id);
+		if (!group) return;
+		for (const titleId of group.titleIds) {
+			await this.setTitleGroups(titleId, (names) => names.filter((n) => n !== group.name));
+		}
 		this.notifyListeners();
 	}
 
 	async addTitleToGroup(groupId: string, titleId: string): Promise<void> {
-		const group = this.getGroup(groupId);
-		if (!group) return;
-		if (!group.titleIds.includes(titleId)) {
-			group.titleIds.push(titleId);
-			await this.updateGroup(group);
-		}
+		await this.setTitleGroups(titleId, (names) => [...names, groupId]);
+		this.notifyListeners();
+	}
+
+	/** Rewrites one title's `groups` (deduplicated); no dateModified stamp, like the other backfills. */
+	private async setTitleGroups(id: string, fn: (names: string[]) => string[]): Promise<void> {
+		const title = this.getTitle(id);
+		if (!title) return;
+		const before = title.groups ?? [];
+		const next = [...new Set(fn([...before]))];
+		if (sameJson(before, next)) return;
+		if (next.length > 0) title.groups = next;
+		else delete title.groups;
+		await this.writeTitle(title);
 	}
 
 	getGroupedTitleIds(): Set<string> {
@@ -754,18 +756,9 @@ export class DataManager {
 		return ids;
 	}
 
+	/** A group's id is its name; an existing name joins that group. */
 	generateGroupId(name: string): string {
-		const id =
-			'group-' +
-			name
-				.toLowerCase()
-				.replace(/[^a-z0-9]+/g, '-')
-				.replace(/^-|-$/g, '');
-		const existing = this.getGroups().map((g) => g.id);
-		if (!existing.includes(id)) return id;
-		let counter = 2;
-		while (existing.includes(`${id}-${counter}`)) counter++;
-		return `${id}-${counter}`;
+		return name.trim();
 	}
 
 	// Pinned group (device-local UI state)
@@ -792,79 +785,227 @@ export class DataManager {
 		this.notifyListeners();
 	}
 
-	// Airtime CRUD
+	// Upcoming: manual schedules from the notes' airtime keys, plus a derived 'once' entry for every
+	// "To be released" entry with a release date. One entry per note, with a stable id.
 
 	getAirtimeEntries(): AirtimeEntry[] {
-		return this.lists.airtime ?? [];
+		const out: AirtimeEntry[] = [];
+		for (const t of this.index.titles()) {
+			if (t.maybe) continue;
+			const e = this.airtimeEntryOf({ kind: 'title', entry: t });
+			if (e) out.push(e);
+		}
+		for (const kind of ['book', 'manga', 'game'] as const) {
+			const list = kind === 'book' ? this.index.books() : kind === 'manga' ? this.index.manga() : this.index.games();
+			for (const entry of list) {
+				const e = this.airtimeEntryOf({ kind, entry } as AnyEntry);
+				if (e) out.push(e);
+			}
+		}
+		return out;
+	}
+
+	private airtimeEntryOf(e: AnyEntry): AirtimeEntry | null {
+		const item = e.entry;
+		const base: AirtimeEntry =
+			e.kind === 'title'
+				? { id: this.generateAirtimeId(item.id), titleId: item.id, schedule: { recurrence: 'once' }, dateAdded: item.dateAdded }
+				: e.kind === 'game'
+					? { id: this.generateGameAirtimeId(item.id), titleId: item.id, source: 'game', schedule: { recurrence: 'once' }, dateAdded: item.dateAdded }
+					: { id: this.generateReadingAirtimeId(item.id), titleId: item.id, source: 'reading', readingKind: e.kind, schedule: { recurrence: 'once' }, dateAdded: item.dateAdded };
+		const a = item.airtime;
+		if (a) {
+			base.schedule = scheduleOf(a, item.releaseDate);
+			if (a.season !== undefined) base.currentSeason = a.season;
+			if (a.episode !== undefined) base.currentEpisode = a.episode;
+			if (a.acknowledged) base.lastAcknowledgedDate = a.acknowledged;
+			return base;
+		}
+		if (!this.isAwaitingRelease(e) || !item.releaseDate) return null;
+		base.schedule.releaseDate = item.releaseDate;
+		return base;
+	}
+
+	/**
+	 * "To be released" with a release date. Reading and Games force that status while the date is
+	 * in the future, so a future date counts there even before the status is written.
+	 */
+	private isAwaitingRelease(e: AnyEntry): boolean {
+		const { status, releaseDate } = e.entry;
+		if (!releaseDate) return false;
+		if (e.kind === 'title') return status === 'To be released';
+		const auto = e.kind === 'game' ? GAME_AUTO_STATUS : 'To be released';
+		return status === auto || isReleaseDateFuture(releaseDate);
+	}
+
+	/** True when removing this entry also moves its item to the plan status. */
+	removeChangesStatus(entry: AirtimeEntry): boolean {
+		const e = this.index.get(entry.titleId);
+		return !!e && this.isAwaitingRelease(e);
 	}
 
 	async addAirtimeEntry(entry: AirtimeEntry): Promise<void> {
-		if (!this.lists.airtime) this.lists.airtime = [];
-		this.lists.airtime.push(entry);
-		await this.persist();
-		this.notifyListeners();
+		await this.updateAirtimeEntry(entry);
 	}
 
+	/** Writes the entry's schedule to its note; a 'once' date goes to the note's releaseDate. */
 	async updateAirtimeEntry(updated: AirtimeEntry): Promise<void> {
-		const airtime = this.lists.airtime;
-		if (!airtime) return;
-		const idx = airtime.findIndex((e) => e.id === updated.id);
-		if (idx >= 0) {
-			airtime[idx] = updated;
-			await this.persist();
-			this.notifyListeners();
-		}
+		const e = this.index.get(updated.titleId);
+		if (!e) return;
+		const releaseDate = updated.schedule.recurrence === 'once' ? updated.schedule.releaseDate ?? null : null;
+		if (await this.writeAirtime(e, toEntryAirtime(updated), releaseDate)) this.notifyListeners();
 	}
 
 	async removeAirtimeEntry(id: string): Promise<void> {
-		this.lists.airtime = (this.lists.airtime ?? []).filter((e) => e.id !== id);
-		await this.persist();
-		this.notifyListeners();
+		await this.removeAirtimeEntriesBatch([id]);
 	}
 
+	/**
+	 * Drops manual schedules; a derived (or still "To be released") entry leaves Upcoming by
+	 * switching to its plan status, like ticking a single release.
+	 */
 	async removeAirtimeEntriesBatch(ids: string[]): Promise<void> {
 		if (ids.length === 0) return;
-		const removeSet = new Set(ids);
-		this.lists.airtime = (this.lists.airtime ?? []).filter((e) => !removeSet.has(e.id));
-		await this.persist();
+		const remove = new Set(ids);
+		for (const entry of this.getAirtimeEntries().filter((x) => remove.has(x.id))) {
+			const e = this.index.get(entry.titleId);
+			if (!e) continue;
+			if (e.kind === 'title') {
+				const title = this.getTitle(e.entry.id);
+				if (!title) continue;
+				delete title.airtime;
+				if (this.isAwaitingRelease(e)) {
+					title.status = 'Plan to watch';
+					await this.updateTitle(title);
+				} else {
+					await this.writeTitle(title);
+				}
+				continue;
+			}
+			if (e.entry.airtime) await this.writeAirtime(e, undefined, null);
+			const now = this.index.get(entry.titleId);
+			if (now && this.isAwaitingRelease(now)) await this.releaseToPlanStatus(now);
+		}
 		this.notifyListeners();
 	}
 
-	// Maybe CRUD
-
-	getMaybeTitles(): MaybeTitle[] {
-		return this.lists.maybe ?? [];
+	/** Reading / game status change through their managers (history, release-status rules). */
+	private async releaseToPlanStatus(e: AnyEntry): Promise<void> {
+		if (e.kind === 'book' || e.kind === 'manga') {
+			const rdm = this.plugin.readingDataManager;
+			const item = e.kind === 'book' ? rdm?.getBook(e.entry.id) : rdm?.getManga(e.entry.id);
+			if (!rdm || !item) return;
+			item.status = 'Plan to Read';
+			if (e.kind === 'book') await rdm.updateBook(item as Book);
+			else await rdm.updateManga(item as Manga);
+		} else if (e.kind === 'game') {
+			const gdm = this.plugin.gameDataManager;
+			const game = gdm?.getGame(e.entry.id);
+			if (!gdm || !game) return;
+			game.status = gdm.getSettings().defaultStatus || 'Not started';
+			await gdm.updateGame(game);
+		}
 	}
 
+	/**
+	 * Sets (or with undefined removes) the airtime keys of an entry's note, plus the 'once' release
+	 * date when given. Titles go through writeTitle; other notes get just these keys.
+	 */
+	private async writeAirtime(e: AnyEntry, airtime: EntryAirtime | undefined, releaseDate: string | null): Promise<boolean> {
+		if (e.kind === 'title') {
+			const title = this.getTitle(e.entry.id);
+			if (!title) return false;
+			if (airtime) title.airtime = airtime;
+			else delete title.airtime;
+			if (releaseDate) title.releaseDate = releaseDate;
+			await this.writeTitle(title);
+			return true;
+		}
+		const file = this.fileOf(e.entry.id);
+		if (!file) return false;
+		const id = e.entry.id;
+		const kind = e.kind;
+		try {
+			await this.app.fileManager.processFrontMatter(file, (raw: Record<string, unknown>) => {
+				for (const key of AIRTIME_KEYS) delete raw[key];
+				encodeAirtime(airtime, raw);
+				if (releaseDate) raw.releaseDate = releaseDate;
+				const fm = { ...raw };
+				this.index.applyLocal(
+					kind === 'game'
+						? { kind, entry: decodeGame(id, fm).entry }
+						: kind === 'book'
+							? { kind, entry: decodeBook(id, fm).entry }
+							: { kind, entry: decodeManga(id, fm).entry },
+				);
+			});
+			return true;
+		} catch (err) {
+			console.warn(`WatchLog: could not update frontmatter of ${file.path}`, err);
+			new Notice(`Could not update "${file.basename}": its frontmatter is not valid YAML.`);
+			return false;
+		}
+	}
+
+	// Maybe: title notes flagged `maybe: true`, kept out of getTitles()
+
+	getMaybeTitles(): MaybeTitle[] {
+		return this.index.titles()
+			.filter((t) => t.maybe)
+			.map((t) => ({
+				id: t.id,
+				title: t.title,
+				type: t.type,
+				releaseDate: t.releaseDate,
+				externalLink: t.externalLink,
+				totalEpisodes: t.totalEpisodes,
+				episodeDuration: t.episodeDuration,
+				dateAdded: t.dateAdded,
+			}));
+	}
+
+	/** Creates the Maybe note; `title.id` is rewritten to its path. */
 	async addMaybeTitle(title: MaybeTitle): Promise<void> {
-		if (!this.lists.maybe) this.lists.maybe = [];
-		this.lists.maybe.push(title);
-		await this.persist();
+		const note: WatchLogTitle = {
+			id: title.id,
+			title: title.title,
+			type: title.type,
+			status: 'Plan to watch',
+			priority: '',
+			review: '',
+			rating: 0,
+			notes: '',
+			dateStarted: null,
+			dateFinished: null,
+			dateAdded: title.dateAdded,
+			dateModified: title.dateAdded,
+			totalEpisodes: title.totalEpisodes,
+			episodeDuration: title.episodeDuration,
+			releaseDate: title.releaseDate,
+			externalLink: title.externalLink,
+			seasons: [],
+			watchedEpisodes: [],
+			maybe: true,
+		};
+		await this.createNote(note);
+		title.id = note.id;
 		this.notifyListeners();
 	}
 
 	async removeMaybeTitle(id: string): Promise<void> {
-		this.lists.maybe = (this.lists.maybe ?? []).filter((t) => t.id !== id);
-		await this.persist();
+		const e = this.index.get(id);
+		if (e?.kind !== 'title' || !e.entry.maybe) return;
+		await this.deleteNote(id);
 		this.notifyListeners();
 	}
 
+	/** Provisional id; the note path replaces it in addMaybeTitle. */
 	generateMaybeId(titleName: string): string {
-		const base = 'maybe-' + titleName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-		const existing = (this.lists.maybe ?? []).map((t) => t.id);
-		if (!existing.includes(base)) return base;
-		let counter = 2;
-		while (existing.includes(`${base}-${counter}`)) counter++;
-		return `${base}-${counter}`;
+		return 'maybe-' + titleName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 	}
 
 	generateAirtimeId(titleId: string): string {
-		const base = `airtime-${titleId}`;
-		const existing = (this.lists.airtime ?? []).map((e) => e.id);
-		if (!existing.includes(base)) return base;
-		let counter = 2;
-		while (existing.includes(`${base}-${counter}`)) counter++;
-		return `${base}-${counter}`;
+		return `airtime-${titleId}`;
 	}
 
 	// Time calculations
@@ -1381,13 +1522,6 @@ export class DataManager {
 		this.notes.delete(id);
 		this.dirty.delete(id);
 		this.pendingMdTitleIds.delete(id);
-		const lists = this.lists;
-		for (const group of lists.groups ?? []) {
-			group.titleIds = group.titleIds.filter((tid) => tid !== id);
-		}
-		if (lists.airtime) {
-			lists.airtime = lists.airtime.filter((e) => e.titleId !== id || e.source === 'reading' || e.source === 'game');
-		}
 		const collapsed = this.local.data.ui.collapsedSeasons;
 		if (collapsed) delete collapsed[id];
 		this.local.queueSave();
@@ -1406,13 +1540,6 @@ export class DataManager {
 		this.views.delete(from);
 		for (const set of [this.dirty, this.pendingMdTitleIds]) {
 			if (set.delete(from)) set.add(to);
-		}
-		const lists = this.lists;
-		for (const group of lists.groups ?? []) {
-			group.titleIds = group.titleIds.map((tid) => (tid === from ? to : tid));
-		}
-		for (const e of lists.airtime ?? []) {
-			if (e.titleId === from && (e.source === undefined || e.source === 'watchlist')) e.titleId = to;
 		}
 		const collapsed = this.local.data.ui.collapsedSeasons;
 		if (collapsed?.[from]) {
