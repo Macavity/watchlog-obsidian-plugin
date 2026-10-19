@@ -28,6 +28,13 @@ export function historyKey(e: HistoryEntry): string {
 	return `${l.timestamp}|${l.action}|${l.target}`;
 }
 
+const time = (timestamp: string): number => Date.parse(timestamp);
+
+/** Stable sort by timestamp, oldest first. */
+function byTime<T extends { timestamp: string }>(items: T[]): T[] {
+	return [...items].sort((a, b) => time(a.timestamp) - time(b.timestamp));
+}
+
 function toEntry(l: HistoryLine, index: number): HistoryEntry {
 	const group = l.action === 'group-created';
 	// a link target is a note path ("TV Show/Dark"); the entry keeps the plain name
@@ -82,7 +89,7 @@ export class HistoryStore {
 			const l = parseHistoryLine(raw.replace(/\r$/, ''));
 			if (l) out.push(toEntry(l, i));
 		});
-		return out.slice(-MAX_HISTORY_ENTRIES);
+		return byTime(out).slice(-MAX_HISTORY_ENTRIES);
 	}
 
 	async append(e: HistoryEntry): Promise<void> {
@@ -102,7 +109,7 @@ export class HistoryStore {
 
 	/** Replaces all history lines with `entries`, keeping foreign lines in place. */
 	async replaceAll(entries: HistoryEntry[]): Promise<void> {
-		const lines = entries.slice(-MAX_HISTORY_ENTRIES).map((e) => this.format(e));
+		const lines = byTime(entries).slice(-MAX_HISTORY_ENTRIES).map((e) => this.format(e));
 		await this.write((src) => {
 			const out: string[] = [];
 			let inserted = false;
@@ -121,10 +128,14 @@ export class HistoryStore {
 		});
 	}
 
-	/** Drops the oldest history lines beyond the limit; foreign lines stay. */
+	/** Drops the oldest history lines by timestamp beyond the limit; foreign lines stay. */
 	private cap(lines: string[]): string[] {
-		const idx = lines.flatMap((l, i) => (parseHistoryLine(l.replace(/\r$/, '')) ? [i] : []));
-		const drop = new Set(idx.slice(0, Math.max(0, idx.length - MAX_HISTORY_ENTRIES)));
+		const parsed = lines.flatMap((l, i) => {
+			const h = parseHistoryLine(l.replace(/\r$/, ''));
+			return h ? [{ i, t: time(h.timestamp) }] : [];
+		});
+		const oldest = [...parsed].sort((a, b) => a.t - b.t);
+		const drop = new Set(oldest.slice(0, Math.max(0, parsed.length - MAX_HISTORY_ENTRIES)).map((p) => p.i));
 		return drop.size ? lines.filter((_, i) => !drop.has(i)) : lines;
 	}
 

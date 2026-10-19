@@ -21,6 +21,44 @@ describe('HistoryStore', () => {
 		expect(f.files.get('W/History.md')!.startsWith('# My log\n')).toBe(true);
 	});
 
+	it('caps by timestamp, not position: a legacy import appended at the end keeps the newest', async () => {
+		const iso = (sec: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, sec)).toISOString();
+		const line = (sec: number) => `- ${iso(sec)} · added · T${sec} · m${sec}`;
+		// 1000 local entries (seconds 1000..1999), then an older import (seconds 0..4) appended at the end
+		const local = Array.from({ length: 1000 }, (_, i) => line(1000 + i));
+		const legacy = Array.from({ length: 5 }, (_, i) => line(i));
+		const f = createFakeApp({ 'W/History.md': ['# x', ...local, ...legacy, ''].join('\n') });
+		const h = new HistoryStore(f.app, layout);
+		await h.append(entry(2000));
+		const all = await h.load();
+		expect(all).toHaveLength(1000);
+		expect(all[0]!.message).toBe('m1001');
+		expect(all[all.length - 1]!.message).toBe('m2000');
+		expect(f.files.get('W/History.md')).not.toContain('m0 ');
+		expect(f.files.get('W/History.md')).not.toContain('· m4\n');
+	});
+
+	it('load returns entries sorted by timestamp, oldest first', async () => {
+		const iso = (sec: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, sec)).toISOString();
+		const f = createFakeApp({ 'W/History.md': [
+			'# x', `- ${iso(30)} · added · T30 · m30`, `- ${iso(10)} · added · T10 · m10`, `- ${iso(20)} · added · T20 · m20`, '',
+		].join('\n') });
+		const h = new HistoryStore(f.app, layout);
+		expect((await h.load()).map((e) => e.message)).toEqual(['m10', 'm20', 'm30']);
+	});
+
+	it('cap keeps foreign lines in place while dropping the oldest entries', async () => {
+		const iso = (sec: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, sec)).toISOString();
+		const local = Array.from({ length: 1000 }, (_, i) => `- ${iso(1000 + i)} · added · T${i} · m${1000 + i}`);
+		const f = createFakeApp({ 'W/History.md': ['# x', 'my note', ...local, ''].join('\n') });
+		const h = new HistoryStore(f.app, layout);
+		await h.append(entry(3000));
+		const txt = f.files.get('W/History.md')!;
+		expect(txt.startsWith('# x\nmy note\n')).toBe(true);
+		expect(txt).not.toContain('m1000\n');
+		expect(txt).toContain('m3000');
+	});
+
 	it('roundtrips entries incl. source, wikilink and ids', async () => {
 		const f = createFakeApp();
 		const h = new HistoryStore(f.app, layout, (n) => n === 'T1');
