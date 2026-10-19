@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { ReadingDataManager } from '../src/ReadingDataManager';
+import { GameDataManager } from '../src/GameDataManager';
 import { setupDataManager, makeTitle, tick } from './helpers/setupDataManager';
 
 describe('DataManager on vault storage', () => {
@@ -142,7 +144,7 @@ describe('DataManager on vault storage', () => {
 		expect(dm.getAirtimeEntries().find(e => e.titleId === 'TV Show/C')?.schedule).toMatchObject({ recurrence: 'weekly', dayOfWeek: 3 });
 	});
 
-	it('derives a once entry from "To be released" + releaseDate; removing it sets the plan status', async () => {
+	it('derives a once entry from "To be released" + releaseDate; removing it clears the date and sets the plan status', async () => {
 		const { dm, f } = await setupDataManager({
 			'W/Movie/A.md': '---\ntitle: A\ntype: Movie\nstatus: To be released\nreleaseDate: 2099-01-01\n---\n',
 			'W/Movie/B.md': '---\ntitle: B\ntype: Movie\nstatus: Plan to watch\nreleaseDate: 2099-01-01\n---\n',
@@ -152,8 +154,46 @@ describe('DataManager on vault storage', () => {
 		expect(entries[0]).toMatchObject({ titleId: 'Movie/A', schedule: { recurrence: 'once', releaseDate: '2099-01-01' } });
 		await dm.removeAirtimeEntry(entries[0]!.id);
 		expect(f.files.get('W/Movie/A.md')).toContain('status: Plan to watch');
+		expect(f.files.get('W/Movie/A.md')).not.toContain('releaseDate');
 		expect(f.files.get('W/Movie/A.md')).not.toContain('airtime');
 		expect(dm.getAirtimeEntries()).toEqual([]);
+	});
+
+	it('removing a derived book or game entry clears its release date', async () => {
+		const { dm, f, plugin, index, shared, local, layout } = await setupDataManager({
+			'W/Books/Dune.md': '---\ntitle: Dune\ntype: book\nstatus: To be released\nreleaseDate: 2099-01-01\n---\n',
+			'W/Games/Halo.md': '---\ntitle: Halo\ntype: game\nstatus: To be released\nreleaseDate: 2099-01-01\n---\n',
+		});
+		const deps = { index, local, shared, layout: () => layout };
+		const p = plugin as unknown as Record<string, unknown>;
+		p.readingDataManager = new ReadingDataManager(plugin, deps);
+		p.gameDataManager = new GameDataManager(plugin, deps);
+		await (p.readingDataManager as ReadingDataManager).init();
+		await (p.gameDataManager as GameDataManager).init();
+		const entries = dm.getAirtimeEntries();
+		expect(entries).toHaveLength(2);
+		for (const entry of entries) {
+			expect(dm.removeClearsReleaseDate(entry)).toBe(true);
+			await dm.removeAirtimeEntry(entry.id);
+		}
+		const book = f.files.get('W/Books/Dune.md')!;
+		const game = f.files.get('W/Games/Halo.md')!;
+		expect(book).not.toContain('2099');
+		expect(book).toContain('status: Plan to Read');
+		expect(game).not.toContain('2099');
+		expect(game).not.toContain('To be released');
+		expect(dm.getAirtimeEntries()).toEqual([]);
+	});
+
+	it('removing a manual weekly entry keeps the release date', async () => {
+		const { dm, f } = await setupDataManager({
+			'W/TV Show/C.md': '---\ntitle: C\ntype: TV Show\nstatus: Watching\nreleaseDate: 2020-01-01\nairtimeRecurrence: weekly\nairtimeDay: 2\n---\n',
+		});
+		const [entry] = dm.getAirtimeEntries();
+		expect(dm.removeClearsReleaseDate(entry!)).toBe(false);
+		await dm.removeAirtimeEntry(entry!.id);
+		expect(f.files.get('W/TV Show/C.md')).toContain('releaseDate: 2020-01-01');
+		expect(f.files.get('W/TV Show/C.md')).not.toContain('airtime');
 	});
 
 	it('writes manual schedules as airtime keys and removes them again', async () => {

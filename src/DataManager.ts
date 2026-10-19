@@ -844,8 +844,8 @@ export class DataManager {
 		return status === auto || isReleaseDateFuture(releaseDate);
 	}
 
-	/** True when removing this entry also moves its item to the plan status. */
-	removeChangesStatus(entry: AirtimeEntry): boolean {
+	/** True when removing this entry clears the item's release date (and with it the auto status). */
+	removeClearsReleaseDate(entry: AirtimeEntry): boolean {
 		const e = this.index.get(entry.titleId);
 		return !!e && this.isAwaitingRelease(e);
 	}
@@ -867,8 +867,8 @@ export class DataManager {
 	}
 
 	/**
-	 * Drops manual schedules; a derived (or still "To be released") entry leaves Upcoming by
-	 * switching to its plan status, like ticking a single release.
+	 * Drops manual schedules. A derived (or still "To be released") entry leaves Upcoming by
+	 * clearing its release date; the status follows from the usual release-date rules.
 	 */
 	async removeAirtimeEntriesBatch(ids: string[]): Promise<void> {
 		if (ids.length === 0) return;
@@ -880,35 +880,33 @@ export class DataManager {
 				const title = this.getTitle(e.entry.id);
 				if (!title) continue;
 				delete title.airtime;
-				if (this.isAwaitingRelease(e)) {
-					title.status = 'Plan to watch';
-					await this.updateTitle(title);
-				} else {
-					await this.writeTitle(title);
-				}
+				const clear = this.isAwaitingRelease(e);
+				if (clear) title.releaseDate = null;
+				await this.writeTitle(title);
+				if (clear) await this.applyReleaseDateChange(title);
 				continue;
 			}
 			if (e.entry.airtime) await this.writeAirtime(e, undefined, null);
 			const now = this.index.get(entry.titleId);
-			if (now && this.isAwaitingRelease(now)) await this.releaseToPlanStatus(now);
+			if (now && this.isAwaitingRelease(now)) await this.clearReleaseDate(now);
 		}
 		this.notifyListeners();
 	}
 
-	/** Reading / game status change through their managers (history, release-status rules). */
-	private async releaseToPlanStatus(e: AnyEntry): Promise<void> {
+	/** Reading / game release date removal through their managers (history, release-status rules). */
+	private async clearReleaseDate(e: AnyEntry): Promise<void> {
 		if (e.kind === 'book' || e.kind === 'manga') {
 			const rdm = this.plugin.readingDataManager;
 			const item = e.kind === 'book' ? rdm?.getBook(e.entry.id) : rdm?.getManga(e.entry.id);
 			if (!rdm || !item) return;
-			item.status = 'Plan to Read';
+			item.releaseDate = null;
 			if (e.kind === 'book') await rdm.updateBook(item as Book);
 			else await rdm.updateManga(item as Manga);
 		} else if (e.kind === 'game') {
 			const gdm = this.plugin.gameDataManager;
 			const game = gdm?.getGame(e.entry.id);
 			if (!gdm || !game) return;
-			game.status = gdm.getSettings().defaultStatus || 'Not started';
+			game.releaseDate = null;
 			await gdm.updateGame(game);
 		}
 	}

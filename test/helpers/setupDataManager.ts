@@ -41,7 +41,7 @@ export async function setupDataManager(files: Record<string, string>) {
 	index.start();
 	const dm = new DataManager(plugin, { index, local, shared, layout: () => layout });
 	await dm.init();
-	return { dm, f, local, index, settings, posterQueue };
+	return { dm, f, local, index, settings, posterQueue, plugin, shared, layout };
 }
 
 export function makeTitle(over: Partial<WatchLogTitle>): WatchLogTitle {

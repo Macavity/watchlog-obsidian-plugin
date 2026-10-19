@@ -1169,10 +1169,10 @@ export class AirtimeTab {
 		});
 	}
 
-	/** An entry that is only there because its item awaits release leaves via the plan status. */
+	/** An entry that is only there because its item awaits release leaves by clearing its release date. */
 	private confirmRemove(entry: AirtimeEntry, r: ResolvedUpcoming): void {
-		const msg = this.dataManager.removeChangesStatus(entry)
-			? `Remove "${r.title}" from Upcoming and set status to ${r.planStatus}?`
+		const msg = this.dataManager.removeClearsReleaseDate(entry)
+			? `Remove "${r.title}" from Upcoming and clear its release date?`
 			: `Remove "${r.title}" from Upcoming?`;
 		new ConfirmModal(this.plugin.app, msg, () => {
 			void this.dataManager.removeAirtimeEntry(entry.id).then(() => this.render());
