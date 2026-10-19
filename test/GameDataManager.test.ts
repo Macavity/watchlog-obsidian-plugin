@@ -128,4 +128,16 @@ describe('GameDataManager on vault storage', () => {
 		await gdm.restore({ games: [g], groups: [{ id: 'G', name: 'Fav', gameIds: [g.id] }] as never, settings: gdm.getSettings() });
 		expect(f.files.get('W/Games/A.md')).toContain('Fav');
 	});
+
+	it('keeps an external change when a spread copy edits another field', async () => {
+		const { gdm, f } = await setupGames({ 'W/Games/A.md': '---\ntitle: A\ntype: game\nrating: 1\n---\n' });
+		const g = gdm.getGame('Games/A')!;
+		f.externalWrite('W/Games/A.md', '---\ntitle: A\ntype: game\nrating: 5\n---\n');
+		await tick();
+		gdm.getGames();
+		await gdm.updateGame({ ...g, playtimeMinutes: 60 });
+		const c = f.files.get('W/Games/A.md')!;
+		expect(c).toContain('rating: 5');
+		expect(c).toContain('playtime: 1h');
+	});
 });

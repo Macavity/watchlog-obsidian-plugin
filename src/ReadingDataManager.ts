@@ -4,6 +4,7 @@ import type WatchLogPlugin from './main';
 import type { HistoryManager } from './HistoryManager';
 import type { DataStores } from './DataManager';
 import type { EntryIndex } from './storage/EntryIndex';
+import { getBaseline, setBaseline } from './storage/baseline';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { FOLDERS } from './storage/VaultLayout';
@@ -70,9 +71,6 @@ export class ReadingDataManager {
 	// Mutable copies handed to the UI, one per id. `src` is the index entry the copy was made from:
 	// the baseline a write diffs against, so only fields the user changed reach the note.
 	private views: Map<string, { src: Item; view: Item }> = new Map();
-	// Per handed-out copy, the stored state it was made from: a stale copy diffs against that, not
-	// against the refreshed slot, so it cannot revert a field changed elsewhere in between.
-	private baselines: WeakMap<Item, Item> = new WeakMap();
 	// ids changed via the *Silent updaters, written on the next saveAndNotify()
 	private dirty: Set<string> = new Set();
 
@@ -397,7 +395,7 @@ export class ReadingDataManager {
 		} as Item;
 		this.applyReleaseStatus(view);
 		this.views.set(src.id, { src, view });
-		this.baselines.set(view, src);
+		setBaseline(view, src);
 		return view;
 	}
 
@@ -570,12 +568,12 @@ export class ReadingDataManager {
 	private updateSilent(updated: Item): void {
 		const id = updated.id;
 		const slot = this.views.get(id);
-		const src = this.baselines.get(updated) ?? slot?.src ?? this.sourceOf(this.kindOf(id) ?? 'book', id);
+		const src = getBaseline(updated) ?? slot?.src ?? this.sourceOf(this.kindOf(id) ?? 'book', id);
 		if (!src) return;
 		updated.dateModified = new Date().toISOString();
 		this.applyReleaseStatus(updated);
 		this.views.set(id, { src, view: updated });
-		this.baselines.set(updated, src);
+		setBaseline(updated, src);
 		this.dirty.add(id);
 	}
 
@@ -740,7 +738,7 @@ export class ReadingDataManager {
 			: { kind: 'manga', entry: stored as Manga });
 		item.vaultPage = this.layout().pathFromId(item.id);
 		this.views.set(item.id, { src: stored, view: item });
-		this.baselines.set(item, stored);
+		setBaseline(item, stored);
 	}
 
 	/**
@@ -795,7 +793,7 @@ export class ReadingDataManager {
 			await this.createNote(kind, item);
 			return;
 		}
-		const src = this.baselines.get(item) ?? this.views.get(item.id)?.src ?? this.sourceOf(kind, item.id);
+		const src = getBaseline(item) ?? this.views.get(item.id)?.src ?? this.sourceOf(kind, item.id);
 
 		if (src && item.title !== src.title) {
 			const target = this.layout().notePath(kind, item.title);
@@ -828,7 +826,7 @@ export class ReadingDataManager {
 				}
 			});
 			// the copy now holds what the note holds for every field it knows
-			if (ok) this.baselines.set(item, structuredClone(item));
+			if (ok) setBaseline(item, structuredClone(item));
 		} else if (src) {
 			this.views.set(item.id, { src, view: item });
 		}

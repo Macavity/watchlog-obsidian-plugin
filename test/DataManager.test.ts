@@ -327,4 +327,16 @@ describe('DataManager on vault storage', () => {
 		await dm.flushPendingSave();
 		expect(f.files.get('W/Movie/A.md')).toContain('status: Watching');
 	});
+
+	it('keeps an external change when a spread copy edits another field', async () => {
+		const { dm, f } = await setupDataManager({ 'W/Movie/A.md': '---\ntitle: A\ntype: Movie\nrating: 1\n---\n\n## Notes\n' });
+		const t = dm.getTitle('Movie/A')!;
+		f.externalWrite('W/Movie/A.md', '---\ntitle: A\ntype: Movie\nrating: 5\n---\n\n## Notes\n');
+		await tick();
+		dm.getTitles();
+		await dm.updateTitle({ ...t, review: 'nice' });
+		const c = f.files.get('W/Movie/A.md')!;
+		expect(c).toContain('rating: 5');
+		expect(c).toContain('review: nice');
+	});
 });

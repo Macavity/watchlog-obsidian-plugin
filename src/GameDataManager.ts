@@ -3,6 +3,7 @@ import type WatchLogPlugin from './main';
 import type { HistoryManager } from './HistoryManager';
 import type { DataStores } from './DataManager';
 import type { EntryIndex } from './storage/EntryIndex';
+import { getBaseline, setBaseline } from './storage/baseline';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { decodeGame, encodeGame } from './storage/gameCodec';
@@ -86,9 +87,6 @@ export class GameDataManager {
 	// Mutable copies handed to the UI, one per id. `src` is the index entry the copy was made from,
 	// `base` its normalized form: the baseline a write diffs against, so only changed fields reach the note.
 	private views = new Map<string, { src: Game; base: Game; view: Game }>();
-	// Per handed-out copy, the normalized stored state it was made from: a stale copy diffs against
-	// that, not against the refreshed slot, so it cannot revert a field changed elsewhere in between.
-	private baselines = new WeakMap<Game, Game>();
 	// games changed via updateGameSilent, written on the next saveAndNotify
 	private dirty = new Set<string>();
 	private settingsCache: GamesSettings | null = null;
@@ -247,7 +245,7 @@ export class GameDataManager {
 	private async flushViews(): Promise<void> {
 		const ids = new Set(this.dirty);
 		for (const [id, slot] of this.views) {
-			if (!sameJson(encodeGame(slot.view), encodeGame(this.baselines.get(slot.view) ?? slot.base))) ids.add(id);
+			if (!sameJson(encodeGame(slot.view), encodeGame(getBaseline(slot.view) ?? slot.base))) ids.add(id);
 		}
 		this.dirty.clear();
 		for (const id of ids) {
@@ -307,7 +305,7 @@ export class GameDataManager {
 		const base = this.normalized(src);
 		const view = structuredClone(base);
 		this.views.set(src.id, { src, base, view });
-		this.baselines.set(view, base);
+		setBaseline(view, base);
 		return view;
 	}
 
@@ -327,7 +325,7 @@ export class GameDataManager {
 		this.applyReleaseStatus(updated);
 		const slot = this.views.get(updated.id);
 		const indexed = this.index.get(updated.id);
-		const old = this.baselines.get(updated) ?? slot?.base ?? (indexed?.kind === 'game' ? this.normalized(indexed.entry) : undefined);
+		const old = getBaseline(updated) ?? slot?.base ?? (indexed?.kind === 'game' ? this.normalized(indexed.entry) : undefined);
 		if (!old) return;
 		// favorite arrives as a whole-object replace — stamp/clear off the transition. Drives the
 		// Favorites shelf order (newest first).
@@ -368,9 +366,9 @@ export class GameDataManager {
 		const indexed = this.index.get(updated.id);
 		if (!slot && indexed?.kind !== 'game') return;
 		const src = slot?.src ?? (indexed!.entry as Game);
-		const base = this.baselines.get(updated) ?? slot?.base ?? this.normalized(src);
+		const base = getBaseline(updated) ?? slot?.base ?? this.normalized(src);
 		this.views.set(updated.id, { src, base, view: updated });
-		this.baselines.set(updated, base);
+		setBaseline(updated, base);
 		this.dirty.add(updated.id);
 	}
 
@@ -642,7 +640,7 @@ export class GameDataManager {
 		g.vaultPage = this.layout().pathFromId(g.id);
 		const base = this.normalized(stored);
 		this.views.set(g.id, { src: stored, base, view: g });
-		this.baselines.set(g, base);
+		setBaseline(g, base);
 	}
 
 	/** Creates the note for a new game; the game's id becomes the note path. */
@@ -676,7 +674,7 @@ export class GameDataManager {
 			return;
 		}
 		const indexed = this.index.get(g.id);
-		const src = this.baselines.get(g) ?? this.views.get(g.id)?.base ?? (indexed?.kind === 'game' ? this.normalized(indexed.entry) : undefined);
+		const src = getBaseline(g) ?? this.views.get(g.id)?.base ?? (indexed?.kind === 'game' ? this.normalized(indexed.entry) : undefined);
 
 		if (src && g.title !== src.title) {
 			const target = this.layout().notePath('game', g.title);
@@ -707,7 +705,7 @@ export class GameDataManager {
 				}
 			});
 			// the copy now holds what the note holds for every field it knows
-			if (ok) this.baselines.set(g, structuredClone(g));
+			if (ok) setBaseline(g, structuredClone(g));
 		} else {
 			const slot = this.views.get(g.id);
 			if (slot) slot.view = g;

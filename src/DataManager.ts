@@ -6,6 +6,7 @@ import { formatHistoryDate } from './HistoryManager';
 import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso, GAME_AUTO_STATUS } from './types';
 import type { CreditsField } from './types';
 import type { AnyEntry, EntryIndex } from './storage/EntryIndex';
+import { getBaseline, setBaseline } from './storage/baseline';
 import type { LocalStore } from './storage/LocalStore';
 import type { EntryCache } from './storage/storageTypes';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
@@ -117,11 +118,10 @@ export class DataManager {
 	private historyManager: HistoryManager | null = null;
 
 	// Mutable copies handed to the UI, one per id. `src` is the index entry the copy was made from:
+	// it is the default baseline a write diffs against; a copy carries its own (see storage/baseline.ts),
+	// so a stale or spread copy cannot revert a field changed elsewhere in between.
 	// it is the baseline a write diffs against, so only fields the user changed reach the note.
 	private views: Map<string, { src: WatchLogTitle; view: WatchLogTitle }> = new Map();
-	// Per handed-out copy, the stored state it was made from. Survives a refreshed slot, so a stale copy
-	// diffs against what it was made from and cannot revert a field changed elsewhere in between.
-	private baselines: WeakMap<WatchLogTitle, WatchLogTitle> = new WeakMap();
 	// `## Notes` body per id as last read from / written to the note
 	private notes: Map<string, string> = new Map();
 	// titles changed via updateTitleSilent, written on the next save()
@@ -525,7 +525,7 @@ export class DataManager {
 		// nothing cached yet: '' (not undefined) lets the lazy poster fetch pick it up
 		if (view.posterUrl === undefined) view.posterUrl = '';
 		this.views.set(src.id, { src, view });
-		this.baselines.set(view, src);
+		setBaseline(view, src);
 		return view;
 	}
 
@@ -578,7 +578,7 @@ export class DataManager {
 		delete title.maybe;
 		if (!title.notes) title.notes = this.notes.get(id) ?? '';
 		this.views.set(id, { src: maybe.entry, view: title });
-		this.baselines.set(title, maybe.entry);
+		setBaseline(title, maybe.entry);
 		await this.writeTitle(title);
 	}
 
@@ -734,7 +734,7 @@ export class DataManager {
 		}
 		this.logChanges(updated);
 		const base = this.baselineOf(updated);
-		if (base) this.baselines.set(updated, base);
+		if (base) setBaseline(updated, base);
 		slot.view = updated;
 		this.dirty.add(updated.id);
 	}
@@ -1631,7 +1631,7 @@ export class DataManager {
 			});
 			if (!ok) return;
 			// the copy now holds what the note holds for every field it knows
-			this.baselines.set(t, structuredClone(t));
+			setBaseline(t, structuredClone(t));
 		} else {
 			// nothing for the note; API data may still have changed
 			this.syncCache(t);
@@ -1649,7 +1649,7 @@ export class DataManager {
 
 	/** Stored state a copy was made from; falls back to the current slot or index entry. */
 	private baselineOf(t: WatchLogTitle): WatchLogTitle | undefined {
-		const known = this.baselines.get(t) ?? this.views.get(t.id)?.src;
+		const known = getBaseline(t) ?? this.views.get(t.id)?.src;
 		if (known) return known;
 		const indexed = this.index.get(t.id);
 		return indexed?.kind === 'title' ? indexed.entry : undefined;
@@ -1661,7 +1661,7 @@ export class DataManager {
 		const stored = decodeTitle(t.id, fm, this.local.getCache(t.id)).entry;
 		this.index.applyLocal({ kind: 'title', entry: stored });
 		this.views.set(t.id, { src: stored, view: t });
-		this.baselines.set(t, stored);
+		setBaseline(t, stored);
 	}
 
 	/** Stores the title's API-derived fields in data.json when they changed. */

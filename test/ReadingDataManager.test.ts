@@ -98,4 +98,16 @@ describe('ReadingDataManager on vault storage', () => {
 		await rdm.flushPending();
 		expect(f.files.get('W/Books/A.md')).toContain('author: Y');
 	});
+
+	it('keeps an external change when a spread copy edits another field', async () => {
+		const { rdm, f } = await setupReadingDataManager({ 'W/Books/A.md': '---\ntitle: A\ntype: book\npagesRead: 1\n---\n' });
+		const b = rdm.getBook('Books/A')!;
+		f.externalWrite('W/Books/A.md', '---\ntitle: A\ntype: book\npagesRead: 5\n---\n');
+		await tick();
+		rdm.getBooks();
+		await rdm.updateBook({ ...b, author: 'X' });
+		const c = f.files.get('W/Books/A.md')!;
+		expect(c).toContain('pagesRead: 5');
+		expect(c).toContain('author: X');
+	});
 });
