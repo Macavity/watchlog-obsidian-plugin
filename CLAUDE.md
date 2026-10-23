@@ -5,24 +5,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Obsidian plugin (TypeScript, esbuild, vitest). Fork of WatchLog that moves tracked data from
 `data.json` into vault notes so it syncs across devices. User-facing docs: `README.md`.
 
-## Commands
+## Commands (pnpm)
 
 ```
-npm run dev                          # esbuild watch -> main.js
-npm run build                        # tsc -noEmit + production bundle (rewrites main.js)
-npm run lint                         # eslint, fails on warnings (--max-warnings 0)
-npm test                             # vitest run
-npx vitest run test/DataManager.test.ts        # single file
-npx vitest run -t "pattern"                    # single test by name
-npm run deploy -- <vault-name>       # build + copy into a vault's .obsidian/plugins/watchlog-sync
-npm version <patch|minor|major>      # bumps manifest.json + versions.json via version-bump.mjs
+pnpm install --frozen-lockfile
+pnpm dev                              # esbuild watch -> main.js
+pnpm build                            # tsc -noEmit + production bundle
+pnpm lint                             # eslint, fails on warnings (--max-warnings 0)
+pnpm test                             # vitest run
+pnpm vitest run test/DataManager.test.ts        # single file
+pnpm vitest run -t "pattern"                    # single test by name
+pnpm run deploy -- <vault-name>       # build + copy into a vault; "run" needed, "pnpm deploy" is a builtin
+pnpm version <patch|minor|major>      # bumps manifest.json + versions.json, commits, tags
 ```
 
-CI runs lint, test, build, then `git diff --exit-code -- main.js`: **`main.js` is committed and must
-match the source.** After changing anything under `src/`, run `npm run build` and commit `main.js`
-together with the change.
+`main.js` is build output and not tracked. CI runs lint, test and build on every push and PR.
 
-Install with plain `npm ci`/`npm install`. Do not use `--legacy-peer-deps` (it drops `@eslint/json`).
+## Releases
+
+Tag equals the manifest version, no `v` prefix. The release workflow builds `main.js`, attests it
+and opens a **draft** release with `main.js`, `manifest.json`, `styles.css`.
+
+```
+pnpm version patch        # or minor / major
+git push origin main      # commits first
+git push origin 4.0.1     # tag separately, a few seconds later (a combined push can drop the trigger)
+```
+
+Then paste the matching `CHANGELOG.md` section into the draft and publish. Details and recovery
+steps: `.claude/skills/obsidian-plugin/references/release-process.md`.
+
+Obsidian plugin rules (vault API, UI text, styling, scorecard) live in the `obsidian-plugin` skill
+under `.claude/skills/`.
 
 ## Tests
 
