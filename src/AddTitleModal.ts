@@ -14,8 +14,7 @@ import {
 	type TitlePick,
 	type TitleSearchResult,
 } from './titleSearch';
-import { createSearchPicker, type SearchPicker } from './ui/SearchPicker';
-import { SearchFormModal } from './ui/SearchFormModal';
+import { SearchFormModal, type SearchPickerOptions } from './ui/SearchFormModal';
 import { LibraryIndex } from './LibraryIndex';
 import { createDatePicker } from './DatePicker';
 import { renderStarRating } from './StarRating';
@@ -31,9 +30,7 @@ import {
 	type MediaFields,
 } from './ui/FormCells';
 
-type SearchResult = TitleSearchResult;
-
-export class AddTitleModal extends SearchFormModal {
+export class AddTitleModal extends SearchFormModal<TitleSearchResult> {
 	private plugin: WatchLogPlugin;
 	private dataManager: DataManager;
 	// gets the new entry — callers that don't care just ignore it
@@ -61,7 +58,6 @@ export class AddTitleModal extends SearchFormModal {
 	private libIndex: LibraryIndex | null = null;
 
 	private group: GroupPickerState = { selectedGroupId: '', newGroupName: '' };
-
 
 	constructor(
 		app: App,
@@ -103,30 +99,29 @@ export class AddTitleModal extends SearchFormModal {
 			if (prefill.director !== undefined) this.fieldDirector = prefill.director;
 			if (prefill.cast !== undefined) this.fieldCast = prefill.cast;
 		}
-		this.picker = this.createPicker();
 	}
 
-	private createPicker(): SearchPicker {
-		return createSearchPicker<SearchResult>({
+	protected pickerOptions(): SearchPickerOptions<TitleSearchResult> {
+		return {
 			...titlePickerBase(this.plugin, this.selectedType, (v) => {
 				this.selectedType = v;
 				this.renderForm();
 			}),
 			grid: true,
 			initialQuery: this.initialQuery,
-			search: async (query, year) => (await searchTitles(this.plugin, this.selectedType, query, year)) ?? [],
-			noApiMessage: () => this.noApiMessage(),
-			renderResult: (host, result, select) => this.renderResult(host, result, select),
-			onSelect: (result, isCurrent) => this.selectResult(result, isCurrent),
-		});
+		};
 	}
 
-	private noApiMessage(): string | null {
+	protected async search(query: string, year: string): Promise<TitleSearchResult[]> {
+		return (await searchTitles(this.plugin, this.selectedType, query, year)) ?? [];
+	}
+
+	protected noApiMessage(): string | null {
 		if (getApiGroupForType(this.selectedType, this.plugin.settings.typeApiMapping) !== '') return null;
 		return `No API configured for type "${this.selectedType}". Go to Settings → API to set one up.`;
 	}
 
-	private renderResult(host: HTMLElement, result: SearchResult, select: (itemEl: HTMLElement) => void): HTMLElement {
+	protected renderResult(host: HTMLElement, result: TitleSearchResult, select: (itemEl: HTMLElement) => void): HTMLElement {
 		if (!this.libIndex) this.libIndex = LibraryIndex.build(this.plugin, ['watchlist']);
 		const idKeys = resultIdKeys(result, this.plugin.settings.activeApi ?? 'OMDb');
 		return renderSearchResultRow(host, {
@@ -139,7 +134,7 @@ export class AddTitleModal extends SearchFormModal {
 		});
 	}
 
-	private async selectResult(result: SearchResult, isCurrent: () => boolean): Promise<void> {
+	protected async selectResult(result: TitleSearchResult, isCurrent: () => boolean): Promise<void> {
 		if (await resolvePick(this.plugin, result, isCurrent, (pick) => this.applyPick(pick))) this.renderForm();
 	}
 

@@ -1,9 +1,10 @@
-import { App, Modal, Notice, setIcon } from 'obsidian';
+import { App, Notice, setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { GameDataManager } from './GameDataManager';
-import { apiErrorMessage, rawgResizedCover, steamAppIdFromUrl, type GameSearchResult } from './ApiService';
+import { rawgResizedCover, steamAppIdFromUrl, type GameSearchResult } from './ApiService';
 import { Game, GameGroup, GAME_AUTO_STATUS } from './types';
 import { renderSearchResultRow } from './SearchThumbnail';
+import { SearchFormModal, type SearchPickerOptions } from './ui/SearchFormModal';
 import { LibraryIndex, gameResultIdKeys } from './LibraryIndex';
 import { renderModePill } from './ModePill';
 import { renderTagChips } from './StatusDropdown';
@@ -47,22 +48,23 @@ function platformMatches(a: string, b: string): boolean {
 	return true;
 }
 
+/** "2021 · PC, PS5": release year and up to three platforms. */
+function gameResultMeta(result: GameSearchResult): string {
+	const year = result.releaseDate.match(/^(\d{4})/)?.[1] ?? '—';
+	const platforms = result.platforms.slice(0, 3).join(', ') || 'Unknown platforms';
+	return `${year} · ${platforms}`;
+}
+
 /**
  * Add-game modal (the AddTitleModal pattern): API search (RAWG or IGDB per gamesApiSource) with
  * thumbnailed results, an editable form below, platform chips, the mode pill and a store-link
  * button. Works as a plain manual form when no API is configured.
  */
-export class AddGameModal extends Modal {
+export class AddGameModal extends SearchFormModal<GameSearchResult> {
 	private plugin: WatchLogPlugin;
 	private gameData: GameDataManager;
 	private onAdded: () => void;
-
-	private searchQuery = '';
-	private searchResults: GameSearchResult[] = [];
-	private isSearching = false;
-	private searchGeneration = 0;
-	private noApiMessage = '';
-	private searchError = '';
+	private initialQuery = '';
 
 	private fieldTitle = '';
 	private fieldDeveloper = '';
@@ -89,10 +91,6 @@ export class AddGameModal extends Modal {
 	// built on first search, reused for the modal's life
 	private libIndex: LibraryIndex | null = null;
 
-	private resultsEl: HTMLElement | null = null;
-	private formEl: HTMLElement | null = null;
-	private searchDebounce: number | null = null;
-
 	constructor(
 		app: App,
 		plugin: WatchLogPlugin,
@@ -100,7 +98,7 @@ export class AddGameModal extends Modal {
 		onAdded: () => void,
 		prefill?: { searchQuery?: string; title?: string },
 	) {
-		super(app);
+		super(app, 'Add game', ['wl-add-modal', 'wl-add-game-modal']);
 		this.plugin = plugin;
 		this.gameData = gameData;
 		this.onAdded = onAdded;
@@ -108,142 +106,43 @@ export class AddGameModal extends Modal {
 		this.fieldGenre = s.types[0]?.name ?? '';
 		this.fieldStatus = s.defaultStatus;
 		// prefill (e.g. from Drafts): seed the search box and title field so the modal opens ready to search
-		if (prefill?.searchQuery) this.searchQuery = prefill.searchQuery;
 		if (prefill?.title) this.fieldTitle = prefill.title;
+		this.initialQuery = prefill?.searchQuery ?? '';
 	}
 
-	onOpen(): void {
-		this.titleEl.setText('Add game');
-		this.contentEl.addClass('wl-add-modal', 'wl-add-game-modal');
-		this.buildUI();
+	protected pickerOptions(): SearchPickerOptions<GameSearchResult> {
+		return { placeholder: 'Search for a game...', grid: true, initialQuery: this.initialQuery };
 	}
 
-	onClose(): void {
-		this.contentEl.empty();
-		if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
-	}
-
-	private buildUI(): void {
-		const content = this.contentEl;
-		content.empty();
-
-		const searchRow = content.createDiv({ cls: 'wl-modal-row' });
-		searchRow.createSpan({ cls: 'wl-modal-label', text: 'Search' });
-		const searchInput = searchRow.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'Search for a game...' },
-		});
-		searchInput.value = this.searchQuery;
-		searchInput.addEventListener('input', () => {
-			this.searchQuery = searchInput.value;
-			if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
-			this.searchDebounce = window.setTimeout(() => void this.performSearch(), 600);
-		});
-		const searchBtn = searchRow.createEl('button', { cls: 'wl-btn', text: 'Search' });
-		searchBtn.addEventListener('click', () => void this.performSearch());
-
-		this.resultsEl = content.createDiv({ cls: 'wl-modal-results wl-results-grid' });
-
-		this.formEl = content.createDiv({ cls: 'wl-modal-form' });
-		this.renderForm();
-
-		// a prefilled search fires immediately — the results are the point of routing a draft here
-		if (this.searchQuery.trim()) void this.performSearch();
-	}
-
-	private async performSearch(): Promise<void> {
-		if (!this.searchQuery.trim()) return;
-		const gen = ++this.searchGeneration;
-		this.isSearching = true;
-		this.renderResults();
-
-		try {
-			const api = this.plugin.apiService;
-			const source = this.plugin.settings.gamesApiSource ?? 'rawg';
-
-			let results: GameSearchResult[] = [];
-			let noApi = '';
-			if (source === 'igdb') {
-				if (!api.hasIgdbCredentials()) {
-					noApi = 'No IGDB credentials configured. Go to Settings → API → Games to set the Twitch Client ID and Secret.';
-				} else {
-					results = await api.searchIgdbGames(this.searchQuery);
-				}
-			} else {
-				if (!api.hasRawgKey()) {
-					noApi = 'No RAWG API key configured. Go to Settings → API → Games to set one up.';
-				} else {
-					results = await api.searchRawgGames(this.searchQuery);
-				}
-			}
-			if (gen !== this.searchGeneration) return; // stale
-			this.noApiMessage = noApi;
-			this.searchError = '';
-			this.searchResults = results;
-		} catch (err) {
-			if (gen !== this.searchGeneration) return;
-			this.searchError = apiErrorMessage(err);
-			this.searchResults = [];
-		} finally {
-			if (gen === this.searchGeneration) {
-				this.isSearching = false;
-				this.renderResults();
-			}
+	protected noApiMessage(): string | null {
+		const api = this.plugin.apiService;
+		if (this.plugin.settings.gamesApiSource === 'igdb') {
+			return api.hasIgdbCredentials()
+				? null
+				: 'No IGDB credentials configured. Go to Settings → API → Games to set the Twitch Client ID and Secret.';
 		}
+		return api.hasRawgKey() ? null : 'No RAWG API key configured. Go to Settings → API → Games to set one up.';
 	}
 
-	private renderResults(): void {
-		if (!this.resultsEl) return;
-		this.resultsEl.empty();
+	protected search(query: string): Promise<GameSearchResult[]> {
+		const api = this.plugin.apiService;
+		return this.plugin.settings.gamesApiSource === 'igdb' ? api.searchIgdbGames(query) : api.searchRawgGames(query);
+	}
 
-		if (this.isSearching) {
-			this.resultsEl.createDiv({ cls: 'wl-modal-loading', text: 'Searching...' });
-			return;
-		}
-
-		if (this.noApiMessage) {
-			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api' });
-			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: 'ℹ' });
-			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.noApiMessage });
-			return;
-		}
-
-		if (this.searchError) {
-			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api wl-modal-api-error' });
-			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: '⚠' });
-			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.searchError });
-			return;
-		}
-
-		if (this.searchResults.length === 0) return;
-
+	protected renderResult(host: HTMLElement, result: GameSearchResult, select: (itemEl: HTMLElement) => void): HTMLElement {
 		if (!this.libIndex) this.libIndex = LibraryIndex.build(this.plugin, ['games']);
-		const libIndex = this.libIndex;
-
-		for (const result of this.searchResults) {
-			const year = result.releaseDate.match(/^(\d{4})/)?.[1] ?? '—';
-			const platforms = result.platforms.slice(0, 3).join(', ') || 'Unknown platforms';
-			renderSearchResultRow(this.resultsEl, {
-				// card covers are full-width now, so request a sharper 600px rendition
-				thumbUrl: rawgResizedCover(result.coverUrl, 600),
-				fallbackIcon: '🎮',
-				title: result.title,
-				meta: `${year} · ${platforms}`,
-				inLibrary: libIndex.lookup(gameResultIdKeys(result), result.title),
-				onClick: (itemEl) => void this.selectResult(result, itemEl),
-			});
-		}
+		return renderSearchResultRow(host, {
+			// card covers are full-width now, so request a sharper 600px rendition
+			thumbUrl: rawgResizedCover(result.coverUrl, 600),
+			fallbackIcon: '🎮',
+			title: result.title,
+			meta: gameResultMeta(result),
+			inLibrary: this.libIndex.lookup(gameResultIdKeys(result), result.title),
+			onClick: select,
+		});
 	}
 
-	private async selectResult(result: GameSearchResult, itemEl: HTMLElement): Promise<void> {
-		if (this.resultsEl) {
-			for (const child of Array.from(this.resultsEl.children)) {
-				child.removeClass('is-selected');
-			}
-		}
-		itemEl.addClass('is-selected');
-
-		const gen = ++this.searchGeneration;
+	protected async selectResult(result: GameSearchResult, isCurrent: () => boolean): Promise<void> {
 		const api = this.plugin.apiService;
 		// remember the origin even if the detail fetch fails — the search row identifies the game well
 		// enough to re-fetch its cover later
@@ -253,7 +152,7 @@ export class AddGameModal extends Modal {
 			const full = result.source === 'igdb'
 				? await api.getIgdbGameDetails(result.id)
 				: await api.getRawgGameDetails(result.id);
-			if (gen !== this.searchGeneration) return;
+			if (!isCurrent()) return;
 			if (full) {
 				this.fieldTitle = full.title;
 				this.fieldDeveloper = full.developer;
@@ -287,7 +186,7 @@ export class AddGameModal extends Modal {
 			.map((own) => own.name);
 	}
 
-	private renderForm(): void {
+	protected renderForm(): void {
 		const form = resetForm(this.formEl);
 		if (!form) return;
 		const makeRow = (label: string): HTMLElement => makeFormRow(form, label);

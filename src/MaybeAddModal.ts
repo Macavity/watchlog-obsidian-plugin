@@ -16,18 +16,14 @@ import {
 	titlePickerBase,
 	type TitleSearchResult,
 } from './titleSearch';
-import { createSearchPicker } from './ui/SearchPicker';
-import { SearchFormModal } from './ui/SearchFormModal';
+import { SearchFormModal, type SearchPickerOptions } from './ui/SearchFormModal';
 
-type SearchResult = TitleSearchResult;
-
-export class MaybeAddModal extends SearchFormModal {
+export class MaybeAddModal extends SearchFormModal<TitleSearchResult> {
 	private plugin: WatchLogPlugin;
 	private dataManager: DataManager;
 	private onAdded: () => void;
 
 	private selectedType = 'Anime';
-
 
 	private media: MediaFields = { title: '', episodes: 0, duration: 0, releaseDate: '', link: '' };
 
@@ -41,26 +37,27 @@ export class MaybeAddModal extends SearchFormModal {
 		this.plugin = plugin;
 		this.dataManager = dataManager;
 		this.onAdded = onAdded;
-		this.picker = createSearchPicker<SearchResult>({
-			...titlePickerBase(this.plugin, this.selectedType, (v) => {
-				this.selectedType = v;
-				this.renderForm();
-			}),
-			search: (query, year) => this.searchApi(query, year),
-			noApiMessage: () => null,
-			renderResult: (host, result, select) => this.renderResult(host, result, select),
-			onSelect: (result, isCurrent) => this.selectResult(result, isCurrent),
+	}
+
+	protected pickerOptions(): SearchPickerOptions<TitleSearchResult> {
+		return titlePickerBase(this.plugin, this.selectedType, (v) => {
+			this.selectedType = v;
+			this.renderForm();
 		});
 	}
 
-	private async searchApi(query: string, year: string): Promise<SearchResult[]> {
+	protected noApiMessage(): string | null {
+		return null;
+	}
+
+	protected async search(query: string, year: string): Promise<TitleSearchResult[]> {
 		const found = await searchTitles(this.plugin, this.selectedType, query, year);
 		if (found) return found;
 		new Notice(`No API configured for type "${this.selectedType}". Configure it in Settings → API.`);
 		return [];
 	}
 
-	private renderResult(host: HTMLElement, result: SearchResult, select: (itemEl: HTMLElement) => void): HTMLElement {
+	protected renderResult(host: HTMLElement, result: TitleSearchResult, select: (itemEl: HTMLElement) => void): HTMLElement {
 		const item = host.createDiv({ cls: 'wl-result-item' });
 		item.createDiv({ cls: 'wl-result-title', text: result.title });
 		item.createDiv({ cls: 'wl-result-meta', text: `${episodesLabel(result)} · ${formatDateDisplay(result.releaseDate)}` });
@@ -68,7 +65,7 @@ export class MaybeAddModal extends SearchFormModal {
 		return item;
 	}
 
-	private async selectResult(result: SearchResult, isCurrent: () => boolean): Promise<void> {
+	protected async selectResult(result: TitleSearchResult, isCurrent: () => boolean): Promise<void> {
 		if (await resolvePick(this.plugin, result, isCurrent, (pick) => fillMediaFields(this.media, pick))) this.renderForm();
 	}
 
