@@ -62,6 +62,7 @@ export class AddGameModal extends Modal {
 	private fieldStoreUrl = '';
 	private fieldLink = '';
 	private fieldCoverUrl = '';
+	// cover last prefilled from an API result; unchanged it stays cache-only (not an override)
 	private fieldPlatforms: string[] = [];
 	// which API row the form was filled from — persisted on the game so covers can later be re-fetched
 	// by id instead of by title

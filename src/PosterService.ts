@@ -2,6 +2,7 @@ import { requestUrl } from 'obsidian';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogPluginSettings } from './types';
 import { getApiGroupForType } from './types';
+import { httpsOrEmpty } from './httpsUrl';
 import { ApiError, apiSourceFromUrl, readApiResponse } from './ApiService';
 
 const JIKAN_BASE = 'https://api.jikan.moe/v4';
@@ -20,6 +21,8 @@ const OMDB_DELAY_MS = 100;
 interface QueueItem {
 	title: WatchLogTitle;
 	resolve: (url: string | null) => void;
+	/** explicit refresh: replace the title's poster */
+	overwrite: boolean;
 }
 
 interface JikanImagesShape {
@@ -97,12 +100,13 @@ export class PosterService {
 
 	/**
 	 * Enqueue a poster fetch for a title. Resolves with the URL or null; the result is also persisted
-	 * via DataManager.updatePosterUrl (silent + debounced).
+	 * via DataManager.updatePosterUrl: into the note when its poster is empty, or always with `overwrite`
+	 * (the explicit refresh, which also ignores the poster the title has).
 	 */
-	enqueue(title: WatchLogTitle): Promise<string | null> {
+	enqueue(title: WatchLogTitle, overwrite = false): Promise<string | null> {
 		return new Promise((resolve) => {
 			if (this.disposed) { resolve(null); return; }
-			this.queue.push({ title, resolve });
+			this.queue.push({ title, resolve, overwrite });
 			void this.processQueue();
 		});
 	}
@@ -123,17 +127,12 @@ export class PosterService {
 			if (this.disposed) break;
 			const item = this.queue.shift();
 			if (!item) break;
-			// manual override: don't auto-fetch, don't touch posterUrl
-			if (item.title.manualPosterUrl && item.title.manualPosterUrl.trim() !== '') {
-				item.resolve(item.title.manualPosterUrl);
-				continue;
-			}
 			try {
-				const url = await this.fetchPosterForTitle(item.title);
+				const url = await this.fetchPosterForTitle(item.title, item.overwrite);
 				if (this.disposed) { item.resolve(null); break; }
 				// 'none' only for a clean "the API has no poster" — see the catch
 				const finalUrl = url || 'none';
-				this.dataManager.updatePosterUrl(item.title.id, finalUrl);
+				await this.dataManager.updatePosterUrl(item.title.id, finalUrl, item.overwrite);
 				item.resolve(url);
 			} catch {
 				// a rejected key or a dropped connection must NOT be cached as 'none': that is
@@ -163,10 +162,12 @@ export class PosterService {
 		return 0;
 	}
 
-	private async fetchPosterForTitle(title: WatchLogTitle): Promise<string | null> {
-		// already cached
-		if (title.posterUrl && title.posterUrl.startsWith('http')) return title.posterUrl;
-		if (title.posterUrl === 'none') return null;
+	private async fetchPosterForTitle(title: WatchLogTitle, overwrite: boolean): Promise<string | null> {
+		// the title already has one (a refresh looks it up again)
+		if (!overwrite) {
+			if (title.posterUrl && title.posterUrl.startsWith('http')) return title.posterUrl;
+			if (title.posterUrl === 'none') return null;
+		}
 
 		const settings = this.getSettings();
 		const group = getApiGroupForType(title.type, settings.typeApiMapping);
@@ -196,20 +197,20 @@ export class PosterService {
 				variables: { id: title.anilistId },
 			})) as AniListPosterResponse | null;
 			const cover = data?.data?.Media?.coverImage;
-			return cover?.large ?? cover?.medium ?? null;
+			return httpsOrEmpty(cover?.large ?? cover?.medium) || null;
 		}
 		if (title.malId) {
 			const url = `${JIKAN_BASE}/anime/${title.malId}`;
 			const data = (await this.fetchJson(url)) as JikanImagesShape | null;
 			const jpg = data?.data?.images?.jpg;
-			return jpg?.large_image_url ?? jpg?.image_url ?? null;
+			return httpsOrEmpty(jpg?.large_image_url ?? jpg?.image_url) || null;
 		}
 		const q = encodeURIComponent(this.cleanTitleForSearch(title.title));
 		const url = `${JIKAN_BASE}/anime?q=${q}&limit=1`;
 		const data = (await this.fetchJson(url)) as JikanSearchShape | null;
 		const first = data?.data?.[0];
 		const jpg = first?.images?.jpg;
-		return jpg?.large_image_url ?? jpg?.image_url ?? null;
+		return httpsOrEmpty(jpg?.large_image_url ?? jpg?.image_url) || null;
 	}
 
 	/** Extracts an IMDb id (`tt…`) from an external link, or '' when absent. */
@@ -322,7 +323,7 @@ export class PosterService {
 				const url = `${OMDB_BASE}/?i=${encodeURIComponent(imdbId)}&apikey=${key}`;
 				const data = (await this.fetchJson(url)) as OmdbResult | null;
 				const poster = data?.Poster;
-				if (poster && poster !== 'N/A') return poster;
+				if (poster && httpsOrEmpty(poster)) return poster;
 				// no poster on the exact match — fall through to a typed/legacy search
 			}
 			const q = encodeURIComponent(searchName);
@@ -339,14 +340,14 @@ export class PosterService {
 					const data = (await this.fetchJson(base)) as OmdbResult | null;
 					poster = data?.Poster;
 				}
-				if (poster && poster !== 'N/A') return poster;
+				if (poster && httpsOrEmpty(poster)) return poster;
 				return null;
 			}
 			// safety net: no type signal → legacy untyped lookup
 			const url = `${OMDB_BASE}/?t=${q}&apikey=${key}`;
 			const data = (await this.fetchJson(url)) as OmdbResult | null;
 			const poster = data?.Poster;
-			if (poster && poster !== 'N/A') return poster;
+			if (poster && httpsOrEmpty(poster)) return poster;
 			return null;
 		}
 	}

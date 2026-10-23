@@ -1,6 +1,12 @@
-import { normalizePath, TFile } from 'obsidian';
+import { Notice, TFile, normalizePath, stringifyYaml } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { HistoryManager } from './HistoryManager';
+import type { DataStores } from './DataManager';
+import type { EntryIndex } from './storage/EntryIndex';
+import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
+import { splitNested, type SharedConfigStore } from './storage/SharedConfigStore';
+import type { VaultLayout } from './storage/VaultLayout';
+import { decodeGame, encodeGame } from './storage/gameCodec';
 import {
 	Game,
 	GameGroup,
@@ -12,23 +18,23 @@ import {
 	defaultGamesSettings,
 	GAME_AUTO_STATUS,
 	GAME_FINISHED_STATUS,
-	GAME_TBA_STATUS,
 	isReleaseDateFuture,
-	parsePlaytimeInput,
-	formatTime,
 	todayIso,
-	TagDefinition,
 } from './types';
 
-function sanitizeFilename(input: string): string {
-	return input.replace(/[*"\\/<>:|?]/g, '-').trim();
-}
+/** Every frontmatter key encodeGame can emit; the full rewrite deletes the ones it omits. */
+const GAME_KEYS: readonly string[] = [
+	'title', 'developer', 'publisher', 'genre', 'status', 'priority', 'favorite', 'dateFavorited', 'wishlist',
+	'rating', 'progress', 'playtime', 'achievements', 'platforms', 'singleplayer', 'coop', 'multiplayer',
+	'dateStarted', 'dateFinished', 'releaseDate', 'dateAdded', 'dateModified', 'coverUrl', 'storeUrl',
+	'externalLink', 'externalId', 'steamAppId', 'lastPlayed', 'groups', 'type',
+	'airtimeRecurrence', 'airtimeDay', 'airtimeTime', 'airtimeSeason', 'airtimeEpisode', 'airtimeAcknowledged',
+];
 
-function yamlEscape(value: string): string {
-	if (value === '') return '""';
-	// double-quote and escape backslashes and double quotes
-	return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-}
+const NOTES_RE = /(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/;
+const GAMES_FOLDER_PREFIX = 'Games/';
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 function slugify(input: string): string {
 	return input
@@ -37,214 +43,103 @@ function slugify(input: string): string {
 		.replace(/^-|-$/g, '');
 }
 
+/** `## Notes` body of a note; null when the section is absent. */
+function extractNotes(content: string): string | null {
+	const match = content.match(NOTES_RE);
+	if (!match) return null;
+	// strip the template's leading blank line and trailing whitespace, keep internal breaks
+	return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
+}
+
+/** Replaces the `## Notes` body, keeping the heading, other sections and frontmatter; appends when missing. */
+function replaceNotesSection(existing: string, notesBody: string): string {
+	const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
+	if (!headingMatch || headingMatch.index === undefined) {
+		const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+		return `${existing}${sep}\n## Notes\n\n${notesBody}\n`;
+	}
+	const bodyStart = headingMatch.index + headingMatch[0].length;
+	const after = existing.slice(bodyStart);
+	const nextHeading = after.match(/\n(?:## |# )/);
+	const bodyEnd =
+		nextHeading && nextHeading.index !== undefined ? bodyStart + nextHeading.index : existing.length;
+	return `${existing.slice(0, bodyStart)}\n${notesBody}\n${existing.slice(bodyEnd)}`;
+}
+
 /**
- * Owns the games dataset — the `games` key inside data.json (the Reading pattern: bound to
- * DataManager's master object, persisted through DataManager.persist() so Sync replicates it) —
- * plus the per-game notes at `<defaultFolder>/<Title>.md`.
+ * Games, backed by one note per game under `<Root>/Games`. Reads come from the EntryIndex; writes go
+ * to the note via processFrontMatter and only touch keys whose encoded value changed. Settings live
+ * in the shared base (`games:`), the daily picks in data.json.
  *
  * Upcoming mirrors Reading's: a game with a future release date is auto-added to the shared
- * tracker (entry ids prefixed `airtime-game-`) and removed when the date passes or the game is
- * deleted; applyReleaseStatus maintains the auto "To be released" status.
+ * tracker and removed when the date passes or the game is deleted; applyReleaseStatus maintains the
+ * auto "To be released" status.
  */
 export class GameDataManager {
 	private plugin: WatchLogPlugin;
-	private data: GamesData;
+	private index: EntryIndex;
+	private local: DataStores['local'];
+	private shared: SharedConfigStore;
+	private layout: () => VaultLayout;
 	private changeListeners: Array<() => void> = [];
 	private historyManager: HistoryManager | null = null;
 
-	constructor(plugin: WatchLogPlugin) {
+	// Mutable copies handed to the UI, one per id. `src` is the index entry the copy was made from,
+	// `base` its normalized form: the baseline a write diffs against, so only changed fields reach the note.
+	private views = new Map<string, { src: Game; base: Game; view: Game }>();
+	// games changed via updateGameSilent, written on the next saveAndNotify
+	private dirty = new Set<string>();
+	private settingsCache: GamesSettings | null = null;
+
+	constructor(plugin: WatchLogPlugin, stores: DataStores) {
 		this.plugin = plugin;
-		this.data = this.emptyData();
+		this.index = stores.index;
+		this.local = stores.local;
+		this.shared = stores.shared;
+		this.layout = stores.layout;
 	}
 
 	setHistoryManager(hm: HistoryManager): void {
 		this.historyManager = hm;
 	}
 
-	private emptyData(): GamesData {
-		return {
-			games: [],
-			groups: [],
-			settings: defaultGamesSettings(),
-		};
-	}
-
-	/** The single saveData object (owned by DataManager) that holds games data. */
-	private get master() {
-		return this.plugin.dataManager.getData();
-	}
-
-	/**
-	 * Reads the games dataset from the shared `data.games` key (in memory, not a file), normalizes it,
-	 * and binds `master.games` to our canonical reference so later mutations reach the object
-	 * DataManager persists.
-	 */
-	private bindFromMaster(): void {
-		const parsed = this.master.games as Partial<GamesData> | undefined;
-		if (parsed && typeof parsed === 'object') {
-			this.data = {
-				games: Array.isArray(parsed.games) ? parsed.games : [],
-				groups: Array.isArray(parsed.groups) ? parsed.groups : [],
-				settings: { ...defaultGamesSettings(), ...(parsed.settings ?? {}) },
-			};
-		} else {
-			this.data = this.emptyData();
-		}
-		this.master.games = this.data;
-	}
-
-	async load(): Promise<void> {
-		this.bindFromMaster();
-		const changed = this.migrate();
-		if (changed) {
-			await this.saveOnly();
-		}
+	/** After index.build() and shared.load(): follows index and base changes, reconciles Upcoming. */
+	async init(): Promise<void> {
+		this.index.onChange((ids) => {
+			let touched = false;
+			for (const id of ids) {
+				if (!id.startsWith(GAMES_FOLDER_PREFIX)) continue;
+				touched = true;
+				if (!this.dirty.has(id)) this.views.delete(id);
+			}
+			if (touched) this.notifyListeners();
+		});
+		this.shared.onChange(() => {
+			this.settingsCache = null;
+			this.notifyListeners();
+		});
 		// additive reconcile: every future-dated game gets an Upcoming entry. Never removes, so
 		// manually-scheduled entries survive reloads.
 		const dm = this.plugin.dataManager;
 		if (dm) {
-			for (const g of this.data.games) if (isReleaseDateFuture(g.releaseDate)) await dm.autoAddGameToUpcoming(g);
+			for (const g of this.getGames()) if (isReleaseDateFuture(g.releaseDate)) await dm.autoAddGameToUpcoming(g);
 		}
+		this.notifyListeners();
 	}
 
-	/**
-	 * Mirrors the watchlist auto-add: a game with a future release date joins the shared Upcoming
-	 * tracker and leaves once the date passes or is cleared.
-	 */
+	/** Re-reads the shared settings (backup restore) and refreshes listeners. */
+	async load(): Promise<void> {
+		await this.shared.load();
+		this.settingsCache = null;
+		this.views.clear();
+		this.notifyListeners();
+	}
+
 	private async syncUpcoming(game: Game): Promise<void> {
 		const dm = this.plugin.dataManager;
 		if (!dm) return;
-		if (isReleaseDateFuture(game.releaseDate)) {
-			await dm.autoAddGameToUpcoming(game);
-		} else {
-			await dm.removeGameAirtimeEntries(game.id);
-		}
-	}
-
-	/** Ensures every record has the full set of fields with sensible defaults. */
-	private migrate(): boolean {
-		let changed = false;
-
-		const s = this.data.settings;
-		if (!Array.isArray(s.statuses) || s.statuses.length === 0) {
-			s.statuses = defaultGamesSettings().statuses;
-			changed = true;
-		}
-		if (!Array.isArray(s.types) || s.types.length === 0) {
-			s.types = defaultGamesSettings().types;
-			changed = true;
-		}
-		if (!Array.isArray(s.platforms)) {
-			s.platforms = defaultGamesSettings().platforms;
-			changed = true;
-		} else {
-			// platforms became coloured TagDefinitions (Settings → Customize → Games); older installs stored
-			// plain name strings — convert in place, reusing the default colour for names we ship.
-			// `Game.platforms` stores names, so no game record needs touching.
-			const defaults = defaultGamesSettings().platforms;
-			const upgraded = s.platforms.map((p): TagDefinition => {
-				if (typeof p === 'string') {
-					return { name: p, color: defaults.find((d) => d.name === p)?.color ?? '#888780' };
-				}
-				return p;
-			});
-			if (upgraded.some((p, i) => p !== s.platforms[i])) {
-				s.platforms = upgraded;
-				changed = true;
-			}
-		}
-
-		// one-time: 'Wishlist' stopped being a status and became the `wishlist` flag, freeing its slot for
-		// the manual TBA status. Gated on the old status still being present, so a user-deleted TBA is not
-		// re-added.
-		const wishlistIdx = s.statuses.findIndex((st) => st.name === 'Wishlist');
-		if (wishlistIdx !== -1) {
-			for (const g of this.data.games) {
-				if (g.status === 'Wishlist') {
-					g.wishlist = true;
-					g.status = s.defaultStatus || 'Not started';
-				}
-			}
-			if (s.statuses.some((st) => st.name === GAME_TBA_STATUS)) {
-				s.statuses.splice(wishlistIdx, 1);
-			} else {
-				s.statuses[wishlistIdx] = { name: GAME_TBA_STATUS, color: '#EAB308' };
-			}
-			if (s.defaultStatus === 'Wishlist') s.defaultStatus = 'Not started';
-			// a stored "exclude Wishlist" would otherwise linger forever as an active filter with no checkbox
-			// left to clear it
-			const preset = s.savedFilterPreset;
-			if (preset) {
-				preset.statusExclude = preset.statusExclude.filter((n) => n !== 'Wishlist');
-			}
-			const live = this.plugin.settings?.gamesFilters;
-			if (live?.statusExclude?.includes('Wishlist')) {
-				live.statusExclude = live.statusExclude.filter((n) => n !== 'Wishlist');
-				void this.plugin.saveSettings();
-			}
-			changed = true;
-		}
-
-		for (const g of this.data.games) {
-			if (typeof g.developer !== 'string') { g.developer = ''; changed = true; }
-			if (typeof g.publisher !== 'string') { g.publisher = ''; changed = true; }
-			if (typeof g.type !== 'string') { g.type = ''; changed = true; }
-			if (typeof g.priority !== 'string') { g.priority = ''; changed = true; }
-			if (typeof g.favorite !== 'boolean') { g.favorite = false; changed = true; }
-			// set true just above for games carrying the retired 'Wishlist' status
-			if (typeof g.wishlist !== 'boolean') { g.wishlist = false; changed = true; }
-			if (typeof g.rating !== 'number') { g.rating = 0; changed = true; }
-			if (typeof g.progress !== 'number') { g.progress = 0; changed = true; }
-			// playtime used to be a freeform string ("42h 30m"); it is minutes now so it can be sorted and
-			// totalled. Parse the old value once, then drop it.
-			const legacy = g as Game & { playtime?: unknown };
-			if (typeof g.playtimeMinutes !== 'number') {
-				g.playtimeMinutes = typeof legacy.playtime === 'string'
-					? parsePlaytimeInput(legacy.playtime)
-					: 0;
-				changed = true;
-			}
-			if (legacy.playtime !== undefined) { delete legacy.playtime; changed = true; }
-			if (typeof g.achievementsEarned !== 'number') { g.achievementsEarned = 0; changed = true; }
-			if (typeof g.achievementsTotal !== 'number') { g.achievementsTotal = 0; changed = true; }
-			if (!Array.isArray(g.platforms)) { g.platforms = []; changed = true; }
-			if (typeof g.singleplayer !== 'boolean') { g.singleplayer = false; changed = true; }
-			// games stored before Co-op existed backfill false — the old two-mode data can't tell co-op apart
-			// from generic multiplayer
-			if (typeof g.coop !== 'boolean') { g.coop = false; changed = true; }
-			if (typeof g.multiplayer !== 'boolean') { g.multiplayer = false; changed = true; }
-			if (typeof g.storeUrl !== 'string') { g.storeUrl = ''; changed = true; }
-			if (typeof g.coverUrl !== 'string') { g.coverUrl = ''; changed = true; }
-			// games added before the API-id fields backfill empty and resolve their source on the first
-			// title-based cover lookup
-			if (g.apiSource !== 'rawg' && g.apiSource !== 'igdb') { g.apiSource = ''; changed = true; }
-			if (typeof g.apiId !== 'string') { g.apiId = ''; changed = true; }
-			// Steam link + last-played backfill empty; the first sync fills them in, seeding steamAppId from
-			// storeUrl where one is stored
-			if (typeof g.steamAppId !== 'string') { g.steamAppId = ''; changed = true; }
-			if (g.lastPlayed !== null && typeof g.lastPlayed !== 'string') { g.lastPlayed = null; changed = true; }
-			if (typeof g.externalLink !== 'string') { g.externalLink = ''; changed = true; }
-			if (typeof g.vaultPage !== 'string') { g.vaultPage = ''; changed = true; }
-			if (g.releaseDate === undefined) { g.releaseDate = null; changed = true; }
-			if (g.dateStarted === undefined) { g.dateStarted = null; changed = true; }
-			if (g.dateFinished === undefined) { g.dateFinished = null; changed = true; }
-			if (!g.dateAdded) { g.dateAdded = new Date().toISOString(); changed = true; }
-			if (!g.dateModified) { g.dateModified = g.dateAdded; changed = true; }
-		}
-
-		if (!Array.isArray(this.data.groups)) {
-			this.data.groups = [];
-			changed = true;
-		}
-		for (const group of this.data.groups) {
-			if (!Array.isArray(group.gameIds)) { group.gameIds = []; changed = true; }
-			if (!group.dateAdded) { group.dateAdded = new Date().toISOString(); changed = true; }
-		}
-
-		// reconcile the auto "To be released" status against each release date
-		for (const g of this.data.games) if (this.applyReleaseStatus(g)) changed = true;
-
-		return changed;
+		if (isReleaseDateFuture(game.releaseDate)) await dm.autoAddGameToUpcoming(game);
+		else await dm.removeGameAirtimeEntries(game.id);
 	}
 
 	/**
@@ -259,96 +154,70 @@ export class GameDataManager {
 				return true;
 			}
 		} else if (game.status === GAME_AUTO_STATUS) {
-			game.status = this.data.settings.defaultStatus || 'Not started';
+			game.status = this.getSettings().defaultStatus || 'Not started';
 			return true;
 		}
 		return false;
 	}
 
-	getData(): GamesData {
-		return this.data;
-	}
+	// Settings: vocabulary in the shared base (`games:` block), layout and filters in data.json
 
 	getSettings(): GamesSettings {
-		return this.data.settings;
+		if (this.settingsCache) return this.settingsCache;
+		const defaults = defaultGamesSettings();
+		const stored = { ...this.local.data.games, ...(this.shared.get().settings.games as object | undefined) } as Partial<GamesSettings>;
+		const merged: GamesSettings = { ...defaults, ...stored, defaultFolder: defaults.defaultFolder };
+		if (!Array.isArray(merged.statuses) || merged.statuses.length === 0) merged.statuses = defaults.statuses;
+		if (!Array.isArray(merged.types) || merged.types.length === 0) merged.types = defaults.types;
+		if (!Array.isArray(merged.platforms)) merged.platforms = defaults.platforms;
+		this.settingsCache = merged;
+		return merged;
+	}
+
+	private async writeSettings(settings: GamesSettings): Promise<void> {
+		const { shared, local } = splitNested('games', settings as unknown as Record<string, unknown>);
+		this.local.data.games = local;
+		this.local.queueSave();
+		await this.shared.update({ games: shared });
 	}
 
 	async updateSettings(patch: Partial<GamesSettings>): Promise<void> {
-		this.data.settings = { ...this.data.settings, ...patch };
-		await this.save();
+		this.settingsCache = { ...this.getSettings(), ...patch };
+		await this.writeSettings(this.settingsCache);
+		this.notifyListeners();
 	}
 
 	/**
-	 * Persist without notifying — for state the rendering tab wrote itself (rows layout, daily picks):
-	 * it re-renders on its own, and a notify here would double the render.
+	 * Persist without notifying — for state the rendering tab wrote itself (rows layout): it
+	 * re-renders on its own, and a notify here would double the render.
 	 */
 	persistQuiet(): void {
-		void this.saveOnly();
+		void this.writeSettings(this.getSettings());
 	}
 
-	// Daily "Recommended" picks (the Watchlist RecommendedDaily pattern)
+	getSavedFilterPreset(): GamesSavedFilterPreset | null {
+		return this.getSettings().savedFilterPreset ?? null;
+	}
+
+	async setSavedFilterPreset(preset: GamesSavedFilterPreset | null): Promise<void> {
+		this.getSettings().savedFilterPreset = preset;
+		await this.writeSettings(this.getSettings());
+	}
+
+	// Daily "Recommended" picks (device-local)
 
 	getRecommendedDaily(): RecommendedDaily {
-		return this.data.recommendedDaily ?? { date: '', ids: [] };
+		return this.gamesUi().gamesRecommendedDaily ?? { date: '', ids: [] };
 	}
 
 	/** Silent — the Rows view that rolled the picks renders them itself. */
 	setRecommendedDaily(rec: RecommendedDaily): void {
-		this.data.recommendedDaily = rec;
-		void this.saveOnly();
+		this.gamesUi().gamesRecommendedDaily = rec;
+		this.local.queueSave();
 	}
 
-	// Saved filter preset (the Watchlist pattern)
-
-	getSavedFilterPreset(): GamesSavedFilterPreset | null {
-		return this.data.settings.savedFilterPreset ?? null;
-	}
-
-	async setSavedFilterPreset(preset: GamesSavedFilterPreset | null): Promise<void> {
-		this.data.settings.savedFilterPreset = preset;
-		await this.saveOnly();
-	}
-
-	// Persistence
-
-	private async saveOnly(): Promise<void> {
-		try {
-			// keep the master reference pointed at our current data (an external sync reload may have replaced
-			// the master object), then persist all of data.json
-			this.master.games = this.data;
-			await this.plugin.dataManager.persist();
-		} catch (e) {
-			console.warn('[WL] GameDataManager.save failed:', e);
-		}
-	}
-
-	/** Re-bind to a freshly synced data.json (DataManager's 'raw' watcher), migrate, refresh the tab. */
-	async adoptExternalChange(): Promise<void> {
-		this.bindFromMaster();
-		const changed = this.migrate();
-		if (changed) await this.saveOnly();
-		this.notifyListeners();
-	}
-
-	private async save(): Promise<void> {
-		await this.saveOnly();
-		this.notifyListeners();
-	}
-
-	/** Persist + notify after a run of silent mutations (the Reading pattern). */
-	async saveAndNotify(): Promise<void> {
-		await this.save();
-	}
-
-	/**
-	 * Overwrite the entire games dataset from a backup, then reload through load() (migration) and
-	 * notify listeners.
-	 */
-	async restore(data: GamesData): Promise<void> {
-		this.master.games = data;
-		await this.plugin.dataManager.persist();
-		await this.load();
-		this.notifyListeners();
+	private gamesUi(): { gamesRecommendedDaily?: RecommendedDaily } {
+		return this.local.data.ui as { gamesRecommendedDaily?: RecommendedDaily };
 	}
 
 	// Listeners
@@ -362,138 +231,159 @@ export class GameDataManager {
 	}
 
 	private notifyListeners(): void {
-		for (const listener of this.changeListeners) {
-			listener();
+		for (const listener of this.changeListeners) listener();
+	}
+
+	/** Writes every pending silent edit and in-place mutation of a handed-out copy, then notifies. */
+	async saveAndNotify(): Promise<void> {
+		await this.flushViews();
+		this.notifyListeners();
+	}
+
+	private async flushViews(): Promise<void> {
+		const ids = new Set(this.dirty);
+		for (const [id, slot] of this.views) {
+			if (!sameJson(encodeGame(slot.view), encodeGame(getBaseline(slot.view) ?? slot.base))) ids.add(id);
+		}
+		this.dirty.clear();
+		for (const id of ids) {
+			const view = this.views.get(id)?.view;
+			if (view) await this.writeGame(view);
+			else new Notice(`An edit of "${id}" was not saved: its note can no longer be read.`);
 		}
 	}
 
-	private coverSaveTimer: number | null = null;
-	private readonly COVER_SAVE_DEBOUNCE_MS = 5000;
-
-	/**
-	 * Silent cover URL update for the lazy Cards re-fetch: memory now, debounced disk save (5s), no
-	 * notify — the card that triggered the fetch swaps its own <img>, so the grid is not rebuilt and
-	 * the scroll position survives.
-	 */
-	updateCoverUrl(id: string, url: string): void {
-		const game = this.getGame(id);
-		if (!game) return;
-		game.coverUrl = url;
-		if (this.coverSaveTimer !== null) return;
-		this.coverSaveTimer = window.setTimeout(() => {
-			this.coverSaveTimer = null;
-			void this.saveOnly();
-		}, this.COVER_SAVE_DEBOUNCE_MS);
+	/** Current dataset as a backup snapshot. */
+	exportSnapshot(): GamesData {
+		return { games: this.getGames(), groups: this.getGroups(), settings: this.getSettings() };
 	}
 
-	/**
-	 * Silent cover update that also stores the API source + id a title-based lookup resolved, so later
-	 * re-fetches take the cheap id path. Same debounced, no-notify contract.
-	 */
-	updateCoverAndSource(id: string, url: string, source: 'rawg' | 'igdb', apiId: string): void {
-		const game = this.getGame(id);
-		if (!game) return;
-		game.apiSource = source;
-		game.apiId = apiId;
-		this.updateCoverUrl(id, url);
-	}
-
-	/** Flush a pending debounced cover save now (e.g. on plugin unload). */
-	flushCoverSave(): void {
-		if (this.coverSaveTimer !== null) {
-			window.clearTimeout(this.coverSaveTimer);
-			this.coverSaveTimer = null;
-			void this.saveOnly();
+	/** Replaces settings and upserts every game note from a backup snapshot. */
+	async restore(data: GamesData): Promise<void> {
+		await this.updateSettings(data.settings);
+		const byTitle = new Map(this.getGames().map((g) => [g.title, g]));
+		for (const game of data.games) {
+			const groups = data.groups.filter((gr) => gr.gameIds.includes(game.id)).map((gr) => gr.name);
+			const existing = byTitle.get(game.title);
+			const next = { ...game, groups: groups.length > 0 ? groups : game.groups };
+			if (!existing) await this.createNote({ ...next });
+			else {
+				// existing notes stay as they are; only groups the note lacks are added
+				const missing = groups.filter((name) => !existing.groups?.includes(name));
+				if (missing.length > 0) await this.writeGame({ ...existing, groups: [...(existing.groups ?? []), ...missing] });
+			}
 		}
+		this.views.clear();
+		this.notifyListeners();
 	}
 
 	// Games CRUD
 
 	getGames(): Game[] {
-		return this.data.games;
+		return this.index.games().map((g) => this.viewOf(g));
 	}
 
 	getGame(id: string): Game | undefined {
-		return this.data.games.find((g) => g.id === id);
+		const e = this.index.get(id);
+		return e?.kind === 'game' ? this.viewOf(e.entry) : undefined;
+	}
+
+	private normalized(src: Game): Game {
+		const g = structuredClone(src);
+		if (!g.status) g.status = this.getSettings().defaultStatus || 'Not started';
+		g.vaultPage = this.layout().pathFromId(g.id);
+		return g;
+	}
+
+	private viewOf(src: Game): Game {
+		const slot = this.views.get(src.id);
+		if (slot && slot.src === src) return slot.view;
+		// a pending silent edit keeps its copy until written
+		if (slot && this.dirty.has(src.id)) return slot.view;
+		const base = this.normalized(src);
+		const view = structuredClone(base);
+		this.views.set(src.id, { src, base, view });
+		setBaseline(view, base);
+		return view;
 	}
 
 	async addGame(game: Game): Promise<void> {
 		this.applyReleaseStatus(game);
-		this.data.games.push(game);
-		await this.save();
+		await this.createNote(game);
+		this.notifyListeners();
 		await this.syncUpcoming(game);
-		try { await this.writeGameNote(game); } catch (e) { console.warn('[WL] writeGameNote failed:', e); }
 		void this.historyManager?.log(
 			`${game.title} (Game) was added`,
-			{ source: 'Games', action: 'added', titleName: game.title },
+			{ source: 'Games', action: 'added', titleName: game.title, titleId: game.id },
 		);
 	}
 
 	async updateGame(updated: Game): Promise<void> {
 		updated.dateModified = new Date().toISOString();
 		this.applyReleaseStatus(updated);
-		const idx = this.data.games.findIndex((g) => g.id === updated.id);
-		if (idx >= 0) {
-			const old = this.data.games[idx]!;
-			// favorite arrives as a whole-object replace — stamp/clear off the transition. Drives the
-			// Favorites shelf order (newest first).
-			if (old.favorite !== updated.favorite) {
-				if (updated.favorite) updated.dateFavorited = new Date().toISOString();
-				else delete updated.dateFavorited;
-			}
-			if (old.status !== updated.status) {
-				const act = updated.status === GAME_FINISHED_STATUS ? 'completed' as const : 'status' as const;
-				// mirror the watch behavior: stamp today's finish date on the transition to Finished
-				if (updated.status === GAME_FINISHED_STATUS && this.plugin.settings.setFinishDateAutomatically && !updated.dateFinished) {
-					updated.dateFinished = todayIso();
-				}
-				void this.historyManager?.log(
-					`${updated.title} (Game) status changed to ${updated.status}`,
-					{ source: 'Games', action: act, titleName: updated.title },
-				);
-			}
-			if (old.rating !== updated.rating) {
-				void this.historyManager?.log(
-					`${updated.title} (Game) Rating → ${updated.rating}/5`,
-					{ source: 'Games', action: 'rating', titleName: updated.title },
-				);
-			}
-			this.data.games[idx] = updated;
-			await this.save();
-			// reconcile Upcoming only on a release-date change (never on rating/status/progress edits), so
-			// manually-scheduled entries survive
-			if (old.releaseDate !== updated.releaseDate) await this.syncUpcoming(updated);
-			try { await this.writeGameNote(updated); } catch (e) { console.warn('[WL] writeGameNote failed:', e); }
+		const slot = this.views.get(updated.id);
+		const indexed = this.index.get(updated.id);
+		const old = getBaseline(updated) ?? slot?.base ?? (indexed?.kind === 'game' ? this.normalized(indexed.entry) : undefined);
+		if (!old) return;
+		// favorite arrives as a whole-object replace — stamp/clear off the transition. Drives the
+		// Favorites shelf order (newest first).
+		if (old.favorite !== updated.favorite) {
+			if (updated.favorite) updated.dateFavorited = new Date().toISOString();
+			else delete updated.dateFavorited;
 		}
+		if (old.status !== updated.status) {
+			const act = updated.status === GAME_FINISHED_STATUS ? 'completed' as const : 'status' as const;
+			// mirror the watch behavior: stamp today's finish date on the transition to Finished
+			if (updated.status === GAME_FINISHED_STATUS && this.plugin.settings.setFinishDateAutomatically && !updated.dateFinished) {
+				updated.dateFinished = todayIso();
+			}
+			void this.historyManager?.log(
+				`${updated.title} (Game) status changed to ${updated.status}`,
+				{ source: 'Games', action: act, titleName: updated.title, titleId: updated.id },
+			);
+		}
+		if (old.rating !== updated.rating) {
+			void this.historyManager?.log(
+				`${updated.title} (Game) Rating → ${updated.rating}/5`,
+				{ source: 'Games', action: 'rating', titleName: updated.title, titleId: updated.id },
+			);
+		}
+		const oldId = updated.id;
+		this.dirty.delete(oldId);
+		await this.writeGame(updated);
+		this.notifyListeners();
+		// reconcile Upcoming only on a release-date change (never on rating/status/progress edits), so
+		// manually-scheduled entries survive
+		if (old.releaseDate !== updated.releaseDate) await this.syncUpcoming(updated);
 	}
 
 	updateGameSilent(updated: Game): void {
 		updated.dateModified = new Date().toISOString();
 		this.applyReleaseStatus(updated);
-		const idx = this.data.games.findIndex((g) => g.id === updated.id);
-		if (idx >= 0) {
-			this.data.games[idx] = updated;
-		}
+		const slot = this.views.get(updated.id);
+		const indexed = this.index.get(updated.id);
+		if (!slot && indexed?.kind !== 'game') return;
+		const src = slot?.src ?? (indexed!.entry as Game);
+		const base = getBaseline(updated) ?? slot?.base ?? this.normalized(src);
+		this.views.set(updated.id, { src, base, view: updated });
+		setBaseline(updated, base);
+		this.dirty.add(updated.id);
 	}
 
 	async removeGame(id: string): Promise<void> {
 		const game = this.getGame(id);
-		this.data.games = this.data.games.filter((g) => g.id !== id);
-		for (const group of this.data.groups) {
-			group.gameIds = group.gameIds.filter((gid) => gid !== id);
-		}
-		await this.save();
+		await this.deleteNote(id);
 		await this.plugin.dataManager?.removeGameAirtimeEntries(id);
+		this.notifyListeners();
 		if (game) {
 			void this.historyManager?.log(
 				`${game.title} (Game) was deleted`,
-				{ source: 'Games', action: 'deleted', titleName: game.title },
+				{ source: 'Games', action: 'deleted', titleName: game.title, titleId: game.id },
 			);
-			try { await this.deleteGameNote(game); } catch (e) { console.warn('[WL] deleteGameNote failed:', e); }
 		}
 	}
 
-	/** Batch delete with chunked note-file removal (the Reading pattern). */
+	/** Batch delete with chunked note removal (the Reading pattern). */
 	async removeGamesBatch(ids: string[]): Promise<void> {
 		const CHUNK = 10;
 		const toDelete: Game[] = [];
@@ -501,39 +391,30 @@ export class GameDataManager {
 			const game = this.getGame(id);
 			if (game) toDelete.push(game);
 		}
-		this.data.games = this.data.games.filter((g) => !ids.includes(g.id));
-		for (const group of this.data.groups) {
-			group.gameIds = group.gameIds.filter((gid) => !ids.includes(gid));
+		for (let i = 0; i < toDelete.length; i += CHUNK) {
+			await Promise.all(toDelete.slice(i, i + CHUNK).map((g) => this.deleteNote(g.id).catch(() => {})));
 		}
-		await this.save();
 		for (const id of ids) await this.plugin.dataManager?.removeGameAirtimeEntries(id);
+		this.notifyListeners();
 		for (const game of toDelete) {
 			void this.historyManager?.log(
 				`${game.title} (Game) was deleted`,
-				{ source: 'Games', action: 'deleted', titleName: game.title },
+				{ source: 'Games', action: 'deleted', titleName: game.title, titleId: game.id },
 			);
-		}
-		for (let i = 0; i < toDelete.length; i += CHUNK) {
-			const chunk = toDelete.slice(i, i + CHUNK);
-			await Promise.all(chunk.map((g) => this.deleteGameNote(g).catch(() => {})));
 		}
 	}
 
 	/**
 	 * Writes a batch of Steam sync results: playtime, achievements, last-played and the steamAppId
 	 * link. Steam is authoritative for those, so they overwrite unconditionally — everything else on
-	 * the game (status, rating, priority, favorite, wishlist, notes) is left alone.
+	 * the game is left alone.
 	 *
 	 * Deliberately no dateModified stamp: a sync is not a user edit, and stamping it would shove the
 	 * whole library to the top of every recently-modified ordering at once. `lastPlayed` carries the
-	 * real signal.
-	 *
-	 * One save + notify for the whole batch; note frontmatter is rewritten in chunks.
+	 * real signal. One notify for the whole batch.
 	 */
 	async applySteamSync(updates: SteamSyncUpdate[]): Promise<number> {
-		const CHUNK = 10;
 		const touched: Game[] = [];
-
 		for (const u of updates) {
 			const game = this.getGame(u.gameId);
 			if (!game) continue;
@@ -550,76 +431,129 @@ export class GameDataManager {
 			}
 			touched.push(game);
 		}
-
 		if (touched.length === 0) return 0;
-		await this.save();
-		for (let i = 0; i < touched.length; i += CHUNK) {
-			const chunk = touched.slice(i, i + CHUNK);
-			await Promise.all(chunk.map((g) => this.writeGameNote(g).catch(() => {})));
-		}
+		for (const g of touched) await this.writeGame(g).catch((e) => console.warn('[WL] game sync write failed:', e));
+		this.notifyListeners();
 		return touched.length;
 	}
 
-	// Group CRUD (the WatchLogGroup pattern)
+	// Cover updates
+
+	/**
+	 * Silent cover URL update for the lazy Cards re-fetch: written to the note's `coverUrl` only when
+	 * that is empty (E12), no notify — the card that triggered the fetch swaps its own <img>, so the
+	 * grid is not rebuilt and the scroll position survives.
+	 */
+	async updateCoverUrl(id: string, url: string): Promise<void> {
+		const game = this.getGame(id);
+		if (!game || !url || game.coverUrl) return;
+		if (this.dirty.has(id)) {
+			// the pending write carries it
+			game.coverUrl = url;
+			return;
+		}
+		const file = this.fileOf(id);
+		if (!file) return;
+		await this.processFrontMatter(file, game, (raw) => {
+			const own = typeof raw.coverUrl === 'string' ? raw.coverUrl.trim() : '';
+			if (own) {
+				game.coverUrl = own;
+				return;
+			}
+			raw.coverUrl = url;
+			game.coverUrl = url;
+		}, true);
+	}
+
+	/**
+	 * Cover found by a title-based lookup. The resolved API source + id are identity data of the note,
+	 * which a background fetch does not write; only the cover is kept.
+	 */
+	updateCoverAndSource(id: string, url: string, _source: 'rawg' | 'igdb', _apiId: string): Promise<void> {
+		return this.updateCoverUrl(id, url);
+	}
+
+	/** Writes pending silent edits now, without notifying (plugin unload). */
+	async flushPending(): Promise<void> {
+		await this.flushViews();
+	}
+
+	// Groups — derived from the `groups` property of the game notes (id = name); an empty group does not exist.
 
 	getGroups(): GameGroup[] {
-		return this.data.groups ?? [];
+		const byName = new Map<string, GameGroup>();
+		for (const game of this.getGames()) {
+			for (const name of game.groups ?? []) {
+				const group = byName.get(name) ?? { id: name, name, gameIds: [], dateAdded: game.dateAdded };
+				group.gameIds.push(game.id);
+				if (game.dateAdded && game.dateAdded < group.dateAdded) group.dateAdded = game.dateAdded;
+				byName.set(name, group);
+			}
+		}
+		return [...byName.values()];
 	}
 
 	getGroup(id: string): GameGroup | undefined {
-		return (this.data.groups ?? []).find((g) => g.id === id);
+		return this.getGroups().find((g) => g.id === id);
 	}
 
+	/** Group membership is written to the members; a group without members is not stored. */
 	async addGroup(group: GameGroup): Promise<void> {
-		this.data.groups.push(group);
-		await this.save();
+		group.id = group.name;
+		await this.setMembership(group.name, group.name, new Set(group.gameIds), new Set());
+		this.notifyListeners();
 	}
 
 	async updateGroup(updated: GameGroup): Promise<void> {
-		const idx = this.data.groups.findIndex((g) => g.id === updated.id);
-		if (idx >= 0) {
-			this.data.groups[idx] = updated;
-			await this.save();
-		}
+		const existing = this.getGroup(updated.id);
+		const oldName = existing?.name ?? updated.id;
+		updated.id = updated.name;
+		await this.setMembership(oldName, updated.name, new Set(updated.gameIds), new Set(existing?.gameIds ?? []));
+		this.notifyListeners();
 	}
 
-	/** Deletes the group only — its games return to the main grid untouched. */
+	/** Deletes the group only — its games stay, without the name. */
 	async removeGroup(id: string): Promise<void> {
-		this.data.groups = this.data.groups.filter((g) => g.id !== id);
-		await this.save();
+		const existing = this.getGroup(id);
+		if (!existing) return;
+		await this.setMembership(existing.name, existing.name, new Set(), new Set(existing.gameIds));
+		this.notifyListeners();
 	}
 
 	async addGameToGroup(groupId: string, gameId: string): Promise<void> {
 		const group = this.getGroup(groupId);
-		if (!group) return;
-		if (!group.gameIds.includes(gameId)) {
-			group.gameIds.push(gameId);
-			await this.updateGroup(group);
+		if (!group || group.gameIds.includes(gameId)) return;
+		await this.setMembership(group.name, group.name, new Set([...group.gameIds, gameId]), new Set(group.gameIds));
+	}
+
+	/** Rewrites `groups` on every game whose membership or group name changed. */
+	private async setMembership(oldName: string, newName: string, members: Set<string>, previous: Set<string>): Promise<void> {
+		for (const id of new Set([...members, ...previous])) {
+			const game = this.getGame(id);
+			if (!game) continue;
+			const groups = (game.groups ?? []).filter((n) => n !== oldName && n !== newName);
+			if (members.has(id)) groups.push(newName);
+			if (sameJson(groups, game.groups ?? [])) continue;
+			game.groups = groups;
+			await this.writeGame(game);
 		}
 	}
 
 	getGroupedGameIds(): Set<string> {
 		const ids = new Set<string>();
-		for (const group of (this.data.groups ?? [])) {
-			for (const id of group.gameIds) {
-				ids.add(id);
-			}
-		}
+		for (const game of this.getGames()) if (game.groups?.length) ids.add(game.id);
 		return ids;
 	}
 
+	/** Group id = name. */
 	generateGroupId(name: string): string {
-		const base = 'group-' + (slugify(name) || 'unnamed');
-		const existing = new Set((this.data.groups ?? []).map((g) => g.id));
-		if (!existing.has(base)) return base;
-		let counter = 2;
-		while (existing.has(`${base}-${counter}`)) counter++;
-		return `${base}-${counter}`;
+		return name.trim() || 'unnamed';
 	}
 
+	/** Provisional id for a game being built in the UI; the real id is the note path, assigned on create. */
 	generateGameId(title: string): string {
 		const base = slugify(title) || 'game';
-		const existing = new Set(this.data.games.map((g) => g.id));
+		const existing = new Set(this.getGames().map((g) => g.id));
 		if (!existing.has(base)) return base;
 		let counter = 2;
 		while (existing.has(`${base}-${counter}`)) counter++;
@@ -628,17 +562,28 @@ export class GameDataManager {
 
 	// Game note files
 
-	private gamesFolder(): string {
-		return normalizePath(this.data.settings.defaultFolder || 'WatchLog/Games');
+	/** Path of the note a game with this title would get. */
+	noteFilePath(title: string): string {
+		return this.layout().notePath('game', title);
 	}
 
-	noteFilePath(title: string): string {
-		const safe = sanitizeFilename(title) || 'game';
-		return normalizePath(`${this.gamesFolder()}/${safe}.md`);
+	private fileOf(id: string): TFile | null {
+		const f = this.plugin.app.vault.getAbstractFileByPath(this.layout().pathFromId(id));
+		return f instanceof TFile ? f : null;
+	}
+
+	private freePath(path: string): string {
+		const { vault } = this.plugin.app;
+		if (!vault.getAbstractFileByPath(path)) return path;
+		const base = path.slice(0, -3);
+		let n = 2;
+		while (vault.getAbstractFileByPath(`${base} ${n}.md`)) n++;
+		return `${base} ${n}.md`;
 	}
 
 	private async ensureFolder(path: string): Promise<void> {
 		const normalized = normalizePath(path);
+		if (!normalized || normalized === '/') return;
 		if (!this.plugin.app.vault.getAbstractFileByPath(normalized)) {
 			try {
 				await this.plugin.app.vault.createFolder(normalized);
@@ -648,189 +593,189 @@ export class GameDataManager {
 		}
 	}
 
-	private buildFrontmatter(game: Game): string {
-		const lines: string[] = ['---'];
-		lines.push(`title: ${yamlEscape(sanitizeFilename(game.title))}`);
-		lines.push(`developer: ${yamlEscape(game.developer ?? '')}`);
-		lines.push(`publisher: ${yamlEscape(game.publisher ?? '')}`);
-		// `genre` carries the in-app "type" field; the `type:` key stays the cross-note kind marker
-		// (book / manga / game), like the Reading notes
-		lines.push(`genre: ${yamlEscape(game.type ?? '')}`);
-		lines.push(`status: ${yamlEscape(game.status)}`);
-		if (game.priority) lines.push(`priority: ${yamlEscape(game.priority)}`);
-		if (game.favorite) lines.push('favorite: true');
-		if (game.wishlist) lines.push('wishlist: true');
-		lines.push(`rating: ${game.rating | 0}`);
-		lines.push(`progress: ${game.progress | 0}`);
-		if (game.playtimeMinutes > 0) lines.push(`playtime: ${formatTime(game.playtimeMinutes)}`);
-		if (game.achievementsTotal > 0) {
-			lines.push(`achievements: ${game.achievementsEarned}/${game.achievementsTotal}`);
-		}
-		if (game.platforms.length > 0) {
-			lines.push('platforms:');
-			for (const p of game.platforms) lines.push(`  - ${yamlEscape(p)}`);
-		}
-		if (game.singleplayer) lines.push('singleplayer: true');
-		if (game.coop) lines.push('coop: true');
-		if (game.multiplayer) lines.push('multiplayer: true');
-		lines.push(`dateStarted: ${game.dateStarted ?? 'null'}`);
-		lines.push(`dateFinished: ${game.dateFinished ?? 'null'}`);
-		lines.push(`releaseDate: ${game.releaseDate ?? 'null'}`);
-		lines.push(`dateAdded: ${yamlEscape(game.dateAdded)}`);
-		lines.push(`dateModified: ${yamlEscape(game.dateModified)}`);
-		if (game.coverUrl) lines.push(`coverUrl: ${yamlEscape(game.coverUrl)}`);
-		if (game.storeUrl) lines.push(`storeUrl: ${yamlEscape(game.storeUrl)}`);
-		if (game.externalLink) lines.push(`externalLink: ${yamlEscape(game.externalLink)}`);
-		lines.push('type: game');
-		lines.push('---');
-		return lines.join('\n');
+	/** Frontmatter to store: the encoded game with the default status filled in. */
+	private encode(g: Game): Record<string, unknown> {
+		return encodeGame(g);
 	}
 
-	private buildInitialNoteContent(game: Game): string {
-		return `${this.buildFrontmatter(game)}\n\n## Notes\n`;
-	}
-
-	private rebuildWithFrontmatter(existing: string, frontmatter: string): string {
-		const fmMatch = existing.match(/^---\n[\s\S]*?\n---\n?/);
-		if (fmMatch) {
-			return frontmatter + '\n' + existing.slice(fmMatch[0].length);
+	/**
+	 * processFrontMatter, then the optimistic index update for `g` — inside the callback, so it lands
+	 * before the write's `changed` event can be seen. False (and a notice) on unreadable YAML.
+	 * `background` marks an automatic fill (no user write).
+	 */
+	private async processFrontMatter(file: TFile, g: Game, fn: (fm: Record<string, unknown>) => void, background = false): Promise<boolean> {
+		try {
+			await this.plugin.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+				fn(fm);
+				this.afterWrite(g, { ...fm }, background);
+			});
+			return true;
+		} catch (e) {
+			console.warn(`WatchLog: could not update frontmatter of ${file.path}`, e);
+			new Notice(`Could not update "${file.basename}": its frontmatter is not valid YAML.`);
+			return false;
 		}
-		// no frontmatter found — prepend it
-		return frontmatter + '\n\n' + existing;
 	}
 
-	private lastNotePathById = new Map<string, string>();
+	/** True when `g` was made from the stored state of its note (or nothing is stored yet). */
+	private basedOnStored(g: Game): boolean {
+		const current = this.index.get(g.id);
+		if (current?.kind !== 'game') return true;
+		const base = getBaseline(g) ?? this.views.get(g.id)?.base;
+		return !!base && sameStoredState(base, this.normalized(current.entry));
+	}
 
-	/** Writes (creates or updates) the note file. Preserves the body when it exists. */
-	async writeGameNote(game: Game): Promise<string> {
-		await this.ensureFolder(this.gamesFolder());
-		const filePath = this.noteFilePath(game.title);
-		const frontmatter = this.buildFrontmatter(game);
+	/**
+	 * Cache + optimistic index update after an own write. `g` becomes the UI's copy only when it was
+	 * made from the stored state; for a stale copy the next read builds a fresh one.
+	 */
+	private afterWrite(g: Game, fm: Record<string, unknown>, background = false): void {
+		const fresh = this.basedOnStored(g);
+		const stored = decodeGame(g.id, fm).entry;
+		this.index.applyLocal({ kind: 'game', entry: stored }, { background });
+		g.vaultPage = this.layout().pathFromId(g.id);
+		if (!fresh) return;
+		const base = this.normalized(stored);
+		this.views.set(g.id, { src: stored, base, view: g });
+		setBaseline(g, base);
+	}
 
-		// handle rename: trash the previous file if the path changed
-		const previousPath = this.lastNotePathById.get(game.id);
-		if (previousPath && previousPath !== filePath) {
-			const oldFile = this.plugin.app.vault.getAbstractFileByPath(previousPath);
-			if (oldFile instanceof TFile) {
-				try {
-					await this.plugin.app.fileManager.trashFile(oldFile);
-				} catch {
-					// best-effort
+	/** Creates the note for a new game; the game's id becomes the note path. */
+	private async createNote(game: Game): Promise<void> {
+		const layout = this.layout();
+		if (!game.status) game.status = this.getSettings().defaultStatus || 'Not started';
+		const path = this.freePath(layout.notePath('game', game.title));
+		await this.ensureFolder(path.slice(0, path.lastIndexOf('/')));
+		game.id = layout.idFromPath(path);
+		const fm = this.encode(game);
+		// index first, so the create event finds nothing new
+		this.afterWrite(game, fm);
+		try {
+			await this.plugin.app.vault.create(path, `---\n${stringifyYaml(fm)}---\n\n## Notes\n`);
+		} catch (e) {
+			this.index.removeLocal(game.id);
+			this.views.delete(game.id);
+			throw e;
+		}
+	}
+
+	/**
+	 * Writes a game to its note: renames the file on a title change, then sets only the frontmatter
+	 * keys whose encoded value differs from the stored state (so unreadable or foreign fields stay
+	 * untouched unless this edit changes exactly that field). Creates the note when missing.
+	 */
+	private async writeGame(g: Game): Promise<void> {
+		let file = this.fileOf(g.id);
+		if (!file) {
+			await this.createNote(g);
+			return;
+		}
+		const indexed = this.index.get(g.id);
+		const src = getBaseline(g) ?? this.views.get(g.id)?.base ?? (indexed?.kind === 'game' ? this.normalized(indexed.entry) : undefined);
+
+		if (src && g.title !== src.title) {
+			const target = this.layout().notePath('game', g.title);
+			if (target !== file.path) {
+				if (this.plugin.app.vault.getAbstractFileByPath(target)) {
+					new Notice(`"${target}" already exists; the note keeps its old file name.`);
+				} else {
+					const oldId = g.id;
+					await this.plugin.app.fileManager.renameFile(file, target);
+					this.index.removeLocal(oldId);
+					this.views.delete(oldId);
+					if (this.dirty.delete(oldId)) this.dirty.add(this.layout().idFromPath(target));
+					g.id = this.layout().idFromPath(target);
+					file = this.fileOf(g.id) ?? file;
 				}
 			}
 		}
 
-		const existing = this.plugin.app.vault.getAbstractFileByPath(filePath);
-		if (existing instanceof TFile) {
-			const current = await this.plugin.app.vault.read(existing);
-			const updated = this.rebuildWithFrontmatter(current, frontmatter);
-			if (updated !== current) {
-				await this.plugin.app.vault.modify(existing, updated);
-			}
-		} else {
-			await this.plugin.app.vault.create(filePath, this.buildInitialNoteContent(game));
+		const before = src ? this.encode(src) : {};
+		const after = this.encode(g);
+		const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+			.filter((k) => !sameJson(before[k], after[k]));
+		if (changed.length > 0) {
+			const ok = await this.processFrontMatter(file, g, (raw) => {
+				for (const key of changed) {
+					if (key in after) raw[key] = after[key];
+					else delete raw[key];
+				}
+			});
+			// a stale copy (not taken as the view) holds what the note holds for every field it knows
+			if (ok && this.views.get(g.id)?.view !== g) setBaseline(g, structuredClone(g));
+		} else if (this.basedOnStored(g)) {
+			const slot = this.views.get(g.id);
+			if (slot) slot.view = g;
 		}
-		this.lastNotePathById.set(game.id, filePath);
-		return filePath;
+	}
+
+	private async deleteNote(id: string): Promise<void> {
+		const file = this.fileOf(id);
+		if (file) await this.plugin.app.fileManager.trashFile(file);
+		this.index.removeLocal(id);
+		this.views.delete(id);
+		this.dirty.delete(id);
 	}
 
 	async ensureGameNote(game: Game): Promise<string> {
-		const filePath = this.noteFilePath(game.title);
-		const existing = this.plugin.app.vault.getAbstractFileByPath(filePath);
-		if (existing instanceof TFile) {
-			this.lastNotePathById.set(game.id, filePath);
-			return filePath;
-		}
-		return this.writeGameNote(game);
+		if (!this.fileOf(game.id)) await this.createNote(game);
+		return this.layout().pathFromId(game.id);
 	}
 
-	/** Creates the note file only if missing; true when one was created. */
+	/** Creates the note only if missing; true when one was created. */
 	async createGameNoteIfMissing(game: Game): Promise<boolean> {
-		const filePath = this.noteFilePath(game.title);
-		if (this.plugin.app.vault.getAbstractFileByPath(filePath) instanceof TFile) return false;
-		await this.writeGameNote(game);
+		if (this.fileOf(game.id)) return false;
+		await this.createNote(game);
 		return true;
+	}
+
+	/** Writes the game's frontmatter (creates the note when missing); the body stays as is. */
+	async writeGameNote(game: Game): Promise<string> {
+		await this.writeGame(game);
+		return this.layout().pathFromId(game.id);
 	}
 
 	/**
-	 * Rewrites ONLY the frontmatter of an existing game note, body verbatim. Does NOT create the file
-	 * when missing — returns false. Used by the bulk "Rewrite all frontmatter" action.
+	 * Rewrites every plugin-owned frontmatter key of an existing game note, body verbatim. Keys the
+	 * encoder omits are removed, except fields the decoder could not read. Does NOT create the file —
+	 * returns false then. Used by the bulk "Rewrite all frontmatter" action.
 	 */
 	async rewriteFrontmatterIfExists(game: Game): Promise<boolean> {
-		const filePath = this.noteFilePath(game.title);
-		const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) return false;
-		const current = await this.plugin.app.vault.read(file);
-		const updated = this.rebuildWithFrontmatter(current, this.buildFrontmatter(game));
-		if (updated !== current) {
-			await this.plugin.app.vault.modify(file, updated);
-		}
-		this.lastNotePathById.set(game.id, filePath);
-		return true;
+		const file = this.fileOf(game.id);
+		if (!file) return false;
+		const out = this.encode(game);
+		const keep = new Set(this.index.invalidFields(game.id));
+		return this.processFrontMatter(file, game, (raw) => {
+			for (const key of GAME_KEYS) {
+				if (key in out) {
+					if (!keep.has(key) || !(key in raw)) raw[key] = out[key];
+				} else if (!keep.has(key)) {
+					delete raw[key];
+				}
+			}
+		});
 	}
 
 	async readGameNote(game: Game): Promise<string | null> {
-		const filePath = this.noteFilePath(game.title);
-		const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) return null;
-		return this.plugin.app.vault.read(file);
+		const file = this.fileOf(game.id);
+		return file ? this.plugin.app.vault.read(file) : null;
 	}
 
-	/**
-	 * Reads the `## Notes` body back from the game's note file. null when the file or section is
-	 * absent, so edits made directly in the .md flow back into the modal.
-	 */
+	/** Reads the `## Notes` body back from the game's note; null when the file or section is absent. */
 	async readGameNotes(game: Game): Promise<string | null> {
 		const content = await this.readGameNote(game);
-		if (content === null) return null;
-		const match = content.match(/(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/);
-		if (!match) return null;
-		// strip the template's leading blank line and trailing whitespace, keep internal breaks
-		return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
+		return content === null ? null : extractNotes(content);
 	}
 
-	/**
-	 * Replaces only the `## Notes` body, preserving the heading, frontmatter and any other sections
-	 * (appended when missing, never duplicated). Creates the note first when absent. The boundary
-	 * matches readGameNotes, so read-then-write round-trips.
-	 */
+	/** Replaces only the `## Notes` body, creating the note first when absent. */
 	async writeGameNotes(game: Game, notesBody: string): Promise<void> {
 		await this.ensureGameNote(game);
-		const filePath = this.noteFilePath(game.title);
-		const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) return;
-		const current = await this.plugin.app.vault.read(file);
-
-		let updated: string;
-		const headingMatch = current.match(/(^|\n)## Notes[ \t]*\r?\n/);
-		if (!headingMatch || headingMatch.index === undefined) {
-			const sep = current.length === 0 || current.endsWith('\n') ? '' : '\n';
-			updated = `${current}${sep}\n## Notes\n\n${notesBody}\n`;
-		} else {
-			const bodyStart = headingMatch.index + headingMatch[0].length;
-			const after = current.slice(bodyStart);
-			const nextHeading = after.match(/\n(?:## |# )/);
-			const bodyEnd =
-				nextHeading && nextHeading.index !== undefined
-					? bodyStart + nextHeading.index
-					: current.length;
-			updated = `${current.slice(0, bodyStart)}\n${notesBody}\n${current.slice(bodyEnd)}`;
-		}
-		if (updated !== current) {
-			await this.plugin.app.vault.modify(file, updated);
-		}
+		const file = this.fileOf(game.id);
+		if (!file) return;
+		await this.plugin.app.vault.process(file, (content) => replaceNotesSection(content, notesBody));
 	}
 
 	async deleteGameNote(game: Game): Promise<void> {
-		const filePath = this.noteFilePath(game.title);
-		const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
-		if (file instanceof TFile) {
-			try {
-				await this.plugin.app.fileManager.trashFile(file);
-			} catch {
-				// best-effort
-			}
-		}
-		this.lastNotePathById.delete(game.id);
+		await this.deleteNote(game.id);
 	}
 }

@@ -1,4 +1,5 @@
 import { requestUrl } from 'obsidian';
+import { httpsOrEmpty } from './httpsUrl';
 import type {
 	AnimeSearchResult,
 	MediaSearchResult,
@@ -25,6 +26,9 @@ import type {
 	AniListMediaResponse,
 } from './types';
 import { isCreditsNone, normalizeCreditsForStore, imdbIdFromLink } from './types';
+import type { EntryCache } from './storage/storageTypes';
+
+type Airing = NonNullable<EntryCache['airing']>;
 
 const JIKAN_BASE = 'https://api.jikan.moe/v4';
 const OMDB_BASE = 'https://www.omdbapi.com';
@@ -48,6 +52,10 @@ const OMDB_PAGE_SIZE = 10;
 const JIKAN_PAGE_SIZE = 25;
 
 /** '' unless the input is a plain 4-digit year. Guards every provider's year filter. */
+function nonEmptySeasons(seasons: Season[] | undefined): Season[] | null {
+	return seasons && seasons.length > 0 ? seasons : null;
+}
+
 function searchYear(year: string | undefined): string {
 	return year?.trim().match(/^\d{4}$/)?.[0] ?? '';
 }
@@ -561,6 +569,20 @@ export function isAuthFailure(err: unknown): boolean {
 	return err instanceof ApiError && (err.reason === 'auth' || err.reason === 'not-enabled');
 }
 
+/**
+ * Result of a background check: transient = worth retrying soon (timeout, 429, network, 5xx),
+ * nokey = no usable credential, notfound = the source has nothing for this identity.
+ */
+export type ApiOutcome<T> = { status: 'ok'; value: T } | { status: 'transient' | 'nokey' | 'notfound' };
+
+function outcomeOfError(err: unknown): { status: 'transient' | 'nokey' | 'notfound' } {
+	if (err instanceof ApiError) {
+		if (err.reason === 'no-key' || err.reason === 'auth' || err.reason === 'not-enabled') return { status: 'nokey' };
+		if (err.reason === 'not-found') return { status: 'notfound' };
+	}
+	return { status: 'transient' };
+}
+
 /** Status check + JSON parse for a throw:false response. Throws ApiError on either failure. */
 export function readApiResponse(source: ApiSource, r: { status: number; text: string; json: unknown }): unknown {
 	if (r.status < 200 || r.status >= 300) {
@@ -812,7 +834,7 @@ export class ApiService {
 			description,
 			averageScore: media.averageScore ?? undefined,
 			genres: media.genres ?? undefined,
-			posterUrl: media.coverImage?.large ?? media.coverImage?.medium ?? undefined,
+			posterUrl: httpsOrEmpty(media.coverImage?.large ?? media.coverImage?.medium) || undefined,
 			trailerUrl:
 				media.trailer?.site === 'youtube' && media.trailer.id
 					? youtubeWatchUrl(media.trailer.id)
@@ -856,6 +878,15 @@ export class ApiService {
 	}
 
 	async getAniListById(anilistId: number): Promise<AniListMedia | null> {
+		try {
+			return await this.queryAniListById(anilistId);
+		} catch {
+			return null;
+		}
+	}
+
+	/** Like getAniListById, but failures throw (background checks tell them apart). */
+	private async queryAniListById(anilistId: number): Promise<AniListMedia | null> {
 		const gql = `
 			query ($id: Int) {
 				Media(id: $id, type: ANIME) {
@@ -877,15 +908,11 @@ export class ApiService {
 				}
 			}
 		`;
-		try {
-			const res = await this.throttleAniList(() =>
-				this.postJsonWithTimeout(ANILIST_ENDPOINT, { query: gql, variables: { id: anilistId } }),
-			);
-			const data = res as AniListMediaResponse;
-			return data.data?.Media ?? null;
-		} catch {
-			return null;
-		}
+		const res = await this.throttleAniList(() =>
+			this.postJsonWithTimeout(ANILIST_ENDPOINT, { query: gql, variables: { id: anilistId } }),
+		);
+		const data = res as AniListMediaResponse;
+		return data.data?.Media ?? null;
 	}
 
 	// Jikan / MAL
@@ -936,9 +963,9 @@ export class ApiService {
 			episodes,
 			duration,
 			releaseDate: anime.aired?.from ? (anime.aired.from.split('T')[0] ?? '') : '',
-			url: anime.url,
+			url: httpsOrEmpty(anime.url),
 			seasons,
-			posterUrl: anime.images?.jpg?.large_image_url ?? anime.images?.jpg?.image_url ?? anime.images?.jpg?.small_image_url ?? undefined,
+			posterUrl: httpsOrEmpty(anime.images?.jpg?.large_image_url ?? anime.images?.jpg?.image_url ?? anime.images?.jpg?.small_image_url) || undefined,
 			trailerUrl: this.jikanTrailerUrl(anime.trailer),
 		};
 	}
@@ -981,7 +1008,7 @@ export class ApiService {
 				releaseDate: startYear ?? '',
 				url: `https://www.imdb.com/title/${item.imdbID}`,
 				seasons: [],
-				posterUrl: item.Poster && item.Poster !== 'N/A' ? item.Poster : undefined,
+				posterUrl: item.Poster !== 'N/A' ? httpsOrEmpty(item.Poster) || undefined : undefined,
 			};
 		});
 	}
@@ -1211,42 +1238,138 @@ export class ApiService {
 	async getTmdbTvDetails(tmdbId: string): Promise<MediaSearchResult | null> {
 		if (!this.tmdbApiKey) return null;
 		try {
-			const [detailData, extData] = await Promise.all([
-				this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}?append_to_response=videos,credits`, this.tmdbHeaders()),
-				this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}/external_ids`, this.tmdbHeaders()),
-			]);
-			const detail = detailData as TmdbTvDetail;
-			const ext = extData as TmdbExternalIds;
-			const imdbId = ext.imdb_id ?? '';
-
-			const rawSeasons = (detail.seasons ?? []).filter((s) => s.season_number !== 0);
-			let offset = 0;
-			const seasons: Season[] = rawSeasons.map((s) => {
-				const season: Season = { name: s.name, episodes: s.episode_count, offset };
-				offset += s.episode_count;
-				return season;
-			});
-			const totalEpisodes = seasons.reduce((sum, s) => sum + s.episodes, 0) || (detail.number_of_episodes ?? 0);
-
-			return {
-				imdbId: String(detail.id),
-				title: detail.name,
-				mediaType: 'tv',
-				episodes: totalEpisodes,
-				episodeDuration: (detail.episode_run_time ?? [])[0] ?? 45,
-				releaseDate: detail.first_air_date ?? '',
-				url: imdbId ? `https://www.imdb.com/title/${imdbId}` : '',
-				seasons,
-				trailerUrl: this.pickTmdbTrailer(detail.videos?.results),
-				// networks lead — HBO/Netflix is the brand; production_companies is shells
-				studio: tmdbCompanyNames([...(detail.networks ?? []), ...(detail.production_companies ?? [])]),
-				director: tmdbSeriesDirectorCredits(detail),
-				cast: tmdbCreditsToStored(detail.credits).cast,
-			};
+			return await this.loadTmdbTvDetails(tmdbId);
 		} catch (e) {
 			rethrowAuth(e);
 			return null;
 		}
+	}
+
+	/** TMDB tv details; failures throw. */
+	private async loadTmdbTvDetails(tmdbId: string): Promise<MediaSearchResult> {
+		const [detailData, extData] = await Promise.all([
+			this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}?append_to_response=videos,credits`, this.tmdbHeaders()),
+			this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}/external_ids`, this.tmdbHeaders()),
+		]);
+		const detail = detailData as TmdbTvDetail;
+		const ext = extData as TmdbExternalIds;
+		const imdbId = ext.imdb_id ?? '';
+
+		const rawSeasons = (detail.seasons ?? []).filter((s) => s.season_number !== 0);
+		let offset = 0;
+		const seasons: Season[] = rawSeasons.map((s) => {
+			const season: Season = { name: s.name, episodes: s.episode_count, offset };
+			offset += s.episode_count;
+			return season;
+		});
+		const totalEpisodes = seasons.reduce((sum, s) => sum + s.episodes, 0) || (detail.number_of_episodes ?? 0);
+
+		return {
+			imdbId: String(detail.id),
+			title: detail.name,
+			mediaType: 'tv',
+			episodes: totalEpisodes,
+			episodeDuration: (detail.episode_run_time ?? [])[0] ?? 45,
+			releaseDate: detail.first_air_date ?? '',
+			url: imdbId ? `https://www.imdb.com/title/${imdbId}` : '',
+			seasons,
+			trailerUrl: this.pickTmdbTrailer(detail.videos?.results),
+			// networks lead — HBO/Netflix is the brand; production_companies is shells
+			studio: tmdbCompanyNames([...(detail.networks ?? []), ...(detail.production_companies ?? [])]),
+			director: tmdbSeriesDirectorCredits(detail),
+			cast: tmdbCreditsToStored(detail.credits).cast,
+		};
+	}
+
+	// Season refill (a note from another device, no cached seasons)
+
+	/**
+	 * Season list by identity, from the same sources the add flow uses: AniList/Jikan episode count
+	 * (one season), TMDB tv details, or OMDb/TMDB for an IMDb link. notfound = movie, no source or
+	 * no seasons there; transient = the request failed; nokey = the needed key is missing or rejected.
+	 */
+	async fetchSeasons(
+		title: Pick<WatchLogTitle, 'anilistId' | 'malId' | 'tmdbId' | 'tmdbMediaType' | 'externalLink'>,
+	): Promise<ApiOutcome<Season[]>> {
+		const single = (episodes: number | null | undefined): ApiOutcome<Season[]> =>
+			episodes ? { status: 'ok', value: [{ name: 'Season 1', episodes, offset: 0 }] } : { status: 'notfound' };
+		const multi = (seasons: Season[] | undefined): ApiOutcome<Season[]> => {
+			const found = nonEmptySeasons(seasons);
+			return found ? { status: 'ok', value: found } : { status: 'notfound' };
+		};
+		try {
+			if (title.anilistId !== undefined) return single((await this.queryAniListById(title.anilistId))?.episodes);
+			if (title.malId !== undefined) {
+				const url = `${JIKAN_BASE}/anime/${title.malId}`;
+				const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanAnime };
+				return single(data.data?.episodes);
+			}
+			if (title.tmdbId !== undefined) {
+				if (title.tmdbMediaType !== 'tv') return { status: 'notfound' };
+				if (!this.tmdbApiKey) return { status: 'nokey' };
+				return multi((await this.loadTmdbTvDetails(String(title.tmdbId))).seasons);
+			}
+			const imdbId = imdbIdFromLink(title.externalLink);
+			if (!imdbId) return { status: 'notfound' };
+			if (!this.omdbApiKey && !this.tmdbApiKey) return { status: 'nokey' };
+			const full = this.omdbApiKey ? await this.getOmdbTvDetails(imdbId) : await this.getTmdbByImdbId(imdbId);
+			// those lookups fold failures into null: retry soon rather than call it missing
+			if (!full) return { status: 'transient' };
+			return full.mediaType === 'tv' ? multi(full.seasons) : { status: 'notfound' };
+		} catch (err) {
+			return outcomeOfError(err);
+		}
+	}
+
+	// Airing pointer (Upcoming)
+
+	/**
+	 * Next / last aired episode: AniList by `anilistId`, else TMDB tv by `tmdbId` (needs the key).
+	 * notfound = no source or no such title; nothing is fetched without an id.
+	 */
+	async fetchAiring(title: Pick<WatchLogTitle, 'anilistId' | 'tmdbId' | 'tmdbMediaType'>): Promise<ApiOutcome<Airing>> {
+		try {
+			if (title.anilistId !== undefined) return await this.fetchAniListAiring(title.anilistId);
+			if (title.tmdbId !== undefined && title.tmdbMediaType === 'tv') {
+				if (!this.tmdbApiKey) return { status: 'nokey' };
+				return await this.fetchTmdbAiring(title.tmdbId);
+			}
+			return { status: 'notfound' };
+		} catch (err) {
+			return outcomeOfError(err);
+		}
+	}
+
+	private async fetchAniListAiring(anilistId: number): Promise<ApiOutcome<Airing>> {
+		const media = await this.queryAniListById(anilistId);
+		if (!media) return { status: 'notfound' };
+		const airing: Airing = { refreshedAt: new Date().toISOString() };
+		const next = media.nextAiringEpisode;
+		if (typeof next?.episode === 'number') {
+			airing.nextEpisode = next.episode;
+			if (typeof next.airingAt === 'number') airing.nextAirDate = new Date(next.airingAt * 1000).toISOString();
+			if (next.episode > 1) airing.lastEpisode = next.episode - 1;
+		} else if (media.status === 'FINISHED' && typeof media.episodes === 'number' && media.episodes > 0) {
+			airing.lastEpisode = media.episodes;
+		}
+		return { status: 'ok', value: airing };
+	}
+
+	private async fetchTmdbAiring(tmdbId: number): Promise<ApiOutcome<Airing>> {
+		const detail = await this.fetchWithTimeout(`${TMDB_BASE}/tv/${tmdbId}`, this.tmdbHeaders()) as TmdbTvDetail;
+		const airing: Airing = { refreshedAt: new Date().toISOString() };
+		const next = detail.next_episode_to_air;
+		if (typeof next?.episode_number === 'number') {
+			airing.nextEpisode = next.episode_number;
+			if (typeof next.season_number === 'number') airing.nextSeason = next.season_number;
+			if (next.air_date) airing.nextAirDate = next.air_date;
+		}
+		const last = detail.last_episode_to_air;
+		if (typeof last?.episode_number === 'number') {
+			airing.lastEpisode = last.episode_number;
+			if (typeof last.season_number === 'number') airing.lastSeason = last.season_number;
+		}
+		return { status: 'ok', value: airing };
 	}
 
 	hasTmdbKey(): boolean {
@@ -1704,10 +1827,12 @@ export class ApiService {
 		if (!raw) return '';
 		// bump Google's default cover (thumbnail is zoom=1 ≈ 128px, blurry on a card) to zoom=2 ≈
 		// 300px — sharp yet light. Only thumbnail-class URLs carry a zoom param.
-		return raw
-			.replace(/^http:/, 'https:')
-			.replace(/&edge=curl/g, '')
-			.replace(/([?&]zoom=)\d+/, (_m, p1: string) => `${p1}2`);
+		return httpsOrEmpty(
+			raw
+				.replace(/^http:/, 'https:')
+				.replace(/&edge=curl/g, '')
+				.replace(/([?&]zoom=)\d+/, (_m, p1: string) => `${p1}2`),
+		);
 	}
 
 	/** Normalizes Google's `publishedDate` (YYYY | YYYY-MM | YYYY-MM-DD) to YYYY-MM-DD. */
@@ -1732,7 +1857,7 @@ export class ApiService {
 			coverUrl: this.googleCoverUrl(info),
 			googleBooksId: item.id ?? '',
 			releaseDate: this.googleReleaseDate(published),
-			url: info.infoLink ?? info.canonicalVolumeLink ?? '',
+			url: httpsOrEmpty(info.infoLink ?? info.canonicalVolumeLink),
 		};
 	}
 
@@ -1790,9 +1915,9 @@ export class ApiService {
 			year,
 			totalChapters: m.chapters ?? 0,
 			totalVolumes: m.volumes ?? 0,
-			coverUrl: m.images?.jpg?.large_image_url ?? m.images?.jpg?.image_url ?? '',
+			coverUrl: httpsOrEmpty(m.images?.jpg?.large_image_url ?? m.images?.jpg?.image_url),
 			releaseDate: m.published?.from ? (m.published.from.split('T')[0] ?? '') : '',
-			url: m.url ?? `https://myanimelist.net/manga/${m.mal_id}`,
+			url: httpsOrEmpty(m.url) || `https://myanimelist.net/manga/${m.mal_id}`,
 		};
 	}
 
@@ -1857,7 +1982,7 @@ export class ApiService {
 			id: g.id,
 			title: g.name ?? '',
 			releaseDate: g.released ?? '',
-			coverUrl: g.background_image ?? '',
+			coverUrl: httpsOrEmpty(g.background_image),
 			platforms: (g.platforms ?? [])
 				.map((p) => p.platform?.name ?? '')
 				.filter((n) => n !== ''),
@@ -1889,7 +2014,7 @@ export class ApiService {
 		]);
 		if (typeof detail.id !== 'number' || !detail.name) return null;
 
-		const storeLinks = (stores.results ?? []).filter((s) => !!s.url);
+		const storeLinks = (stores.results ?? []).filter((s) => !!httpsOrEmpty(s.url));
 		let storeUrl = '';
 		for (const storeId of RAWG_STORE_PRIORITY) {
 			const hit = storeLinks.find((s) => s.store_id === storeId);
@@ -2007,7 +2132,7 @@ export class ApiService {
 				? `https://images.igdb.com/igdb/image/upload/t_cover_big/${g.cover.image_id}.jpg`
 				: '',
 			platforms: (g.platforms ?? []).map((p) => p.name ?? '').filter((n) => n !== ''),
-			url: g.url ?? '',
+			url: httpsOrEmpty(g.url),
 		};
 	}
 
@@ -2039,7 +2164,7 @@ export class ApiService {
 			[...new Set(list.map((c) => c.company?.name ?? '').filter(Boolean))].join(', ');
 
 		const modes = new Set((g.game_modes ?? []).map((m) => m.name ?? ''));
-		const siteUrls = (g.websites ?? []).map((w) => w.url ?? '').filter(Boolean);
+		const siteUrls = (g.websites ?? []).map((w) => httpsOrEmpty(w.url)).filter(Boolean);
 		let storeUrl = '';
 		for (const domain of IGDB_STORE_DOMAINS) {
 			const hit = siteUrls.find((u) => u.includes(domain));

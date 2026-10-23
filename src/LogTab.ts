@@ -17,6 +17,7 @@ const ACTION_COLORS: Record<string, string> = {
 	completed: '#1D9E75',
 	watched: '#1D9E75',
 	added: '#378ADD',
+	group: '#8B5CF6',
 	deleted: '#E24B4A',
 	status: '#BA7517',
 	rating: '#BA7517',
@@ -34,6 +35,7 @@ function actionLabel(entry: HistoryEntry): string {
 	const m = entry.message;
 	switch (action) {
 		case 'added': return 'Added';
+		case 'group': return 'Group created';
 		case 'deleted': return 'Deleted';
 		case 'rating': {
 			const rm = m.match(/Rating → (\d+\/5)/);
@@ -130,9 +132,21 @@ export class LogTab {
 	constructor(container: HTMLElement, plugin: WatchLogPlugin) {
 		this.container = container;
 		this.plugin = plugin;
+		plugin.historyManager?.onChange(this.onHistoryChange);
 	}
 
+	// History.md changed outside the plugin; a tab that left the DOM unsubscribes itself
+	private onHistoryChange = (): void => {
+		if (!this.container.isConnected) {
+			this.plugin.historyManager?.offChange(this.onHistoryChange);
+			return;
+		}
+		this.pendingScroll = this.scrollContainer?.scrollTop ?? null;
+		this.render();
+	};
+
 	destroy(): void {
+		this.plugin.historyManager?.offChange(this.onHistoryChange);
 		this.destroyVirtualScroll();
 	}
 

@@ -1,7 +1,7 @@
 import { Notice } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { WatchLogTitle, AnimeSearchResult } from './types';
-import { formatVoteCount, getApiGroupForType } from './types';
+import { formatVoteCount, getApiGroupForType, getCommunityRating } from './types';
 import { apiErrorMessage } from './ApiService';
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -30,10 +30,11 @@ export function renderCommunityRating(
 	parent.createSpan({ cls: 'wl-rating-divider' });
 
 	const badge = parent.createDiv({ cls: 'wl-community-badge' });
-	const hasRating = !!title.communitySource && (title.communityRating ?? 0) > 0;
+	const community = getCommunityRating(title);
+	const hasRating = !!community.source && (community.rating ?? 0) > 0;
 
 	if (hasRating) {
-		const source = title.communitySource ?? '';
+		const source = community.source ?? '';
 		const label = SOURCE_LABELS[source] ?? source.toUpperCase();
 		badge.createSpan({
 			cls: `wl-community-source wl-community-source--${source}`,
@@ -41,12 +42,12 @@ export function renderCommunityRating(
 		});
 		badge.createSpan({
 			cls: 'wl-community-score',
-			text: formatScore(title.communityRating ?? 0, source),
+			text: formatScore(community.rating ?? 0, source),
 		});
-		if ((title.communityVotes ?? 0) > 0) {
+		if ((community.votes ?? 0) > 0) {
 			badge.createSpan({
 				cls: 'wl-community-votes',
-				text: `(${formatVoteCount(title.communityVotes ?? 0)})`,
+				text: `(${formatVoteCount(community.votes ?? 0)})`,
 			});
 		}
 	} else {

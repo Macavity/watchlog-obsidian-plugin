@@ -1,145 +1,311 @@
-import { App, TFile, normalizePath } from 'obsidian';
+import { App, Notice, TAbstractFile, TFile, normalizePath, stringifyYaml } from 'obsidian';
 import type WatchLogPlugin from './main';
-import type { WatchLogData, WatchLogTitle, WatchLogGroup, AirtimeEntry, MaybeTitle, RecommendedDaily, SavedFilterPreset, WatchLogPluginSettings, Book, Manga, Game } from './types';
+import type { DraftPersistState, Season, WatchLogTitle, WatchLogGroup, AirtimeEntry, AirtimeSchedule, EntryAirtime, MaybeTitle, RecommendedDaily, SavedFilterPreset, Book, Manga, Game } from './types';
 import type { HistoryManager } from './HistoryManager';
 import { formatHistoryDate } from './HistoryManager';
-import { getDisplayPoster, getDisplayTrailer, getTitleCredits, pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso } from './types';
+import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso, GAME_AUTO_STATUS } from './types';
 import type { CreditsField } from './types';
+import type { AnyEntry, EntryIndex } from './storage/EntryIndex';
+import { getBaseline, sameStoredState, setBaseline, getNotesBaseline, setNotesBaseline } from './storage/baseline';
+import type { ApiOutcome } from './ApiService';
+import { ApiCheckQueue } from './apiCheckQueue';
+import type { LocalStore } from './storage/LocalStore';
+import type { ApiCheckResult, EntryCache } from './storage/storageTypes';
+import type { SharedConfigStore } from './storage/SharedConfigStore';
+import type { VaultLayout } from './storage/VaultLayout';
+import { TITLE_CACHE_KEYS, decodeTitle, encodeTitle, isMovie, seasonsPending, splitCache } from './storage/titleCodec';
+import { externalIdFromLink } from './storage/externalId';
+import { decodeBook, decodeManga, encodeAirtime } from './storage/readingCodec';
+import { decodeGame } from './storage/gameCodec';
 
-function isValidWatchLogData(data: unknown): data is WatchLogData {
-	return (
-		data !== null &&
-		typeof data === 'object' &&
-		Array.isArray((data as { titles?: unknown }).titles)
-	);
+export interface DataStores {
+	index: EntryIndex;
+	local: LocalStore;
+	shared: SharedConfigStore;
+	layout: () => VaultLayout;
 }
 
+const AIRTIME_KEYS: readonly string[] = [
+	'airtimeRecurrence', 'airtimeDay', 'airtimeTime', 'airtimeSeason', 'airtimeEpisode', 'airtimeAcknowledged',
+];
+
+/** Every frontmatter key encodeTitle can emit (plus the older manual*Url names); the full rewrite deletes the ones it omits. */
+const TITLE_KEYS: readonly string[] = [
+	'title', 'type', 'status', 'priority', 'review', 'rating', 'progress', 'totalEpisodes', 'episodeDuration',
+	'dateStarted', 'dateFinished', 'dateAdded', 'dateModified', 'releaseDate', 'malId', 'anilistId',
+	'communityRating', 'communityVotes', 'communitySource', 'director', 'cast', 'studio', 'poster', 'trailer',
+	'externalLink', 'pinned', 'favorite', 'dateFavorited', 'externalId', 'groups', 'maybe', 'watched', 'skipped',
+	'seasons', 'manualPosterUrl', 'manualTrailerUrl', 'manualDirector', 'manualCast', 'manualStudio',
+	...AIRTIME_KEYS,
+];
+
+/** The note-side schedule of an Upcoming entry; the 'once' date lives in the note's releaseDate. */
+function toEntryAirtime(e: AirtimeEntry): EntryAirtime {
+	const s = e.schedule;
+	const a: EntryAirtime = { recurrence: s.recurrence };
+	const day = s.recurrence === 'weekly' ? s.dayOfWeek : s.recurrence === 'monthly' ? s.dayOfMonth : undefined;
+	if (day !== undefined) a.day = day;
+	if (s.releaseTime) a.time = s.releaseTime;
+	if (e.currentSeason !== undefined) a.season = e.currentSeason;
+	if (e.currentEpisode !== undefined) a.episode = e.currentEpisode;
+	if (e.lastAcknowledgedDate) a.acknowledged = e.lastAcknowledgedDate;
+	return a;
+}
+
+function scheduleOf(a: EntryAirtime, releaseDate: string | null): AirtimeSchedule {
+	const s: AirtimeSchedule = { recurrence: a.recurrence };
+	if (a.recurrence === 'once' && releaseDate) s.releaseDate = releaseDate;
+	if (a.time) s.releaseTime = a.time;
+	if (a.day !== undefined && a.recurrence === 'weekly') s.dayOfWeek = a.day;
+	if (a.day !== undefined && a.recurrence === 'monthly') s.dayOfMonth = a.day;
+	return s;
+}
+
+const NOTES_RE = /(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/;
+
+/** Minimum gap between two API refreshes of a title's airing pointer, unless forced. */
+/** Retry deadline per outcome of a background API check; a missing key waits until a key changes. */
+const API_CHECK_TTL_MS = { ok: 6 * 3_600_000, transient: 3_600_000, notfound: 7 * 24 * 3_600_000 };
+type ApiCheckKind = 'airing' | 'seasons';
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** `## Notes` body of a note; null when the section is absent. */
+function extractNotes(content: string): string | null {
+	const match = content.match(NOTES_RE);
+	if (!match) return null;
+	// strip the template's leading blank line and trailing whitespace, keep internal breaks
+	return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
+}
+
+/**
+ * Replaces the `## Notes` body, preserving the heading, every other section, the frontmatter and
+ * any prose outside it. Appends the heading when missing (never duplicated). The boundary matches
+ * extractNotes, so read-then-write round-trips cleanly.
+ */
+function replaceNotesSection(existing: string, notesBody: string): string {
+	const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
+	if (!headingMatch || headingMatch.index === undefined) {
+		const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+		return `${existing}${sep}\n## Notes\n\n${notesBody}\n`;
+	}
+	const bodyStart = headingMatch.index + headingMatch[0].length;
+	const after = existing.slice(bodyStart);
+	const nextHeading = after.match(/\n(?:## |# )/);
+	const bodyEnd =
+		nextHeading && nextHeading.index !== undefined
+			? bodyStart + nextHeading.index
+			: existing.length;
+	const before = existing.slice(0, bodyStart);
+	const rest = existing.slice(bodyEnd);
+	return `${before}\n${notesBody}\n${rest}`;
+}
+
+/**
+ * Watchlist titles, backed by one note per title. Reads come from the EntryIndex (frontmatter) plus
+ * the LocalStore cache; writes go to the note via processFrontMatter and only touch what changed.
+ */
 export class DataManager {
 	private plugin: WatchLogPlugin;
 	private app: App;
-	private data: WatchLogData;
+	private index: EntryIndex;
+	private local: LocalStore;
+	private shared: SharedConfigStore;
+	private layout: () => VaultLayout;
 	private changeListeners: Array<() => void> = [];
 	private historyManager: HistoryManager | null = null;
-	// debounced save for high-frequency edits (rapid episode clicks): memory now, disk coalesced
+
+	// Mutable copies handed to the UI, one per id. `src` is the index entry the copy was made from:
+	// it is the default baseline a write diffs against; a copy carries its own (see storage/baseline.ts),
+	// so a stale or spread copy cannot revert a field changed elsewhere in between.
+	private views: Map<string, { src: WatchLogTitle; view: WatchLogTitle }> = new Map();
+	// `## Notes` body per id as last read from / written to the note
+	private notes: Map<string, string> = new Map();
+	// titles changed via updateTitleSilent, written on the next save()
+	private dirty: Set<string> = new Set();
+	// ids already handed to the poster queue this session
+	private posterRequested: Set<string> = new Set();
+	// background API checks (airing, seasons) share one throttled queue; results persist in the cache
+	readonly apiQueue = new ApiCheckQueue();
+	private seasonsInFlight: Set<string> = new Set();
+	private seasonsRunning = 0;
+	private seasonsChanged = false;
+	/** Titles whose "API key needed" notice was shown this session. */
+	private noKeyNoticeShown: Set<string> = new Set();
+
+	// debounced save for high-frequency edits (rapid episode clicks): memory now, note coalesced
 	private pendingSaveTimer: number | null = null;
 	private pendingMdTitleIds: Set<string> = new Set();
 	private readonly EPISODE_SAVE_DEBOUNCE_MS = 500;
-	// last self-initiated saveOnly — the 'raw' watcher uses it to ignore the echo of our own
-	// writes, which would otherwise reload data.json and notify on every debounced save
-	private lastSelfSaveTime = 0;
-	private readonly SELF_SAVE_ECHO_WINDOW_MS = 2000;
 
-	// debounced batched poster saves: memory now, disk ~every 5s
+	// debounced batched poster saves: memory now, data.json ~every 5s
 	private posterSaveTimer: number | null = null;
 	private readonly POSTER_SAVE_DEBOUNCE_MS = 5000;
 
-	// generic queued-save debounce for cross-cutting saves (settings, drafts, lists)
-	private queuedSaveTimer: number | null = null;
-	private readonly QUEUED_SAVE_DEBOUNCE_MS = 100;
+	private airingInFlight: Set<string> = new Set();
 
 	setHistoryManager(hm: HistoryManager): void {
 		this.historyManager = hm;
 	}
 
-	constructor(plugin: WatchLogPlugin) {
+	constructor(plugin: WatchLogPlugin, stores: DataStores) {
 		this.plugin = plugin;
 		this.app = plugin.app;
-		this.data = { titles: [], groups: [], settings: {} };
+		this.index = stores.index;
+		this.local = stores.local;
+		this.shared = stores.shared;
+		this.layout = stores.layout;
 	}
 
-	async load(): Promise<void> {
-		const raw: unknown = await this.plugin.loadData();
-		this.data = isValidWatchLogData(raw)
-			? raw
-			: { titles: [], groups: [], settings: {} };
-		const changed = this.migrateData();
-		if (changed) {
-			await this.saveOnly();
+	getLayout(): VaultLayout {
+		return this.layout();
+	}
+
+	/** After index.build(): reads note bodies and follows index/vault changes. */
+	async init(): Promise<void> {
+		await Promise.all(this.index.titles().map((t) => this.readNotes(t.id)));
+		this.index.onChange((ids) => {
+			const changed = [...ids].map((id) => this.getTitle(id)).filter((t): t is WatchLogTitle => !!t);
+			this.queueMissingPosters(changed);
+			this.queueMissingSeasons(changed);
+			this.notifyListeners();
+		});
+		const { vault } = this.app;
+		this.plugin.registerEvent(vault.on('modify', (f) => void this.refreshNotes(f)));
+		this.plugin.registerEvent(vault.on('create', (f) => void this.refreshNotes(f)));
+		this.plugin.registerEvent(vault.on('rename', (f, oldPath) => this.onVaultRename(f, oldPath)));
+		this.queueMissingPosters(this.getTitles());
+		this.queueMissingSeasons(this.getTitles());
+		this.notifyListeners();
+	}
+
+	/**
+	 * Hands titles with an API identity but no cached poster (a fresh device, a note from elsewhere)
+	 * to the poster queue, once per id and session.
+	 */
+	private queueMissingPosters(titles: WatchLogTitle[]): void {
+		const service = this.plugin.posterService;
+		if (!service) return;
+		for (const t of titles) {
+			if (t.maybe || this.posterRequested.has(t.id)) continue;
+			if (t.posterUrl) continue;
+			const identified = !!t.tmdbId || !!t.malId || !!t.anilistId || externalIdFromLink(t.externalLink) !== null;
+			if (!identified) continue;
+			this.posterRequested.add(t.id);
+			void service.enqueue(t);
 		}
 	}
 
-	private migrateData(): boolean {
+	/**
+	 * Seasons not known yet: an API identity, no seasons in note or cache, not a movie (a fresh device,
+	 * a note from elsewhere), and the fetch has not found nothing or lacked a key (those use an implicit
+	 * S01). Episode toggles wait for the refill.
+	 */
+	private seasonsPending(t: WatchLogTitle): boolean {
+		return seasonsPending(t, this.local.getCache(t.id)?.apiCheck?.seasons?.result);
+	}
+
+	/** Seasons not known for a series with an API identity, whatever the last fetch returned. */
+	private seasonsMissing(t: WatchLogTitle): boolean {
+		return seasonsPending(t, undefined);
+	}
+
+	/** Queues a season fetch for titles that lack seasons and whose last check is past its deadline. */
+	private queueMissingSeasons(titles: WatchLogTitle[]): void {
+		if (!this.plugin.apiService) return;
+		for (const t of titles) {
+			if (t.maybe || this.seasonsInFlight.has(t.id) || !this.seasonsMissing(t) || !this.apiCheckDue(t.id, 'seasons', false)) continue;
+			void this.refillSeasons(t);
+		}
+	}
+
+	/**
+	 * Stores fetched seasons in the cache only (no note write); the notes are re-decoded once the queue is
+	 * idle, also after "not found" or "no key" (the implicit S01 applies then).
+	 */
+	private async refillSeasons(t: WatchLogTitle): Promise<void> {
+		this.seasonsInFlight.add(t.id);
+		this.seasonsRunning++;
+		try {
+			let outcome: ApiOutcome<Season[]> = { status: 'transient' };
+			try {
+				outcome = await this.apiQueue.enqueue(() => this.plugin.apiService.fetchSeasons(t));
+			} catch {
+				// stays pending until the deadline
+			}
+			if (!this.index.get(t.id)) return;
+			const seasons = outcome.status === 'ok' ? outcome.value.map((x) => ({ name: x.name, episodes: x.episodes, offset: x.offset })) : [];
+			const filled = seasons.length > 0;
+			const result = outcome.status === 'ok' && !filled ? 'notfound' : outcome.status;
+			this.recordApiCheck(t.id, 'seasons', result, filled ? { seasons } : {});
+			if (result !== 'transient') this.seasonsChanged = true;
+		} finally {
+			this.seasonsInFlight.delete(t.id);
+			// decoding happens in the index; a rebuild picks up the new cache and emits the changed ids
+			if (--this.seasonsRunning === 0 && this.seasonsChanged) {
+				this.seasonsChanged = false;
+				await this.index.rebuild();
+			}
+		}
+	}
+
+	/** True when the last check of this kind is past its deadline (never checked, or forced). */
+	private apiCheckDue(id: string, kind: ApiCheckKind, force: boolean): boolean {
+		if (force) return true;
+		const cache = this.local.getCache(id);
+		const check = cache?.apiCheck?.[kind];
+		if (!check) {
+			const legacy = kind === 'airing' ? Date.parse(cache?.airing?.refreshedAt ?? '') : NaN;
+			return isNaN(legacy) || Date.now() - legacy >= API_CHECK_TTL_MS.ok;
+		}
+		if (check.result === 'nokey') return false;
+		const at = Date.parse(check.at);
+		return isNaN(at) || Date.now() - at >= API_CHECK_TTL_MS[check.result];
+	}
+
+	private recordApiCheck(id: string, kind: ApiCheckKind, result: ApiCheckResult, patch: Partial<EntryCache> = {}): void {
+		const apiCheck = { ...this.local.getCache(id)?.apiCheck, [kind]: { at: new Date().toISOString(), result } };
+		this.local.setCache(id, { ...patch, apiCheck });
+	}
+
+	/** An API key changed: checks that failed for want of a key may run again. */
+	resetNoKeyChecks(): void {
 		let changed = false;
-		if (!Array.isArray(this.data.titles)) {
-			this.data.titles = [];
-			changed = true;
-		}
-		if (!Array.isArray((this.data as unknown as Record<string, unknown>)['groups'])) {
-			this.data.groups = [];
-			changed = true;
-		}
-
-		if (!Array.isArray(this.data.airtime)) {
-			this.data.airtime = [];
-			changed = true;
-		}
-
-		for (const title of this.data.titles) {
-			if (!title.dateAdded) {
-				title.dateAdded = new Date().toISOString();
-				changed = true;
-			} else if (!title.dateAdded.includes('T')) {
-				title.dateAdded = new Date(title.dateAdded).toISOString();
-				changed = true;
-			}
-
-			if (!title.dateModified) {
-				const raw = title as unknown as Record<string, unknown>;
-				const lastInteracted = raw['lastInteracted'];
-				if (typeof lastInteracted === 'string' && lastInteracted) {
-					title.dateModified = lastInteracted;
-				} else {
-					title.dateModified = title.dateAdded;
-				}
-				changed = true;
-			}
-
-			for (const season of (title.seasons ?? [])) {
-				if (!Array.isArray(season.skippedEpisodes)) {
-					season.skippedEpisodes = [];
-					changed = true;
-				}
-			}
-
-			if (title.posterUrl === undefined) { title.posterUrl = ''; changed = true; }
-			if (title.manualPosterUrl === undefined) { title.manualPosterUrl = ''; changed = true; }
-			if (title.trailerUrl === undefined) { title.trailerUrl = ''; changed = true; }
-			if (title.manualTrailerUrl === undefined) { title.manualTrailerUrl = ''; changed = true; }
-			if (title.anilistId === undefined) { title.anilistId = 0; changed = true; }
-			if (title.communityRating === undefined) { title.communityRating = 0; changed = true; }
-			if (title.communityVotes === undefined) { title.communityVotes = 0; changed = true; }
-			if (title.communitySource === undefined) { title.communitySource = ''; changed = true; }
-			if (title.communityRatingLastFetched === undefined) { title.communityRatingLastFetched = ''; changed = true; }
-			if (title.favorite === undefined) { title.favorite = false; changed = true; }
-			// every stored tmdbId predates tmdbMediaType and came from the Collections path,
-			// which only ever wrote movie ids
-			if (title.tmdbId && title.tmdbMediaType === undefined) {
-				title.tmdbMediaType = 'movie';
+		for (const entry of Object.values(this.local.data.cache)) {
+			for (const kind of ['airing', 'seasons'] as const) {
+				if (entry.apiCheck?.[kind]?.result !== 'nokey') continue;
+				delete entry.apiCheck[kind];
 				changed = true;
 			}
 		}
+		if (!changed) return;
+		this.noKeyNoticeShown.clear();
+		this.local.queueSave();
+		this.queueMissingSeasons(this.index.titles());
+	}
 
-		if (!this.data.posterRetryDone) {
-			for (const title of this.data.titles) {
-				if (title.posterUrl === 'none') {
-					title.posterUrl = '';
-				}
+	/**
+	 * True (and a notice) when an episode toggle must wait for the season refill. Without an API key the
+	 * toggle goes on the implicit S01, with a one-time hint.
+	 */
+	private blockedBySeasonRefill(t: WatchLogTitle): boolean {
+		if (!this.seasonsPending(t)) {
+			const noKey = this.local.getCache(t.id)?.apiCheck?.seasons?.result === 'nokey';
+			if (noKey && this.seasonsMissing(t) && !this.noKeyNoticeShown.has(t.id)) {
+				this.noKeyNoticeShown.add(t.id);
+				new Notice('API key needed to load episodes');
 			}
-			this.data.posterRetryDone = true;
-			changed = true;
+			return false;
 		}
-
-		if (!this.data.recommendedDaily) {
-			this.data.recommendedDaily = { date: '', ids: [] };
-			changed = true;
-		}
-		return changed;
+		new Notice(`Episodes of "${t.title}" are still loading.`);
+		this.queueMissingSeasons([t]);
+		return true;
 	}
 
 	// Rows-view daily recommendations
 
 	getRecommendedDaily(): RecommendedDaily {
-		return this.data.recommendedDaily ?? { date: '', ids: [] };
+		return this.local.data.ui.recommendedDaily ?? { date: '', ids: [] };
 	}
 
 	/**
@@ -147,25 +313,49 @@ export class DataManager {
 	 * renders them itself.
 	 */
 	setRecommendedDaily(rec: RecommendedDaily): void {
-		this.data.recommendedDaily = rec;
-		void this.saveOnly();
+		this.local.data.ui.recommendedDaily = rec;
+		this.local.queueSave();
 	}
 
 	/**
-	 * Silent poster URL update: memory now, debounced disk save (5s). No notify — the card that
-	 * triggered the fetch updates its own <img>.
+	 * Silent poster update, no notify — the card that triggered the fetch updates its own <img>.
+	 * A URL goes into the note's `poster` field, but only when it is empty (E12), unless `overwrite`
+	 * (the explicit refresh). 'none' (nothing found) is a cache marker for a title without a poster.
 	 */
-	updatePosterUrl(titleId: string, url: string): void {
-		const title = this.data.titles.find((t) => t.id === titleId);
-		if (title) {
+	async updatePosterUrl(titleId: string, url: string, overwrite = false): Promise<void> {
+		const title = this.getTitle(titleId);
+		if (!title) return;
+		const hasPoster = !!title.posterUrl && title.posterUrl !== 'none';
+		if (url === 'none') {
+			if (hasPoster) return;
 			title.posterUrl = url;
+			this.local.data.cache[titleId] = { ...this.local.getCache(titleId), posterUrl: url };
 			this.schedulePosterSave();
+			return;
 		}
+		if (!url || (hasPoster && !overwrite)) return;
+		if (this.dirty.has(titleId) || this.pendingMdTitleIds.has(titleId)) {
+			// the pending write carries it
+			title.posterUrl = url;
+			return;
+		}
+		const file = this.fileOf(titleId);
+		if (!file) return;
+		await this.processFrontMatter(file, title, (raw) => {
+			const own = [raw.poster, raw.manualPosterUrl].find((v): v is string => typeof v === 'string' && v.trim() !== '');
+			if (own && !overwrite) {
+				title.posterUrl = own;
+				return;
+			}
+			raw.poster = url;
+			delete raw.manualPosterUrl;
+			title.posterUrl = url;
+		}, !overwrite);
 	}
 
 	/** Silent TMDB id + collection cache. tmdbId null = not a movie, keep the verdict only. */
 	updateTmdbIdentity(id: string, tmdbId: number | null, collectionId: number): void {
-		const title = this.data.titles.find((t) => t.id === id);
+		const title = this.getTitle(id);
 		if (!title) return;
 		const nextTmdbId = tmdbId ?? title.tmdbId;
 		if (title.tmdbId === nextTmdbId && title.collectionId === collectionId) return;
@@ -175,57 +365,51 @@ export class DataManager {
 			title.tmdbMediaType = 'movie';
 		}
 		title.collectionId = collectionId;
-		void this.saveOnly();
+		this.syncCache(title);
 	}
 
-	/** Silent community-rating update: memory + disk, no notify. The caller refreshes its own UI. */
+	/** Silent community-rating update: memory + cache, no notify. The caller refreshes its own UI. */
 	updateCommunityRating(
 		id: string,
 		rating: number,
 		votes: number,
 		source: '' | 'imdb' | 'mal' | 'anilist' | 'tmdb',
 	): void {
-		const title = this.data.titles.find((t) => t.id === id);
+		const title = this.getTitle(id);
 		if (!title) return;
 		title.communityRating = rating;
 		title.communityVotes = votes;
 		title.communitySource = source;
 		title.communityRatingLastFetched = new Date().toISOString();
-		void this.saveOnly();
+		this.syncCache(title);
 	}
 
 	/**
-	 * Silent trailer URL update (manual refresh): memory + disk, no notify — the caller re-renders
+	 * Silent trailer URL update (manual refresh): memory + cache, no notify — the caller re-renders
 	 * its own row.
 	 */
 	updateTrailerUrl(titleId: string, url: string): void {
-		const title = this.data.titles.find((t) => t.id === titleId);
+		const title = this.getTitle(titleId);
 		if (!title) return;
 		title.trailerUrl = url;
-		void this.saveOnly();
+		this.syncCache(title);
 	}
 
 	/**
-	 * Persists a director/cast backfill through the normal update path: data.json AND the note's
-	 * frontmatter (NOT the poster-style silent save, which skips the .md). Deliberately does not
-	 * stamp dateModified — a background backfill is not a user edit and must not reshuffle
-	 * "recently modified" sorts.
-	 *
-	 * Only the fetched fields are touched; user-added credits live in their own arrays. Manual
-	 * entries the fetch now returns are pruned, so no name is stored twice.
+	 * Persists a director/cast backfill to the cache only: API values never reach the note (E9), and
+	 * a background backfill is no user edit (no dateModified stamp). User-added credits stay as they
+	 * are; the merged view drops names the fetch now returns.
 	 */
 	async updateCredits(titleId: string, director: string[], cast: string[]): Promise<void> {
 		const title = this.getTitle(titleId);
 		if (!title) return;
 		title.director = director;
 		title.cast = cast;
-		title.manualDirector = pruneManualCredits(title.manualDirector ?? [], director);
-		title.manualCast = pruneManualCredits(title.manualCast ?? [], cast);
-		await this.save();
-		await this.updateMarkdownFile(title);
+		this.syncCache(title);
+		this.notifyListeners();
 	}
 
-	/** Studio backfill; same no-dateModified rules as updateCredits. Caches the TMDB id it resolved. */
+	/** Studio backfill; cache only, like updateCredits. Caches the TMDB id it resolved. */
 	async updateStudio(
 		titleId: string,
 		studio: string[],
@@ -235,19 +419,18 @@ export class DataManager {
 		const title = this.getTitle(titleId);
 		if (!title) return;
 		title.studio = studio;
-		title.manualStudio = pruneManualCredits(title.manualStudio ?? [], studio);
 		if (tmdbId && tmdbMediaType) {
 			title.tmdbId = tmdbId;
 			title.tmdbMediaType = tmdbMediaType;
 		}
-		await this.save();
-		await this.updateMarkdownFile(title);
+		this.syncCache(title);
+		this.notifyListeners();
 	}
 
 	/**
 	 * Replaces one field's user-added credits (the add modal commits additions and removals in one
 	 * call). Uncapped by design — the API cap trims a fetched cast, not user input. Like
-	 * updateCredits: data.json + frontmatter, no dateModified stamp.
+	 * updateCredits: no dateModified stamp.
 	 */
 	async updateManualCredits(titleId: string, field: CreditsField, names: string[]): Promise<void> {
 		const title = this.getTitle(titleId);
@@ -258,13 +441,13 @@ export class DataManager {
 		if (field === 'director') title.manualDirector = cleaned;
 		else if (field === 'cast') title.manualCast = cleaned;
 		else title.manualStudio = cleaned;
-		await this.save();
-		await this.updateMarkdownFile(title);
+		await this.writeTitle(title);
+		this.notifyListeners();
 	}
 
 	/**
-	 * Silent favorite toggle: data.json + frontmatter, no notify — the detail modal updates its own
-	 * button and flags the change for the on-close refresh. No dateModified stamp.
+	 * Silent favorite toggle: note only, no notify — the detail modal updates its own button and
+	 * flags the change for the on-close refresh. No dateModified stamp.
 	 */
 	async setFavorite(id: string, favorite: boolean): Promise<void> {
 		const title = this.getTitle(id);
@@ -273,15 +456,14 @@ export class DataManager {
 		// stamp drives the Favorites shelf order (newest first); cleared on unfavorite
 		if (favorite) title.dateFavorited = new Date().toISOString();
 		else delete title.dateFavorited;
-		await this.saveOnly();
-		await this.updateMarkdownFile(title);
+		await this.writeTitle(title);
 	}
 
 	private schedulePosterSave(): void {
 		if (this.posterSaveTimer !== null) return;
 		this.posterSaveTimer = window.setTimeout(() => {
 			this.posterSaveTimer = null;
-			void this.saveOnly();
+			this.local.queueSave();
 		}, this.POSTER_SAVE_DEBOUNCE_MS);
 	}
 
@@ -290,79 +472,69 @@ export class DataManager {
 		if (this.posterSaveTimer !== null) {
 			window.clearTimeout(this.posterSaveTimer);
 			this.posterSaveTimer = null;
-			void this.saveOnly();
+			this.local.queueSave();
 		}
 	}
 
-	/** Synchronously flush a pending poster save during plugin unload. */
+	/** Flush a pending poster save during plugin unload. */
 	flushPosterSaveSync(): void {
-		if (this.posterSaveTimer !== null) {
-			window.clearTimeout(this.posterSaveTimer);
-			this.posterSaveTimer = null;
-			this.lastSelfSaveTime = Date.now();
-			void this.plugin.saveData(this.data);
-		}
+		this.flushPosterSave();
+		void this.local.flush();
 	}
 
-	/** Public access to the full in-memory data snapshot. */
-	getData(): WatchLogData {
-		return this.data;
+	/** Drafts-tab state (device-local). */
+	getDrafts(): Partial<DraftPersistState> | undefined {
+		return this.local.data.drafts;
+	}
+
+	setDrafts(state: DraftPersistState): void {
+		this.local.data.drafts = state;
+		this.local.queueSave();
+	}
+
+	/** Shared settings of the base file; never holds API keys. */
+	getSharedSettings(): Record<string, unknown> {
+		return structuredClone(this.shared.get().settings);
+	}
+
+	/** Backup restore: writes the shared settings into the base file. */
+	async restoreSharedSettings(settings: Record<string, unknown>): Promise<void> {
+		await this.shared.update(settings);
 	}
 
 	/** Centralized debounced save for cross-cutting paths (settings, drafts, lists). */
 	queueSave(): void {
-		if (this.queuedSaveTimer !== null) {
-			window.clearTimeout(this.queuedSaveTimer);
-		}
-		this.queuedSaveTimer = window.setTimeout(() => {
-			this.queuedSaveTimer = null;
-			void this.saveOnly();
-		}, this.QUEUED_SAVE_DEBOUNCE_MS);
+		this.local.queueSave();
 	}
 
 	flushQueuedSaveSync(): void {
-		if (this.queuedSaveTimer !== null) {
-			window.clearTimeout(this.queuedSaveTimer);
-			this.queuedSaveTimer = null;
-			this.lastSelfSaveTime = Date.now();
-			void this.plugin.saveData(this.data);
-		}
+		void this.local.flush();
 	}
 
-	/** Save settings through the centralized data path. */
-	async saveSettings(settings: WatchLogPluginSettings): Promise<void> {
-		this.data.settings = settings;
-		await this.saveOnly();
-	}
-
-	private async saveOnly(): Promise<void> {
-		this.lastSelfSaveTime = Date.now();
-		await this.plugin.saveData(this.data);
-		this.lastSelfSaveTime = Date.now();
+	/** Writes data.json now. Reading, games and history route their saves through here. */
+	async persist(): Promise<void> {
+		this.local.queueSave();
+		await this.local.flush();
 	}
 
 	/**
-	 * Persist the full in-memory data object to data.json. Reading and activity-log data live as
-	 * keys (`reading` / `history`) in this same object, so those managers route their saves through
-	 * here. saveOnly() stamps lastSelfSaveTime, so the 'raw' watcher ignores the echo.
+	 * Writes titles changed via updateTitleSilent (and pending episode toggles), syncs in-memory API
+	 * data to the cache, then notifies.
 	 */
-	async persist(): Promise<void> {
-		await this.saveOnly();
-	}
-
 	async save(): Promise<void> {
-		// an immediate save supersedes any pending debounced one — memory already has those changes
+		// an immediate save supersedes any pending debounced one
 		if (this.pendingSaveTimer !== null) {
 			window.clearTimeout(this.pendingSaveTimer);
 			this.pendingSaveTimer = null;
-			this.pendingMdTitleIds.clear();
 		}
-		await this.saveOnly();
+		await this.writePending();
+		// a copy from before a change underneath (season refill, external edit) holds outdated API data
+		for (const { view } of this.views.values()) if (this.basedOnStored(view)) this.syncCache(view);
 		this.notifyListeners();
 	}
 
 	/**
-	 * Schedule a debounced silent save (no notify, no re-render). Later calls reset the timer;
+	 * Schedule a debounced silent note write (no notify, no re-render). Later calls reset the timer;
 	 * callers own any targeted DOM updates.
 	 */
 	scheduleEpisodeSave(titleIdForMd: string): void {
@@ -381,39 +553,52 @@ export class DataManager {
 			window.clearTimeout(this.pendingSaveTimer);
 			this.pendingSaveTimer = null;
 		}
-		if (this.pendingMdTitleIds.size === 0) return;
-		const ids = Array.from(this.pendingMdTitleIds);
+		await this.writePending();
+	}
+
+	/** Writes the titles with pending silent or episode edits. */
+	private async writePending(): Promise<void> {
+		const ids = new Set([...this.dirty, ...this.pendingMdTitleIds]);
+		this.dirty.clear();
 		this.pendingMdTitleIds.clear();
-		await this.saveOnly();
 		for (const id of ids) {
 			const t = this.getTitle(id);
-			if (t) await this.updateMarkdownFile(t);
+			if (t) await this.writeTitle(t);
+			else new Notice(`An edit of "${id}" was not saved: its note can no longer be read.`);
 		}
 	}
 
-	/** Synchronously flush a pending episode-save during plugin unload (no awaits). */
+	/** Starts a pending episode write during plugin unload (cannot be awaited there). */
 	flushPendingSaveSync(): void {
-		if (this.pendingSaveTimer !== null) {
-			window.clearTimeout(this.pendingSaveTimer);
-			this.pendingSaveTimer = null;
-		}
-		if (this.pendingMdTitleIds.size === 0) return;
-		const ids = Array.from(this.pendingMdTitleIds);
-		this.pendingMdTitleIds.clear();
-		this.lastSelfSaveTime = Date.now();
-		void this.plugin.saveData(this.data);
-		for (const id of ids) {
-			const t = this.getTitle(id);
-			if (t) void this.updateMarkdownFile(t);
-		}
+		void this.flushPendingSave();
 	}
 
+	// Reads
+
+	/** Mutable copy of an index entry; stable per id until the note changes underneath. */
+	private viewOf(src: WatchLogTitle): WatchLogTitle {
+		const slot = this.views.get(src.id);
+		if (slot && slot.src === src) return slot.view;
+		// a pending silent edit keeps its copy until written
+		if (slot && (this.dirty.has(src.id) || this.pendingMdTitleIds.has(src.id))) return slot.view;
+		const view = structuredClone(src);
+		view.notes = this.notes.get(src.id) ?? '';
+		setNotesBaseline(view, view.notes);
+		// nothing cached yet: '' (not undefined) lets the lazy poster fetch pick it up
+		if (view.posterUrl === undefined) view.posterUrl = '';
+		this.views.set(src.id, { src, view });
+		setBaseline(view, src);
+		return view;
+	}
+
+	/** Library titles; Maybe notes are listed by getMaybeTitles. */
 	getTitles(): WatchLogTitle[] {
-		return this.data.titles ?? [];
+		return this.index.titles().filter((t) => !t.maybe).map((t) => this.viewOf(t));
 	}
 
 	getTitle(id: string): WatchLogTitle | undefined {
-		return (this.data.titles ?? []).find((t) => t.id === id);
+		const e = this.index.get(id);
+		return e?.kind === 'title' ? this.viewOf(e.entry) : undefined;
 	}
 
 	async addTitle(title: WatchLogTitle): Promise<void> {
@@ -422,100 +607,73 @@ export class DataManager {
 		if (title.posterUrl === undefined) title.posterUrl = '';
 		if (title.trailerUrl === undefined) title.trailerUrl = '';
 		if (title.manualTrailerUrl === undefined) title.manualTrailerUrl = '';
-		const autoUpcoming = this.canAutoAddToUpcoming(title);
-		if (autoUpcoming) {
-			title.status = 'To be released';
-		}
-		this.data.titles.push(title);
-		await this.save();
-		if (autoUpcoming) {
-			await this.autoAddToUpcoming(title);
-		}
-		await this.updateMarkdownFile(title);
+		// a future release date makes it "To be released", which puts it in Upcoming
+		if (this.canAutoAddToUpcoming(title)) title.status = 'To be released';
+		await this.insertNote(title);
+		this.notifyListeners();
 		const now = new Date().toISOString();
 		void this.historyManager?.log(
 			`${title.title} (${title.type}) was added on ${formatHistoryDate(now)}`,
-			{ source: 'Watchlist', action: 'added', titleName: title.title },
+			{ source: 'Watchlist', action: 'added', titleName: title.title, titleId: title.id },
 		);
 	}
 
 	/** Add without re-rendering. Caller must call notifyChange() after the batch. */
 	async addTitleSilent(title: WatchLogTitle): Promise<void> {
-		const autoUpcoming = this.canAutoAddToUpcoming(title);
-		if (autoUpcoming) {
-			title.status = 'To be released';
-		}
-		this.data.titles.push(title);
-		await this.saveOnly();
-		if (autoUpcoming) {
-			await this.autoAddToUpcoming(title);
-		}
-		await this.updateMarkdownFile(title);
+		if (this.canAutoAddToUpcoming(title)) title.status = 'To be released';
+		await this.insertNote(title);
 	}
 
-	/** Batch-add: push all titles into memory, save once, then write all MD files. */
+	/**
+	 * Creates the title's note, or takes over a Maybe note at the same path: same note, `maybe`
+	 * dropped, fields from `title`; its `## Notes` survive when `title` brings none.
+	 */
+	private async insertNote(title: WatchLogTitle): Promise<void> {
+		const layout = this.layout();
+		const id = layout.idFromPath(layout.notePath('title', title.title, title.type));
+		const maybe = this.index.get(id);
+		if (maybe?.kind !== 'title' || !maybe.entry.maybe) {
+			await this.createNote(title);
+			return;
+		}
+		title.id = id;
+		delete title.maybe;
+		if (!title.notes) title.notes = this.notes.get(id) ?? '';
+		setNotesBaseline(title, this.notes.get(id) ?? '');
+		this.views.set(id, { src: maybe.entry, view: title });
+		setBaseline(title, maybe.entry);
+		await this.writeTitle(title);
+	}
+
+	/** Batch-add: one note per title; ids are rewritten to the created note paths. */
 	async addTitleBatch(titles: WatchLogTitle[]): Promise<void> {
-		const upcoming: WatchLogTitle[] = [];
 		for (const title of titles) {
-			if (this.canAutoAddToUpcoming(title)) {
-				title.status = 'To be released';
-				upcoming.push(title);
-			}
-			this.data.titles.push(title);
-		}
-		await this.saveOnly();
-		for (const title of upcoming) {
-			await this.autoAddToUpcoming(title);
-		}
-		for (const title of titles) {
-			await this.updateMarkdownFile(title);
+			await this.addTitleSilent(title);
 		}
 	}
 
-	/** Batch-update via mutator. Single save + single notify; MD files updated. */
+	/** Batch-update via mutator. Single notify; notes updated. */
 	async batchUpdate(ids: string[], mutator: (t: WatchLogTitle) => void): Promise<void> {
-		const updated: WatchLogTitle[] = [];
+		let updated = 0;
 		for (const id of ids) {
 			const t = this.getTitle(id);
 			if (!t) continue;
 			mutator(t);
 			t.dateModified = new Date().toISOString();
-			updated.push(t);
+			await this.writeTitle(t);
+			updated++;
 		}
-		if (updated.length === 0) return;
-		await this.save();
-		for (const t of updated) {
-			await this.updateMarkdownFile(t);
-		}
+		if (updated > 0) this.notifyListeners();
 	}
 
-	/** Remove multiple titles in one batch: single save, MD files deleted in chunks of 10. */
+	/** Remove multiple titles in one batch: single notify, notes trashed in chunks of 10. */
 	async removeTitlesBatch(ids: string[]): Promise<void> {
 		const CHUNK_SIZE = 10;
-		const titlesToDelete: WatchLogTitle[] = [];
-
-		for (const id of ids) {
-			const title = this.getTitle(id);
-			if (title) titlesToDelete.push(title);
-			this.data.titles = this.data.titles.filter((t) => t.id !== id);
-			for (const group of this.data.groups) {
-				group.titleIds = group.titleIds.filter((tid) => tid !== id);
-			}
-			if (this.data.airtime) {
-				this.data.airtime = this.data.airtime.filter((e) => e.titleId !== id || e.source === 'reading');
-			}
-			const d = this.data as unknown as Record<string, unknown>;
-			if (d['collapsedSeasons']) {
-				delete (d['collapsedSeasons'] as Record<string, number[]>)[id];
-			}
+		for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+			const chunk = ids.slice(i, i + CHUNK_SIZE);
+			await Promise.all(chunk.map((id) => this.deleteNote(id)));
 		}
-
-		await this.save();
-
-		for (let i = 0; i < titlesToDelete.length; i += CHUNK_SIZE) {
-			const chunk = titlesToDelete.slice(i, i + CHUNK_SIZE);
-			await Promise.all(chunk.map((t) => this.deleteMarkdownFile(t)));
-		}
+		this.notifyListeners();
 	}
 
 	canAutoAddToUpcoming(title: WatchLogTitle): boolean {
@@ -528,214 +686,120 @@ export class DataManager {
 		return release > today;
 	}
 
-	async autoAddToUpcoming(title: WatchLogTitle): Promise<void> {
-		if (!this.data.airtime) this.data.airtime = [];
-		// avoid duplicates
-		if (this.data.airtime.some((e) => e.titleId === title.id)) return;
-		const entry: import('./types').AirtimeEntry = {
-			id: this.generateAirtimeId(title.id),
-			titleId: title.id,
-			schedule: {
-				recurrence: 'once',
-				releaseDate: title.releaseDate ?? undefined,
-			},
-			dateAdded: new Date().toISOString(),
-		};
-		this.data.airtime.push(entry);
-		await this.plugin.saveData(this.data);
-	}
+	/** Upcoming is derived from "To be released" + releaseDate (see getAirtimeEntries): nothing to add. */
+	async autoAddToUpcoming(_title: WatchLogTitle): Promise<void> {}
 
 	/**
-	 * Reconciles everything a release-date edit ripples into: an existing 'once' Upcoming entry's
-	 * date, the auto "To be released" status, and whether the title belongs in Upcoming at all. A
-	 * future full date forces the status and adds the entry; a past or cleared date reverts a
-	 * "To be released" title to "Plan to watch" and drops its entry.
+	 * Reconciles the auto "To be released" status with a release-date edit; Upcoming follows from it.
+	 * A future full date forces the status; a past or cleared date reverts a "To be released" title
+	 * to "Plan to watch" and drops its manual schedule.
 	 *
 	 * Call after `releaseDate` has been written and persisted.
 	 */
 	async applyReleaseDateChange(title: WatchLogTitle): Promise<void> {
-		// keep a one-off Upcoming entry pointing at the new date
-		const existing = this.getAirtimeEntries().find((e) => e.titleId === title.id);
-		if (existing && existing.schedule.recurrence === 'once') {
-			const next = title.releaseDate ?? undefined;
-			if (existing.schedule.releaseDate !== next) {
-				existing.schedule.releaseDate = next;
-				await this.updateAirtimeEntry(existing);
-			}
-		}
-
 		const releaseDate = title.releaseDate;
 		const isFullDate = !!releaseDate && /^\d{4}-\d{2}-\d{2}$/.test(releaseDate);
-
-		if (isFullDate) {
-			if (isReleaseDateFuture(releaseDate)) {
-				if (title.status !== 'To be released') {
-					title.status = 'To be released';
-					await this.updateTitle(title);
-				}
-				if (!this.getAirtimeEntries().some((e) => e.titleId === title.id)) {
-					await this.autoAddToUpcoming(title);
-				}
-			} else if (title.status === 'To be released') {
-				// date is past/today — the auto status no longer applies
-				title.status = 'Plan to watch';
+		if (isFullDate && isReleaseDateFuture(releaseDate)) {
+			if (title.status !== 'To be released') {
+				title.status = 'To be released';
 				await this.updateTitle(title);
-				await this.removeAirtimeEntriesForTitle(title.id);
 			}
-		} else if (!releaseDate && title.status === 'To be released') {
+		} else if ((isFullDate || !releaseDate) && title.status === 'To be released') {
+			// date is past/today or cleared — the auto status no longer applies
 			title.status = 'Plan to watch';
+			delete title.airtime;
 			await this.updateTitle(title);
-			await this.removeAirtimeEntriesForTitle(title.id);
 		}
 	}
 
-	/** Remove all Upcoming entries for a title (e.g. when the date goes past). */
+	/** Drops a title's manual Upcoming schedule (e.g. when the date goes past). */
 	async removeAirtimeEntriesForTitle(titleId: string): Promise<void> {
-		const before = (this.data.airtime ?? []).length;
-		this.data.airtime = (this.data.airtime ?? []).filter(
-			(e) => e.titleId !== titleId || (e.source !== undefined && e.source !== 'watchlist'),
-		);
-		if ((this.data.airtime ?? []).length !== before) {
-			await this.save();
-		}
+		const title = this.getTitle(titleId);
+		if (!title?.airtime) return;
+		delete title.airtime;
+		await this.writeTitle(title);
+		this.notifyListeners();
 	}
 
-	// Reading → Upcoming bridge. Reading items live under data.reading, but their Upcoming entries
-	// share the airtime list with watch titles — mirroring autoAddToUpcoming.
+	// Reading / Games → Upcoming bridge. Their schedules live on their own notes; a future release
+	// date shows up on its own, so the auto-add calls are no-ops.
 
-	/** Auto-adds a reading item with a future release date to Upcoming. No-op if one exists. */
-	async autoAddReadingToUpcoming(item: Book | Manga, kind: 'book' | 'manga'): Promise<void> {
-		if (!this.data.airtime) this.data.airtime = [];
-		if (this.data.airtime.some((e) => e.source === 'reading' && e.titleId === item.id)) return;
-		const entry: AirtimeEntry = {
-			id: this.generateReadingAirtimeId(item.id),
-			titleId: item.id,
-			source: 'reading',
-			readingKind: kind,
-			schedule: {
-				recurrence: 'once',
-				releaseDate: item.releaseDate ?? undefined,
-			},
-			dateAdded: new Date().toISOString(),
-		};
-		this.data.airtime.push(entry);
-		await this.plugin.saveData(this.data);
-	}
+	async autoAddReadingToUpcoming(_item: Book | Manga, _kind: 'book' | 'manga'): Promise<void> {}
 
-	/** Remove all Upcoming entries for a reading item (book/manga id). */
+	/** Drops a reading item's manual schedule (release date gone past, or item deleted). */
 	async removeReadingAirtimeEntries(itemId: string): Promise<void> {
-		const before = (this.data.airtime ?? []).length;
-		this.data.airtime = (this.data.airtime ?? []).filter(
-			(e) => !(e.source === 'reading' && e.titleId === itemId),
-		);
-		if ((this.data.airtime ?? []).length !== before) {
-			await this.save();
-		}
+		await this.removeNoteAirtime(itemId);
 	}
 
 	generateReadingAirtimeId(itemId: string): string {
-		const base = `airtime-reading-${itemId}`;
-		const existing = (this.data.airtime ?? []).map((e) => e.id);
-		if (!existing.includes(base)) return base;
-		let counter = 2;
-		while (existing.includes(`${base}-${counter}`)) counter++;
-		return `${base}-${counter}`;
+		return `airtime-reading-${itemId}`;
 	}
 
-	// Games → Upcoming bridge — the Reading-bridge pattern exactly.
+	async autoAddGameToUpcoming(_game: Game): Promise<void> {}
 
-	/** Auto-adds a game with a future release date to Upcoming. No-op if one exists. */
-	async autoAddGameToUpcoming(game: Game): Promise<void> {
-		if (!this.data.airtime) this.data.airtime = [];
-		if (this.data.airtime.some((e) => e.source === 'game' && e.titleId === game.id)) return;
-		const entry: AirtimeEntry = {
-			id: this.generateGameAirtimeId(game.id),
-			titleId: game.id,
-			source: 'game',
-			schedule: {
-				recurrence: 'once',
-				releaseDate: game.releaseDate ?? undefined,
-			},
-			dateAdded: new Date().toISOString(),
-		};
-		this.data.airtime.push(entry);
-		await this.plugin.saveData(this.data);
-	}
-
-	/** Remove all Upcoming entries for a game id. */
+	/** Drops a game's manual schedule (release date gone past, or game deleted). */
 	async removeGameAirtimeEntries(gameId: string): Promise<void> {
-		const before = (this.data.airtime ?? []).length;
-		this.data.airtime = (this.data.airtime ?? []).filter(
-			(e) => !(e.source === 'game' && e.titleId === gameId),
-		);
-		if ((this.data.airtime ?? []).length !== before) {
-			await this.save();
-		}
+		await this.removeNoteAirtime(gameId);
 	}
 
 	generateGameAirtimeId(gameId: string): string {
-		const base = `airtime-game-${gameId}`;
-		const existing = (this.data.airtime ?? []).map((e) => e.id);
-		if (!existing.includes(base)) return base;
-		let counter = 2;
-		while (existing.includes(`${base}-${counter}`)) counter++;
-		return `${base}-${counter}`;
+		return `airtime-game-${gameId}`;
+	}
+
+	private async removeNoteAirtime(id: string): Promise<void> {
+		const e = this.index.get(id);
+		if (!e?.entry.airtime) return;
+		if (e.kind === 'title') await this.removeAirtimeEntriesForTitle(id);
+		else if (await this.writeAirtime(e, undefined, null)) this.notifyListeners();
+	}
+
+	/** Logs rating / completion changes against the stored state. */
+	private logChanges(updated: WatchLogTitle): void {
+		const old = this.baselineOf(updated);
+		if (!old) return;
+		const now = new Date().toISOString();
+		if (old.rating !== updated.rating) {
+			void this.historyManager?.log(
+				`${updated.title} (${updated.type}) was reviewed on ${formatHistoryDate(now)}`,
+				{ source: 'Watchlist', action: 'rating', titleName: updated.title, titleId: updated.id },
+			);
+		}
+		if (old.status !== updated.status && updated.status === 'Completed') {
+			void this.historyManager?.log(
+				`${updated.title} (${updated.type}) was marked as watched on ${formatHistoryDate(now)}`,
+				{ source: 'Watchlist', action: 'completed', titleName: updated.title, titleId: updated.id },
+			);
+		}
 	}
 
 	async updateTitle(updated: WatchLogTitle): Promise<void> {
+		if (!this.getTitle(updated.id)) return;
 		updated.dateModified = new Date().toISOString();
 		if (updated.status === 'Completed') {
 			updated.priority = '';
 		}
-		const idx = this.data.titles.findIndex((t) => t.id === updated.id);
-		if (idx >= 0) {
-			const old = this.data.titles[idx]!;
-			const now = new Date().toISOString();
-			if (old.rating !== updated.rating) {
-				void this.historyManager?.log(
-					`${updated.title} (${updated.type}) was reviewed on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'rating', titleName: updated.title },
-				);
-			}
-			if (old.status !== updated.status && updated.status === 'Completed') {
-				void this.historyManager?.log(
-					`${updated.title} (${updated.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'completed', titleName: updated.title },
-				);
-			}
-			this.data.titles[idx] = updated;
-			await this.save();
-			await this.updateMarkdownFile(updated);
-		}
+		this.logChanges(updated);
+		this.dirty.delete(updated.id);
+		await this.writeTitle(updated);
+		this.notifyListeners();
 	}
 
 	/**
-	 * Update without saving or notifying. Caller must save() (or saveOnly + notifyChange) once after
-	 * the batch, and owns the per-title markdown update.
+	 * Update without writing or notifying. Caller must save() once after the batch (or write the note
+	 * itself via updateMarkdownFile).
 	 */
 	updateTitleSilent(updated: WatchLogTitle): void {
+		const slot = this.views.get(updated.id);
+		if (!slot) return;
 		updated.dateModified = new Date().toISOString();
 		if (updated.status === 'Completed') {
 			updated.priority = '';
 		}
-		const idx = this.data.titles.findIndex((t) => t.id === updated.id);
-		if (idx >= 0) {
-			const old = this.data.titles[idx]!;
-			const now = new Date().toISOString();
-			if (old.rating !== updated.rating) {
-				void this.historyManager?.log(
-					`${updated.title} (${updated.type}) was reviewed on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'rating', titleName: updated.title },
-				);
-			}
-			if (old.status !== updated.status && updated.status === 'Completed') {
-				void this.historyManager?.log(
-					`${updated.title} (${updated.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'completed', titleName: updated.title },
-				);
-			}
-			this.data.titles[idx] = updated;
-		}
+		this.logChanges(updated);
+		const base = this.baselineOf(updated);
+		if (base) setBaseline(updated, base);
+		slot.view = updated;
+		this.dirty.add(updated.id);
 	}
 
 	async removeTitle(id: string): Promise<void> {
@@ -744,66 +808,99 @@ export class DataManager {
 			const now = new Date().toISOString();
 			void this.historyManager?.log(
 				`${title.title} (${title.type}) was deleted on ${formatHistoryDate(now)}`,
-				{ source: 'Watchlist', action: 'deleted', titleName: title.title },
+				{ source: 'Watchlist', action: 'deleted', titleName: title.title, titleId: title.id },
 			);
 		}
-		this.data.titles = this.data.titles.filter((t) => t.id !== id);
-		for (const group of this.data.groups) {
-			group.titleIds = group.titleIds.filter((tid) => tid !== id);
-		}
-		if (this.data.airtime) {
-			this.data.airtime = this.data.airtime.filter((e) => e.titleId !== id || e.source === 'reading');
-		}
-		const d = this.data as unknown as Record<string, unknown>;
-		if (d['collapsedSeasons']) {
-			delete (d['collapsedSeasons'] as Record<string, number[]>)[id];
-		}
-		await this.save();
-		if (title) {
-			await this.deleteMarkdownFile(title);
-		}
+		await this.deleteNote(id);
+		this.notifyListeners();
 	}
 
-	// Group CRUD
+	// Groups: derived from the titles' `groups` property; a group's id is its name
 
 	getGroups(): WatchLogGroup[] {
-		return this.data.groups ?? [];
+		const byName = new Map<string, WatchLogGroup>();
+		for (const t of this.index.titles()) {
+			if (t.maybe) continue;
+			for (const name of t.groups ?? []) {
+				let g = byName.get(name);
+				if (!g) {
+					g = { id: name, name, titleIds: [], dateAdded: t.dateAdded };
+					byName.set(name, g);
+				}
+				g.titleIds.push(t.id);
+				// a group is as old as its oldest member
+				if (t.dateAdded && (!g.dateAdded || t.dateAdded < g.dateAdded)) g.dateAdded = t.dateAdded;
+			}
+		}
+		return [...byName.values()].sort((a, b) => a.dateAdded.localeCompare(b.dateAdded) || a.name.localeCompare(b.name));
 	}
 
 	getGroup(id: string): WatchLogGroup | undefined {
-		return (this.data.groups ?? []).find((g) => g.id === id);
+		return this.getGroups().find((g) => g.id === id);
 	}
 
+	/** Writes the group name onto its members. A group without members only leaves a history line. */
 	async addGroup(group: WatchLogGroup): Promise<void> {
-		this.data.groups.push(group);
-		await this.save();
+		if (!this.getGroup(group.name)) {
+			void this.historyManager?.log(`Group "${group.name}" was created`, { source: 'Watchlist' });
+		}
+		group.id = group.name;
+		for (const id of group.titleIds) {
+			await this.setTitleGroups(id, (names) => [...names, group.name]);
+		}
+		this.notifyListeners();
 	}
 
+	/** Applies a rename (new `name`, same `id`) and membership changes to the members' `groups`. */
 	async updateGroup(updated: WatchLogGroup): Promise<void> {
-		const idx = this.data.groups.findIndex((g) => g.id === updated.id);
-		if (idx >= 0) {
-			this.data.groups[idx] = updated;
-			await this.save();
+		const old = this.getGroup(updated.id);
+		if (!old) return;
+		const keep = new Set(updated.titleIds);
+		for (const id of new Set([...old.titleIds, ...updated.titleIds])) {
+			await this.setTitleGroups(id, (names) => {
+				const i = names.indexOf(old.name);
+				const rest = names.filter((n) => n !== old.name);
+				if (!keep.has(id)) return rest;
+				rest.splice(i < 0 ? rest.length : i, 0, updated.name);
+				return rest;
+			});
 		}
+		if (old.name !== updated.name && this.local.data.ui.pinnedGroup === old.id) {
+			this.local.data.ui.pinnedGroup = updated.name;
+			this.local.queueSave();
+		}
+		this.notifyListeners();
 	}
 
 	async removeGroup(id: string): Promise<void> {
-		this.data.groups = this.data.groups.filter((g) => g.id !== id);
-		await this.save();
+		const group = this.getGroup(id);
+		if (!group) return;
+		for (const titleId of group.titleIds) {
+			await this.setTitleGroups(titleId, (names) => names.filter((n) => n !== group.name));
+		}
+		this.notifyListeners();
 	}
 
 	async addTitleToGroup(groupId: string, titleId: string): Promise<void> {
-		const group = this.getGroup(groupId);
-		if (!group) return;
-		if (!group.titleIds.includes(titleId)) {
-			group.titleIds.push(titleId);
-			await this.updateGroup(group);
-		}
+		await this.setTitleGroups(titleId, (names) => [...names, groupId]);
+		this.notifyListeners();
+	}
+
+	/** Rewrites one title's `groups` (deduplicated); no dateModified stamp, like the other backfills. */
+	private async setTitleGroups(id: string, fn: (names: string[]) => string[]): Promise<void> {
+		const title = this.getTitle(id);
+		if (!title) return;
+		const before = title.groups ?? [];
+		const next = [...new Set(fn([...before]))];
+		if (sameJson(before, next)) return;
+		if (next.length > 0) title.groups = next;
+		else delete title.groups;
+		await this.writeTitle(title);
 	}
 
 	getGroupedTitleIds(): Set<string> {
 		const ids = new Set<string>();
-		for (const group of (this.data.groups ?? [])) {
+		for (const group of this.getGroups()) {
 			for (const id of group.titleIds) {
 				ids.add(id);
 			}
@@ -811,108 +908,304 @@ export class DataManager {
 		return ids;
 	}
 
+	/** A group's id is its name; an existing name joins that group. */
 	generateGroupId(name: string): string {
-		let id =
-			'group-' +
-			name
-				.toLowerCase()
-				.replace(/[^a-z0-9]+/g, '-')
-				.replace(/^-|-$/g, '');
-		const existing = (this.data.groups ?? []).map((g) => g.id);
-		if (!existing.includes(id)) return id;
-		let counter = 2;
-		while (existing.includes(`${id}-${counter}`)) counter++;
-		return `${id}-${counter}`;
+		return name.trim();
 	}
 
-	// Pinned group
+	// Pinned group (device-local UI state)
 
 	getPinnedGroupId(): string | null {
-		return this.data.pinnedGroupId ?? null;
+		return this.local.data.ui.pinnedGroup ?? null;
 	}
 
 	async setPinnedGroupId(id: string | null): Promise<void> {
-		this.data.pinnedGroupId = id;
-		await this.save();
+		this.local.data.ui.pinnedGroup = id;
+		await this.persist();
+		this.notifyListeners();
 	}
 
-	// Saved filter preset
+	// Saved filter preset (device-local UI state)
 
 	getSavedFilterPreset(): SavedFilterPreset | null {
-		return this.data.savedFilterPreset ?? null;
+		return this.local.data.ui.savedFilterPreset ?? null;
 	}
 
 	async setSavedFilterPreset(preset: SavedFilterPreset | null): Promise<void> {
-		this.data.savedFilterPreset = preset;
-		await this.save();
+		this.local.data.ui.savedFilterPreset = preset;
+		await this.persist();
+		this.notifyListeners();
 	}
 
-	// Airtime CRUD
+	// Upcoming: manual schedules from the notes' airtime keys, plus a derived 'once' entry for every
+	// "To be released" entry with a release date. One entry per note, with a stable id.
 
 	getAirtimeEntries(): AirtimeEntry[] {
-		return this.data.airtime ?? [];
+		const out: AirtimeEntry[] = [];
+		for (const t of this.index.titles()) {
+			if (t.maybe) continue;
+			const e = this.airtimeEntryOf({ kind: 'title', entry: t });
+			if (e) out.push(e);
+		}
+		for (const kind of ['book', 'manga', 'game'] as const) {
+			const list = kind === 'book' ? this.index.books() : kind === 'manga' ? this.index.manga() : this.index.games();
+			for (const entry of list) {
+				const e = this.airtimeEntryOf({ kind, entry } as AnyEntry);
+				if (e) out.push(e);
+			}
+		}
+		return out;
 	}
 
-	async addAirtimeEntry(entry: AirtimeEntry): Promise<void> {
-		if (!this.data.airtime) this.data.airtime = [];
-		this.data.airtime.push(entry);
-		await this.save();
+	private airtimeEntryOf(e: AnyEntry): AirtimeEntry | null {
+		const item = e.entry;
+		const base: AirtimeEntry =
+			e.kind === 'title'
+				? { id: this.generateAirtimeId(item.id), titleId: item.id, schedule: { recurrence: 'once' }, dateAdded: item.dateAdded }
+				: e.kind === 'game'
+					? { id: this.generateGameAirtimeId(item.id), titleId: item.id, source: 'game', schedule: { recurrence: 'once' }, dateAdded: item.dateAdded }
+					: { id: this.generateReadingAirtimeId(item.id), titleId: item.id, source: 'reading', readingKind: e.kind, schedule: { recurrence: 'once' }, dateAdded: item.dateAdded };
+		const a = item.airtime;
+		if (a) {
+			base.schedule = scheduleOf(a, item.releaseDate);
+			if (a.season !== undefined) base.currentSeason = a.season;
+			if (a.episode !== undefined) base.currentEpisode = a.episode;
+			if (a.acknowledged) base.lastAcknowledgedDate = a.acknowledged;
+			// the API pointer wins over the note's: a tick only acknowledges it
+			const airing = this.airingOf(e);
+			if (airing?.nextEpisode !== undefined) {
+				base.currentEpisode = airing.nextEpisode;
+				if (airing.nextSeason !== undefined) base.currentSeason = airing.nextSeason;
+			}
+			return base;
+		}
+		if (!this.isAwaitingRelease(e) || !item.releaseDate) return null;
+		base.schedule.releaseDate = item.releaseDate;
+		return base;
 	}
 
-	async updateAirtimeEntry(updated: AirtimeEntry): Promise<void> {
-		if (!this.data.airtime) return;
-		const idx = this.data.airtime.findIndex((e) => e.id === updated.id);
-		if (idx >= 0) {
-			this.data.airtime[idx] = updated;
-			await this.save();
+	/**
+	 * "To be released" with a release date. Reading and Games force that status while the date is
+	 * in the future, so a future date counts there even before the status is written.
+	 */
+	private isAwaitingRelease(e: AnyEntry): boolean {
+		const { status, releaseDate } = e.entry;
+		if (!releaseDate) return false;
+		if (e.kind === 'title') return status === 'To be released';
+		const auto = e.kind === 'game' ? GAME_AUTO_STATUS : 'To be released';
+		return status === auto || isReleaseDateFuture(releaseDate);
+	}
+
+	/** Cached API airing data of a recurring watch schedule; other entries have none. */
+	private airingOf(e: AnyEntry): EntryCache['airing'] | undefined {
+		if (e.kind !== 'title' || !e.entry.airtime || e.entry.airtime.recurrence === 'once') return undefined;
+		return this.local.getCache(e.entry.id)?.airing;
+	}
+
+	/** True when the entry's episode pointer comes from the API cache instead of the note. */
+	isAiringTracked(entry: AirtimeEntry): boolean {
+		const e = this.index.get(entry.titleId);
+		return !!e && this.airingOf(e)?.nextEpisode !== undefined;
+	}
+
+	/**
+	 * Tick on an aired unit: records the acknowledgement so the countdown resets. Without an API
+	 * pointer it also advances the note's unit; with one, the API moves the pointer.
+	 */
+	async tickAirtimeEntry(entry: AirtimeEntry, date: string): Promise<void> {
+		const e = this.index.get(entry.titleId);
+		if (e?.entry.airtime && this.isAiringTracked(entry)) {
+			if (await this.writeAirtime(e, { ...e.entry.airtime, acknowledged: date }, null)) this.notifyListeners();
+			return;
+		}
+		await this.updateAirtimeEntry({ ...entry, currentEpisode: (entry.currentEpisode ?? 1) + 1, lastAcknowledgedDate: date });
+	}
+
+	/**
+	 * Reloads the airing pointer of a title from its API into the cache through the shared queue.
+	 * The persisted last check (apiCheck.airing) sets the deadline; `force` skips only that. Never writes the note.
+	 */
+	async refreshAiring(id: string, force = false): Promise<void> {
+		const e = this.index.get(id);
+		if (e?.kind !== 'title' || this.airingInFlight.has(id) || !this.apiCheckDue(id, 'airing', force)) return;
+		this.airingInFlight.add(id);
+		try {
+			const outcome = await this.apiQueue.enqueue(() => this.plugin.apiService.fetchAiring(e.entry));
+			if (this.index.get(id)?.kind !== 'title') return;
+			this.recordApiCheck(id, 'airing', outcome.status, outcome.status === 'ok' ? { airing: outcome.value } : {});
+			if (outcome.status === 'ok') this.notifyListeners();
+		} catch (err) {
+			console.warn(`WatchLog: could not refresh airing data of ${id}`, err);
+		} finally {
+			this.airingInFlight.delete(id);
 		}
 	}
 
-	async removeAirtimeEntry(id: string): Promise<void> {
-		this.data.airtime = (this.data.airtime ?? []).filter((e) => e.id !== id);
-		await this.save();
+	/** True when removing this entry clears the item's release date: only the derived card does. */
+	removeClearsReleaseDate(entry: AirtimeEntry): boolean {
+		const e = this.index.get(entry.titleId);
+		return !!e && !e.entry.airtime && this.isAwaitingRelease(e);
 	}
 
+	async addAirtimeEntry(entry: AirtimeEntry): Promise<void> {
+		await this.updateAirtimeEntry(entry);
+	}
+
+	/** Writes the entry's schedule to its note; a 'once' date goes to the note's releaseDate. */
+	async updateAirtimeEntry(updated: AirtimeEntry): Promise<void> {
+		const e = this.index.get(updated.titleId);
+		if (!e) return;
+		const releaseDate = updated.schedule.recurrence === 'once' ? updated.schedule.releaseDate ?? null : null;
+		if (await this.writeAirtime(e, toEntryAirtime(updated), releaseDate)) this.notifyListeners();
+	}
+
+	async removeAirtimeEntry(id: string): Promise<void> {
+		await this.removeAirtimeEntriesBatch([id]);
+	}
+
+	/**
+	 * Removes what the card shows: a manual schedule drops only its airtime keys (the release date
+	 * stays, so a "To be released" item falls back to its derived premiere card); a derived card
+	 * clears the release date, and the status follows from the usual release-date rules.
+	 */
 	async removeAirtimeEntriesBatch(ids: string[]): Promise<void> {
 		if (ids.length === 0) return;
-		const removeSet = new Set(ids);
-		this.data.airtime = (this.data.airtime ?? []).filter((e) => !removeSet.has(e.id));
-		await this.save();
+		const remove = new Set(ids);
+		for (const entry of this.getAirtimeEntries().filter((x) => remove.has(x.id))) {
+			const e = this.index.get(entry.titleId);
+			if (!e) continue;
+			if (e.entry.airtime) {
+				await this.writeAirtime(e, undefined, null);
+			} else if (e.kind === 'title') {
+				const title = this.getTitle(e.entry.id);
+				if (!title) continue;
+				title.releaseDate = null;
+				await this.writeTitle(title);
+				await this.applyReleaseDateChange(title);
+			} else {
+				await this.clearReleaseDate(e);
+			}
+		}
+		this.notifyListeners();
 	}
 
-	// Maybe CRUD
+	/** Reading / game release date removal through their managers (history, release-status rules). */
+	private async clearReleaseDate(e: AnyEntry): Promise<void> {
+		if (e.kind === 'book' || e.kind === 'manga') {
+			const rdm = this.plugin.readingDataManager;
+			const item = e.kind === 'book' ? rdm?.getBook(e.entry.id) : rdm?.getManga(e.entry.id);
+			if (!rdm || !item) return;
+			item.releaseDate = null;
+			if (e.kind === 'book') await rdm.updateBook(item as Book);
+			else await rdm.updateManga(item as Manga);
+		} else if (e.kind === 'game') {
+			const gdm = this.plugin.gameDataManager;
+			const game = gdm?.getGame(e.entry.id);
+			if (!gdm || !game) return;
+			game.releaseDate = null;
+			await gdm.updateGame(game);
+		}
+	}
+
+	/**
+	 * Sets (or with undefined removes) the airtime keys of an entry's note, plus the 'once' release
+	 * date when given. Titles go through writeTitle; other notes get just these keys.
+	 */
+	private async writeAirtime(e: AnyEntry, airtime: EntryAirtime | undefined, releaseDate: string | null): Promise<boolean> {
+		if (e.kind === 'title') {
+			const title = this.getTitle(e.entry.id);
+			if (!title) return false;
+			if (airtime) title.airtime = airtime;
+			else delete title.airtime;
+			if (releaseDate) title.releaseDate = releaseDate;
+			await this.writeTitle(title);
+			return true;
+		}
+		const file = this.fileOf(e.entry.id);
+		if (!file) return false;
+		const id = e.entry.id;
+		const kind = e.kind;
+		try {
+			await this.app.fileManager.processFrontMatter(file, (raw: Record<string, unknown>) => {
+				for (const key of AIRTIME_KEYS) delete raw[key];
+				encodeAirtime(airtime, raw);
+				if (releaseDate) raw.releaseDate = releaseDate;
+				const fm = { ...raw };
+				this.index.applyLocal(
+					kind === 'game'
+						? { kind, entry: decodeGame(id, fm).entry }
+						: kind === 'book'
+							? { kind, entry: decodeBook(id, fm).entry }
+							: { kind, entry: decodeManga(id, fm).entry },
+				);
+			});
+			return true;
+		} catch (err) {
+			console.warn(`WatchLog: could not update frontmatter of ${file.path}`, err);
+			new Notice(`Could not update "${file.basename}": its frontmatter is not valid YAML.`);
+			return false;
+		}
+	}
+
+	// Maybe: title notes flagged `maybe: true`, kept out of getTitles()
 
 	getMaybeTitles(): MaybeTitle[] {
-		return this.data.maybe ?? [];
+		return this.index.titles()
+			.filter((t) => t.maybe)
+			.map((t) => ({
+				id: t.id,
+				title: t.title,
+				type: t.type,
+				releaseDate: t.releaseDate,
+				externalLink: t.externalLink,
+				totalEpisodes: t.totalEpisodes,
+				episodeDuration: t.episodeDuration,
+				dateAdded: t.dateAdded,
+			}));
 	}
 
+	/** Creates the Maybe note; `title.id` is rewritten to its path. */
 	async addMaybeTitle(title: MaybeTitle): Promise<void> {
-		if (!this.data.maybe) this.data.maybe = [];
-		this.data.maybe.push(title);
-		await this.save();
+		const note: WatchLogTitle = {
+			id: title.id,
+			title: title.title,
+			type: title.type,
+			status: 'Plan to watch',
+			priority: '',
+			review: '',
+			rating: 0,
+			notes: '',
+			dateStarted: null,
+			dateFinished: null,
+			dateAdded: title.dateAdded,
+			dateModified: title.dateAdded,
+			totalEpisodes: title.totalEpisodes,
+			episodeDuration: title.episodeDuration,
+			releaseDate: title.releaseDate,
+			externalLink: title.externalLink,
+			seasons: [],
+			watchedEpisodes: [],
+			maybe: true,
+		};
+		await this.createNote(note);
+		title.id = note.id;
+		this.notifyListeners();
 	}
 
 	async removeMaybeTitle(id: string): Promise<void> {
-		this.data.maybe = (this.data.maybe ?? []).filter((t) => t.id !== id);
-		await this.save();
+		const e = this.index.get(id);
+		if (e?.kind !== 'title' || !e.entry.maybe) return;
+		await this.deleteNote(id);
+		this.notifyListeners();
 	}
 
+	/** Provisional id; the note path replaces it in addMaybeTitle. */
 	generateMaybeId(titleName: string): string {
-		let base = 'maybe-' + titleName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-		const existing = (this.data.maybe ?? []).map((t) => t.id);
-		if (!existing.includes(base)) return base;
-		let counter = 2;
-		while (existing.includes(`${base}-${counter}`)) counter++;
-		return `${base}-${counter}`;
+		return 'maybe-' + titleName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 	}
 
 	generateAirtimeId(titleId: string): string {
-		const base = `airtime-${titleId}`;
-		const existing = (this.data.airtime ?? []).map((e) => e.id);
-		if (!existing.includes(base)) return base;
-		let counter = 2;
-		while (existing.includes(`${base}-${counter}`)) counter++;
-		return `${base}-${counter}`;
+		return `airtime-${titleId}`;
 	}
 
 	// Time calculations
@@ -968,54 +1261,11 @@ export class DataManager {
 	}
 
 	getTotalTimeWatched(): number {
-		return (this.data.titles ?? []).reduce((sum, t) => sum + this.calcTimeWatched(t), 0);
+		return this.getTitles().reduce((sum, t) => sum + this.calcTimeWatched(t), 0);
 	}
 
 	getTotalTimeRemaining(): number {
-		return (this.data.titles ?? []).reduce((sum, t) => sum + this.calcTimeRemaining(t), 0);
-	}
-
-	// External change watcher
-
-	/**
-	 * Vault-relative path of our own data.json, as the 'raw' event reports it. Derived from the
-	 * manifest rather than hardcoded: the plugin folder is only called `watchlog` on a Community
-	 * Plugins install — BRAT and manual installs can name it anything, and a hardcoded match would
-	 * silently disable external-change detection there.
-	 */
-	private dataFilePath(): string {
-		const dir = this.plugin.manifest.dir
-			?? `${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`;
-		return normalizePath(`${dir}/data.json`);
-	}
-
-	startWatchingExternalChanges(): void {
-		const dataPath = this.dataFilePath();
-		// 'raw' fires when Obsidian Sync writes a file directly to disk (not via the vault API). A real
-		// runtime event, but not declared in Obsidian's public types.
-		const ref = (
-			this.app.vault as unknown as {
-				on(event: 'raw', cb: (path: string) => void): import('obsidian').EventRef;
-			}
-		).on('raw', (path: string) => {
-			if (normalizePath(path) === dataPath) {
-				// suppress the echo of our own saveOnly() — Obsidian fires 'raw' for any write to the data file,
-				// so without this guard each episode click cascades into load() + notifyListeners()
-				if (Date.now() - this.lastSelfSaveTime < this.SELF_SAVE_ECHO_WINDOW_MS) {
-					return;
-				}
-				void (async () => {
-					await this.load();
-					this.notifyListeners();
-					// reading + activity log live in data.json now, so a synced file carries them: re-bind those
-					// managers to the fresh object and refresh their UIs
-					await this.plugin.readingDataManager?.adoptExternalChange();
-					await this.plugin.gameDataManager?.adoptExternalChange();
-					this.plugin.historyManager?.adoptExternalChange();
-				})();
-			}
-		});
-		this.plugin.registerEvent(ref);
+		return this.getTitles().reduce((sum, t) => sum + this.calcTimeRemaining(t), 0);
 	}
 
 	// Listeners
@@ -1040,20 +1290,17 @@ export class DataManager {
 		activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
 	}
 
-	// Season collapse persistence
+	// Season collapse persistence (device-local UI state)
 
 	getCollapsedSeasonsForTitle(titleId: string): Set<number> {
-		const stored = (this.data as unknown as Record<string, unknown>)['collapsedSeasons'] as
-			| Record<string, number[]>
-			| undefined;
-		return new Set<number>(stored?.[titleId] ?? []);
+		return new Set<number>(this.local.data.ui.collapsedSeasons?.[titleId] ?? []);
 	}
 
 	async persistCollapsedSeasons(titleId: string, seasons: Set<number>): Promise<void> {
-		const d = this.data as unknown as Record<string, unknown>;
-		if (!d['collapsedSeasons']) d['collapsedSeasons'] = {};
-		(d['collapsedSeasons'] as Record<string, number[]>)[titleId] = Array.from(seasons);
-		await this.save();
+		const ui = this.local.data.ui;
+		ui.collapsedSeasons = { ...ui.collapsedSeasons, [titleId]: Array.from(seasons) };
+		await this.persist();
+		this.notifyListeners();
 	}
 
 	// Skip helpers
@@ -1088,7 +1335,7 @@ export class DataManager {
 		watched: boolean,
 	): WatchLogTitle | null {
 		const title = this.getTitle(id);
-		if (!title) return null;
+		if (!title || this.blockedBySeasonRefill(title)) return null;
 
 		if (watched) {
 			if (!title.watchedEpisodes.includes(episodeNumber)) {
@@ -1099,12 +1346,12 @@ export class DataManager {
 			if (title.totalEpisodes > 1) {
 				void this.historyManager?.log(
 					`${title.title} (${title.type}) episode ${episodeNumber} was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title },
+					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
 				);
 			} else {
 				void this.historyManager?.log(
 					`${title.title} (${title.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title },
+					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
 				);
 			}
 		} else {
@@ -1157,7 +1404,7 @@ export class DataManager {
 
 	async markEpisodeWatched(id: string, episodeNumber: number, watched: boolean): Promise<void> {
 		const title = this.getTitle(id);
-		if (!title) return;
+		if (!title || this.blockedBySeasonRefill(title)) return;
 
 		if (watched) {
 			if (!title.watchedEpisodes.includes(episodeNumber)) {
@@ -1168,12 +1415,12 @@ export class DataManager {
 			if (title.totalEpisodes > 1) {
 				void this.historyManager?.log(
 					`${title.title} (${title.type}) episode ${episodeNumber} was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title },
+					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
 				);
 			} else {
 				void this.historyManager?.log(
 					`${title.title} (${title.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title },
+					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
 				);
 			}
 		} else {
@@ -1205,7 +1452,7 @@ export class DataManager {
 		seasonLabel?: string,
 	): Promise<void> {
 		const title = this.getTitle(id);
-		if (!title) return;
+		if (!title || this.blockedBySeasonRefill(title)) return;
 
 		// capture season completion BEFORE the tick, to detect a not-complete → complete transition
 		const before = new Set(title.watchedEpisodes);
@@ -1229,7 +1476,7 @@ export class DataManager {
 				const now = new Date().toISOString();
 				void this.historyManager?.log(
 					`${title.title} (${title.type}) ${seasonLabel} was fully watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title },
+					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
 				);
 			}
 		}
@@ -1256,15 +1503,16 @@ export class DataManager {
 
 	async ensureFolders(): Promise<void> {
 		if (!this.plugin.settings.autoCreateFolders) return;
-		const root = this.plugin.settings.rootFolder;
-		await this.ensureFolder(root);
+		const layout = this.layout();
+		if (layout.root) await this.ensureFolder(layout.root);
 		for (const type of this.plugin.settings.types) {
-			await this.ensureFolder(`${root}/${type.name}`);
+			await this.ensureFolder(layout.folderFor('title', type.name));
 		}
 	}
 
 	async ensureFolder(path: string): Promise<void> {
 		const normalized = normalizePath(path);
+		if (!normalized || normalized === '/') return;
 		if (!this.app.vault.getAbstractFileByPath(normalized)) {
 			try {
 				await this.app.vault.createFolder(normalized);
@@ -1274,250 +1522,349 @@ export class DataManager {
 		}
 	}
 
-	private lastMarkdownPathById: Map<string, string> = new Map();
-
-	/** Resolves the per-title `.md` path — the same scheme used to create it. */
+	/** Path of the title's note: its id below the root. */
 	getNoteFilePath(title: WatchLogTitle): string {
-		const root = this.plugin.settings.rootFolder;
-		const safeTitle = title.title.replace(/[*"\\/<>:|?]/g, '-');
-		return normalizePath(`${root}/${title.type}/${safeTitle}.md`);
+		return this.layout().pathFromId(title.id);
 	}
 
+	/** Writes the title's note (creates it when missing). */
 	async updateMarkdownFile(title: WatchLogTitle): Promise<void> {
-		const root = this.plugin.settings.rootFolder;
-		const folderPath = normalizePath(`${root}/${title.type}`);
-		await this.ensureFolder(folderPath);
-		const filePath = this.getNoteFilePath(title);
-		const progress = this.getProgress(title);
-		const content = this.buildMarkdownContent(title, progress);
-
-		// remove the stale file first when the path changed (rename / type change)
-		const previousPath = this.lastMarkdownPathById.get(title.id);
-		if (previousPath && previousPath !== filePath) {
-			try {
-				const oldFile = this.app.vault.getAbstractFileByPath(previousPath);
-				if (oldFile instanceof TFile) {
-					await this.app.fileManager.trashFile(oldFile);
-				}
-			} catch {
-				// best-effort cleanup
-			}
-		}
-
-		const existing = this.app.vault.getAbstractFileByPath(filePath);
-		if (existing instanceof TFile) {
-			// body-preserving update: swap the leading frontmatter block, then replace ONLY the `## Notes`
-			// body. Everything else is kept verbatim — no append, no dupes (mirrors the Reading path).
-			const current = await this.app.vault.read(existing);
-			let updated = this.rebuildWithFrontmatter(current, this.buildFrontmatter(title, progress));
-			updated = this.replaceNotesSection(updated, title.notes);
-			if (updated !== current) {
-				await this.app.vault.modify(existing, updated);
-			}
-		} else {
-			// new file: write the full template (frontmatter + ## Notes from title.notes)
-			await this.app.vault.create(filePath, content);
-		}
-		this.lastMarkdownPathById.set(title.id, filePath);
+		await this.writeTitle(title);
 	}
 
-	/**
-	 * Replaces only the leading `---…---` frontmatter block, preserving the body; prepends it when
-	 * the file has none. Mirrors ReadingDataManager.rebuildWithFrontmatter.
-	 */
-	private rebuildWithFrontmatter(existing: string, frontmatter: string): string {
-		const fmMatch = existing.match(/^---\n[\s\S]*?\n---\n?/);
-		if (fmMatch) {
-			return frontmatter + '\n' + existing.slice(fmMatch[0].length);
-		}
-		// no frontmatter found — prepend it
-		return frontmatter + '\n\n' + existing;
-	}
-
-	/**
-	 * Reads the `## Notes` body back from a title note. null when the file or section is absent.
-	 * Lets manual .md edits flow back into the plugin.
-	 */
+	/** Reads the `## Notes` body back from a title note. null when the file or section is absent. */
 	async readNotesFromFile(title: WatchLogTitle): Promise<string | null> {
-		const filePath = this.getNoteFilePath(title);
-		const file = this.app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) {
-			// diagnostic: the resolved path matched no real file — the likely culprit if read-back ever
-			// stops working (sanitization / folder / rename mismatch)
-			console.warn(
-				`[WatchLog] Notes read: no note file at resolved path "${filePath}" for title "${title.title}"`,
-			);
-			return null;
-		}
-		const content = await this.app.vault.read(file);
-		const match = content.match(/(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/);
-		if (!match) return null;
-		// strip the template's leading blank line and trailing whitespace, keep internal breaks
-		return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
-	}
-
-	/**
-	 * Replaces the `## Notes` body, preserving the heading, every other section, the frontmatter and
-	 * any prose outside it. Appends the heading when missing (never duplicated). The boundary matches
-	 * readNotesFromFile, so read-then-write round-trips cleanly.
-	 */
-	private replaceNotesSection(existing: string, notesBody: string): string {
-		const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
-		if (!headingMatch || headingMatch.index === undefined) {
-			const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
-			return `${existing}${sep}\n## Notes\n\n${notesBody}\n`;
-		}
-		const bodyStart = headingMatch.index + headingMatch[0].length;
-		const after = existing.slice(bodyStart);
-		const nextHeading = after.match(/\n(?:## |# )/);
-		const bodyEnd =
-			nextHeading && nextHeading.index !== undefined
-				? bodyStart + nextHeading.index
-				: existing.length;
-		const before = existing.slice(0, bodyStart);
-		const rest = existing.slice(bodyEnd);
-		return `${before}\n${notesBody}\n${rest}`;
+		const file = this.fileOf(title.id);
+		if (!file) return null;
+		const notes = extractNotes(await this.app.vault.read(file));
+		this.notes.set(title.id, notes ?? '');
+		return notes;
 	}
 
 	async createMarkdownFileIfMissing(title: WatchLogTitle): Promise<boolean> {
-		const root = this.plugin.settings.rootFolder;
-		const folderPath = normalizePath(`${root}/${title.type}`);
-		const filePath = this.getNoteFilePath(title);
-		if (this.app.vault.getAbstractFileByPath(filePath) instanceof TFile) return false;
-		await this.ensureFolder(normalizePath(root));
-		await this.ensureFolder(folderPath);
-		const content = this.buildMarkdownContent(title, this.getProgress(title));
-		await this.app.vault.create(filePath, content);
+		if (this.fileOf(title.id)) return false;
+		await this.createNote(title);
 		return true;
 	}
 
 	/**
-	 * Rewrites ONLY the frontmatter of an existing title note, body verbatim. Does NOT create the
+	 * Rewrites every plugin-owned frontmatter key of an existing title note, body verbatim. Keys the
+	 * encoder omits are removed, except progress text kept while seasons are unknown and fields the
+	 * decoder could not read. API overrides in the note are encoded, so they stay. Does NOT create the
 	 * file — returns false then. Powers the bulk "Rewrite all frontmatter" action.
 	 */
 	async rewriteFrontmatterIfExists(title: WatchLogTitle): Promise<boolean> {
-		const filePath = this.getNoteFilePath(title);
-		const file = this.app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) return false;
-		const current = await this.app.vault.read(file);
-		const updated = this.rebuildWithFrontmatter(current, this.buildFrontmatter(title, this.getProgress(title)));
-		if (updated !== current) {
-			await this.app.vault.modify(file, updated);
+		const file = this.fileOf(title.id);
+		if (!file) return false;
+		const out = encodeTitle(title, this.getProgress(title), this.seasonsPending(title));
+		const keep = new Set(this.index.invalidFields(title.id));
+		if (!('watched' in out)) {
+			keep.add('watched');
+			keep.add('skipped');
+			// derived from the unreadable watched text: 0% would be wrong
+			if (!isMovie(title.seasons, title.totalEpisodes)) keep.add('progress');
 		}
-		this.lastMarkdownPathById.set(title.id, filePath);
-		return true;
+		return this.processFrontMatter(file, title, (raw) => {
+			for (const key of TITLE_KEYS) {
+				if (key in out) {
+					if (!keep.has(key) || !(key in raw)) raw[key] = out[key];
+				} else if (!keep.has(key)) {
+					delete raw[key];
+				}
+			}
+		});
+	}
+
+	// Note I/O
+
+	private fileOf(id: string): TFile | null {
+		const f = this.app.vault.getAbstractFileByPath(this.layout().pathFromId(id));
+		return f instanceof TFile ? f : null;
+	}
+
+	/** First free `<name>.md`, `<name> 2.md`, … */
+	private freePath(path: string): string {
+		if (!this.app.vault.getAbstractFileByPath(path)) return path;
+		const base = path.slice(0, -3);
+		let n = 2;
+		while (this.app.vault.getAbstractFileByPath(`${base} ${n}.md`)) n++;
+		return `${base} ${n}.md`;
+	}
+
+	private parentOf(path: string): string {
+		const i = path.lastIndexOf('/');
+		return i < 0 ? '' : path.slice(0, i);
 	}
 
 	/**
-	 * YAML-quotes a value (escaping backslashes and double quotes) so a `:` in a title or URL can't
-	 * break the frontmatter. Empty → `""`.
+	 * processFrontMatter, then the optimistic index update for `t` — inside the callback, so it lands
+	 * before the write's `changed` event can be seen. False (and a notice) on unreadable YAML.
+	 * `background` marks an automatic fill (no user write).
 	 */
-	private yamlEscape(value: string): string {
-		if (value === '') return '""';
-		return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-	}
-
-	/** The leading `---…---` frontmatter block (no trailing newline). */
-	private buildFrontmatter(title: WatchLogTitle, progress: number): string {
-		const esc = (v: string): string => this.yamlEscape(v);
-		const lines: string[] = ['---'];
-		// text values go through yamlEscape; numbers/booleans/dates emit unquoted. absent optional fields
-		// are omitted
-		lines.push(`title: ${esc(title.title)}`);
-		lines.push(`type: ${esc(title.type)}`);
-		lines.push(`status: ${esc(title.status)}`);
-		lines.push(`priority: ${esc(title.priority)}`);
-		if (title.review) lines.push(`review: ${esc(title.review)}`);
-		lines.push(`rating: ${title.rating}`);
-		lines.push(`progress: ${progress}%`);
-		lines.push(`totalEpisodes: ${title.totalEpisodes}`);
-		lines.push(`episodeDuration: ${title.episodeDuration}`);
-		lines.push(`dateStarted: ${title.dateStarted ?? 'null'}`);
-		lines.push(`dateFinished: ${title.dateFinished ?? 'null'}`);
-		lines.push(`dateAdded: ${esc(title.dateAdded)}`);
-		lines.push(`dateModified: ${esc(title.dateModified)}`);
-		if (title.releaseDate) lines.push(`releaseDate: ${title.releaseDate}`);
-		if (title.malId !== undefined) lines.push(`malId: ${title.malId}`);
-		if (title.anilistId !== undefined) lines.push(`anilistId: ${title.anilistId}`);
-		if (title.communityRating !== undefined) lines.push(`communityRating: ${title.communityRating}`);
-		if (title.communityVotes !== undefined) lines.push(`communityVotes: ${title.communityVotes}`);
-		if (title.communitySource) lines.push(`communitySource: ${esc(title.communitySource)}`);
-		// inline YAML arrays of the merged view — fetched names plus user-added, uncapped. unfetched and
-		// 'none' are both omitted
-		const director = getTitleCredits(title, 'director');
-		if (director.length > 0) lines.push(`director: [${director.map(esc).join(', ')}]`);
-		const cast = getTitleCredits(title, 'cast');
-		if (cast.length > 0) lines.push(`cast: [${cast.map(esc).join(', ')}]`);
-		const studio = getTitleCredits(title, 'studio');
-		if (studio.length > 0) lines.push(`studio: [${studio.map(esc).join(', ')}]`);
-		// single resolved poster (manual override if set, else auto-fetched)
-		const poster = getDisplayPoster(title);
-		if (poster && poster !== 'none') lines.push(`poster: ${esc(poster)}`);
-		// single resolved trailer (manual override if set, else auto-fetched)
-		const trailer = getDisplayTrailer(title);
-		if (trailer) lines.push(`trailer: ${esc(trailer)}`);
-		if (title.externalLink) lines.push(`externalLink: ${esc(title.externalLink)}`);
-		if (title.pinned) lines.push(`pinned: true`);
-		if (title.favorite) lines.push(`favorite: true`);
-		lines.push('---');
-		return lines.join('\n');
-	}
-
-	/** Full note template (frontmatter + ## Notes body). Only used when creating a file. */
-	private buildMarkdownContent(title: WatchLogTitle, progress: number): string {
-		return `${this.buildFrontmatter(title, progress)}
-
-## Notes
-
-${title.notes}
-`;
-	}
-
-	private async deleteMarkdownFile(title: WatchLogTitle): Promise<void> {
-		const filePath = this.getNoteFilePath(title);
-		const file = this.app.vault.getAbstractFileByPath(filePath);
-		if (file instanceof TFile) {
-			await this.app.fileManager.trashFile(file);
+	private async processFrontMatter(
+		file: TFile,
+		t: WatchLogTitle,
+		fn: (fm: Record<string, unknown>) => void,
+		background = false,
+	): Promise<boolean> {
+		try {
+			await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+				fn(fm);
+				this.afterWrite(t, { ...fm }, background);
+			});
+			return true;
+		} catch (e) {
+			console.warn(`WatchLog: could not update frontmatter of ${file.path}`, e);
+			new Notice(`Could not update "${file.basename}": its frontmatter is not valid YAML.`);
+			return false;
 		}
+	}
+
+	/** Creates the note for a new title; the title's id becomes the note path. */
+	private async createNote(title: WatchLogTitle): Promise<void> {
+		const layout = this.layout();
+		// without an API identity nothing can refetch the seasons: they belong in the note
+		const fetchable = !!title.tmdbId || !!title.malId || !!title.anilistId
+			|| externalIdFromLink(title.externalLink) !== null;
+		if (!fetchable && title.seasons.length > 0) title.seasonsOverride = true;
+		const path = this.freePath(layout.notePath('title', title.title, title.type));
+		await this.ensureFolder(this.parentOf(path));
+		const fm = encodeTitle(title, this.getProgress(title), this.seasonsPending(title));
+		const notes = title.notes ?? '';
+		title.id = layout.idFromPath(path);
+		this.notes.set(title.id, notes);
+		// index first, so the create event finds nothing new
+		this.afterWrite(title, fm);
+		try {
+			await this.app.vault.create(path, `---\n${stringifyYaml(fm)}---\n\n## Notes\n\n${notes}\n`);
+		} catch (e) {
+			this.index.removeLocal(title.id);
+			this.views.delete(title.id);
+			throw e;
+		}
+	}
+
+	/**
+	 * Writes a title to its note: renames the file on a title/type change, then sets only the
+	 * frontmatter keys whose encoded value differs from the stored state (so unreadable or foreign
+	 * fields stay untouched unless this edit changes exactly that field), and the `## Notes` body when
+	 * it changed.
+	 */
+	private async writeTitle(t: WatchLogTitle): Promise<void> {
+		let file = this.fileOf(t.id);
+		if (!file) {
+			await this.createNote(t);
+			return;
+		}
+		const src = this.baselineOf(t);
+
+		if (src && (t.title !== src.title || t.type !== src.type)) {
+			const target = this.layout().notePath('title', t.title, t.type);
+			if (target !== file.path) {
+				if (this.app.vault.getAbstractFileByPath(target)) {
+					new Notice(`"${target}" already exists; the note keeps its old file name.`);
+				} else {
+					await this.ensureFolder(this.parentOf(target));
+					await this.app.fileManager.renameFile(file, target);
+					this.moveId(t.id, this.layout().idFromPath(target));
+					t.id = this.layout().idFromPath(target);
+					file = this.fileOf(t.id) ?? file;
+				}
+			}
+		}
+
+		// edited seasons belong in the note, so they reach other devices (the cache stays per device)
+		const seasonList = (x: WatchLogTitle): string[] => x.seasons.map((s) => `${s.name}: ${s.episodes}`);
+		if (src && t.seasons.length > 0 && !sameJson(seasonList(src), seasonList(t))) t.seasonsOverride = true;
+		const pending = this.seasonsPending(t);
+		const before = src ? encodeTitle(src, this.getProgress(src), pending) : {};
+		const after = encodeTitle(t, this.getProgress(t), pending);
+		const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+			.filter((k) => !sameJson(before[k], after[k]));
+		if (changed.length > 0) {
+			const ok = await this.processFrontMatter(file, t, (raw) => {
+				for (const key of changed) {
+					if (key in after) raw[key] = after[key];
+					else delete raw[key];
+				}
+			});
+			if (!ok) return;
+			// a stale copy (not taken as the view) holds what the note holds for every field it knows
+			if (this.views.get(t.id)?.view !== t) setBaseline(t, structuredClone(t));
+		} else if (this.basedOnStored(t)) {
+			// nothing for the note; API data may still have changed
+			this.syncCache(t);
+			const slot = this.views.get(t.id);
+			if (slot) slot.view = t;
+		}
+
+		// the body follows the same rule as the frontmatter: a copy only writes what it changed itself,
+		// so a stale copy cannot undo an edit that arrived from another device meanwhile
+		const notes = t.notes;
+		const current = this.notes.get(t.id) ?? '';
+		if (typeof notes === 'string' && notes !== (getNotesBaseline(t) ?? current) && notes !== current) {
+			// set first: the modify event of this write then sees no change
+			this.notes.set(t.id, notes);
+			await this.app.vault.process(file, (content) => replaceNotesSection(content, notes));
+		}
+		if (typeof notes === 'string') setNotesBaseline(t, this.notes.get(t.id) ?? '');
+	}
+
+	/** Stored state a copy was made from; falls back to the current slot or index entry. */
+	private baselineOf(t: WatchLogTitle): WatchLogTitle | undefined {
+		const known = getBaseline(t) ?? this.views.get(t.id)?.src;
+		if (known) return known;
+		const indexed = this.index.get(t.id);
+		return indexed?.kind === 'title' ? indexed.entry : undefined;
+	}
+
+	/** True when `t` was made from the stored state of its note (or nothing is stored yet). */
+	private basedOnStored(t: WatchLogTitle): boolean {
+		const current = this.index.get(t.id);
+		if (current?.kind !== 'title') return true;
+		const base = getBaseline(t) ?? this.views.get(t.id)?.src;
+		return !!base && sameStoredState(base, current.entry);
+	}
+
+	/**
+	 * Cache + optimistic index update after an own write. `t` becomes the UI's copy only when it was
+	 * made from the stored state; a stale copy's fields and API data would hide what changed in between,
+	 * so the next read builds a fresh copy instead.
+	 */
+	private afterWrite(t: WatchLogTitle, fm: Record<string, unknown>, background = false): void {
+		const fresh = this.basedOnStored(t);
+		if (fresh) this.syncCache(t);
+		const stored = decodeTitle(t.id, fm, this.local.getCache(t.id)).entry;
+		this.index.applyLocal({ kind: 'title', entry: stored }, { background });
+		if (!fresh) return;
+		this.views.set(t.id, { src: stored, view: t });
+		setBaseline(t, stored);
+	}
+
+	/**
+	 * Stores the title's API-derived fields in data.json when they changed. Merges into the entry:
+	 * what is no title field (apiCheck, airing) and refilled seasons the title does not carry stay.
+	 */
+	private syncCache(t: WatchLogTitle): void {
+		const prev = this.local.getCache(t.id) ?? {};
+		const next: EntryCache = { ...prev };
+		for (const key of TITLE_CACHE_KEYS) delete next[key];
+		Object.assign(next, splitCache(t));
+		if (!next.seasons && prev.seasons) next.seasons = prev.seasons;
+		if (sameJson(next, prev)) return;
+		this.local.data.cache[t.id] = next;
+		this.local.queueSave();
+	}
+
+	private async deleteNote(id: string): Promise<void> {
+		const file = this.fileOf(id);
+		if (file) await this.app.fileManager.trashFile(file);
+		this.index.removeLocal(id);
+		this.local.deleteCache(id);
+		this.views.delete(id);
+		this.notes.delete(id);
+		this.dirty.delete(id);
+		this.pendingMdTitleIds.delete(id);
+		const collapsed = this.local.data.ui.collapsedSeasons;
+		if (collapsed) delete collapsed[id];
+		this.local.queueSave();
+	}
+
+	/** Re-keys everything held per id after a rename. */
+	private moveId(from: string, to: string): void {
+		if (from === to) return;
+		this.local.renameCache(from, to);
+		this.index.removeLocal(from);
+		const notes = this.notes.get(from);
+		if (notes !== undefined) {
+			this.notes.delete(from);
+			this.notes.set(to, notes);
+		}
+		this.views.delete(from);
+		for (const set of [this.dirty, this.pendingMdTitleIds]) {
+			if (set.delete(from)) set.add(to);
+		}
+		const collapsed = this.local.data.ui.collapsedSeasons;
+		if (collapsed?.[from]) {
+			collapsed[to] = collapsed[from];
+			delete collapsed[from];
+		}
+		this.local.queueSave();
+	}
+
+	private async readNotes(id: string): Promise<void> {
+		const file = this.fileOf(id);
+		if (!file) return;
+		this.notes.set(id, extractNotes(await this.app.vault.cachedRead(file)) ?? '');
+	}
+
+	/** Follows `## Notes` edits made outside the plugin. */
+	private async refreshNotes(file: TAbstractFile): Promise<void> {
+		if (!(file instanceof TFile)) return;
+		const c = this.layout().classify(file.path);
+		if (c?.kind !== 'title') return;
+		const next = extractNotes(await this.app.vault.read(file)) ?? '';
+		const prev = this.notes.get(c.id) ?? '';
+		if (next === prev) return;
+		this.notes.set(c.id, next);
+		const slot = this.views.get(c.id);
+		if (slot && slot.view.notes === prev) {
+			slot.view.notes = next;
+			setNotesBaseline(slot.view, next);
+		}
+		this.notifyListeners();
+	}
+
+	private onVaultRename(file: TAbstractFile, oldPath: string): void {
+		if (!(file instanceof TFile)) return;
+		const layout = this.layout();
+		const from = layout.classify(oldPath)?.id;
+		const to = layout.classify(file.path)?.id;
+		if (from === undefined || to === undefined || from === to || !this.notes.has(from)) return;
+		this.moveId(from, to);
 	}
 
 	// Dashboard helpers
 
 	getRecentlyWatched(count: number): WatchLogTitle[] {
-		return [...(this.data.titles ?? [])]
+		return this.getTitles()
 			.filter((t) => t.watchedEpisodes.length > 0 || t.status === 'Completed')
 			.sort((a, b) => b.dateModified.localeCompare(a.dateModified))
 			.slice(0, count);
 	}
 
 	getRecentlyAdded(count: number): WatchLogTitle[] {
-		return [...(this.data.titles ?? [])]
+		return this.getTitles()
 			.sort((a, b) => b.dateAdded.localeCompare(a.dateAdded))
 			.slice(0, count);
 	}
 
 	getStatsByType(type: string): { watched: number; total: number } {
 		const EXCLUDED = ['Dropped', 'To be released'];
-		const all = this.data.titles ?? [];
+		const all = this.getTitles();
 		const titles = (type === 'All' ? all : all.filter((t) => t.type === type))
-    		.filter((t) => !EXCLUDED.includes(t.status));
+			.filter((t) => !EXCLUDED.includes(t.status));
 		const total = titles.length;
 		const watched = titles.filter((t) => t.status === 'Completed').length;
 		return { watched, total };
 	}
 
 	getCompletedCount(): number {
-		return (this.data.titles ?? []).filter((t) => t.status === 'Completed').length;
+		return this.getTitles().filter((t) => t.status === 'Completed').length;
 	}
 
 	// ID generation
 
+	/**
+	 * Provisional id for a title being built in the UI. The real id is the note path, assigned when
+	 * the note is created (addTitle rewrites `title.id` in place).
+	 */
 	generateId(title: string): string {
-		let id = title
+		const id = title
 			.toLowerCase()
 			.replace(/[^a-z0-9]+/g, '-')
 			.replace(/^-|-$/g, '');
-		const existing = (this.data.titles ?? []).map((t) => t.id);
+		const existing = this.getTitles().map((t) => t.id);
 		if (!existing.includes(id)) return id;
 		let counter = 2;
 		while (existing.includes(`${id}-${counter}`)) {

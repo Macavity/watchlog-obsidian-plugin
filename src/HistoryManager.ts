@@ -1,8 +1,9 @@
 import type WatchLogPlugin from './main';
 import { formatDateDisplay } from './types';
+import type { HistoryStore } from './storage/HistoryStore';
 
 export type HistorySource = 'Watchlist' | 'Reading' | 'Games';
-export type HistoryAction = 'added' | 'completed' | 'deleted' | 'status' | 'rating' | 'watched';
+export type HistoryAction = 'added' | 'completed' | 'deleted' | 'status' | 'rating' | 'watched' | 'group';
 
 export interface HistoryEntry {
 	id: string;
@@ -11,6 +12,8 @@ export interface HistoryEntry {
 	source?: HistorySource;
 	action?: HistoryAction;
 	titleName?: string;
+	/** Note id of the title (C1); history lines link to it. */
+	titleId?: string;
 }
 
 /**
@@ -20,6 +23,7 @@ export interface HistoryEntry {
 export function inferHistoryAction(entry: HistoryEntry): HistoryAction {
 	if (entry.action) return entry.action;
 	const m = entry.message.toLowerCase();
+	if (m.startsWith('group "') && m.includes('was created')) return 'group';
 	if (m.includes('was added')) return 'added';
 	if (m.includes('was deleted')) return 'deleted';
 	if (m.includes('was reviewed') || m.includes('rating changed')) return 'rating';
@@ -51,57 +55,64 @@ export function formatHistoryDate(isoTs: string): string {
 }
 
 export class HistoryManager {
-	private plugin: WatchLogPlugin;
 	private entries: HistoryEntry[] = [];
-	private readonly MAX_ENTRIES = 1000;
+	private listeners: (() => void)[] = [];
 
-	constructor(plugin: WatchLogPlugin) {
-		this.plugin = plugin;
-	}
+	/** Without a store the log is memory-only (before the vault storage is wired). */
+	constructor(private plugin: WatchLogPlugin, private store: HistoryStore | null = null) {}
 
-	/**
-	 * Loads the activity log from the shared `data.history` key (in memory, not a file) and binds
-	 * `master.history` to our canonical array so appends reach what DataManager persists.
-	 */
+	/** Reads History.md (from the vault) into memory. */
 	async load(): Promise<void> {
-		const master = this.plugin.dataManager.getData();
-		const h = master.history;
-		this.entries = Array.isArray(h) ? h : [];
-		if (this.entries.length > this.MAX_ENTRIES) {
-			this.entries = this.entries.slice(-this.MAX_ENTRIES);
-		}
-		master.history = this.entries;
+		this.entries = this.store ? await this.store.load() : [];
 	}
 
-	/** Re-bind to a freshly synced data.json (DataManager's 'raw' watcher). */
-	adoptExternalChange(): void {
-		const master = this.plugin.dataManager.getData();
-		const h = master.history;
-		this.entries = Array.isArray(h) ? h : [];
-		if (this.entries.length > this.MAX_ENTRIES) {
-			this.entries = this.entries.slice(-this.MAX_ENTRIES);
-		}
-		master.history = this.entries;
+	/** Loads and starts watching History.md; external edits reload and notify. */
+	async start(): Promise<void> {
+		await this.load();
+		this.store?.start(() => {
+			void this.load().then(() => this.listeners.forEach((cb) => cb()));
+		});
+		this.listeners.forEach((cb) => cb());
+	}
+
+	/** Re-read after an external change. */
+	async adoptExternalChange(): Promise<void> {
+		await this.load();
+	}
+
+	onChange(cb: () => void): void {
+		this.listeners.push(cb);
+	}
+
+	offChange(cb: () => void): void {
+		this.listeners = this.listeners.filter((l) => l !== cb);
 	}
 
 	async log(
 		message: string,
-		meta?: { source?: HistorySource; action?: HistoryAction; titleName?: string },
+		meta?: { source?: HistorySource; action?: HistoryAction; titleName?: string; titleId?: string },
 	): Promise<void> {
 		const entry: HistoryEntry = {
-			id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+			id: '',
 			timestamp: new Date().toISOString(),
 			message,
 			source: meta?.source,
 			action: meta?.action,
 			titleName: meta?.titleName,
+			titleId: meta?.titleId,
 		};
+		// optimistic, so getEntries() is current immediately; ids are replaced on the next load
+		entry.id = `${entry.timestamp}#${this.entries.length}`;
 		this.entries.push(entry);
-		if (this.entries.length > this.MAX_ENTRIES) {
-			this.entries = this.entries.slice(-this.MAX_ENTRIES);
+		if (this.entries.length > this.MAX_ENTRIES) this.entries = this.entries.slice(-this.MAX_ENTRIES);
+		try {
+			await this.store?.append(entry);
+		} catch {
+			// write errors are non-fatal
 		}
-		await this.save();
 	}
+
+	private readonly MAX_ENTRIES = 1000;
 
 	getEntries(): HistoryEntry[] {
 		return [...this.entries].reverse();
@@ -111,8 +122,7 @@ export class HistoryManager {
 	async deleteEntry(id: string): Promise<void> {
 		const next = this.entries.filter((e) => e.id !== id);
 		if (next.length === this.entries.length) return;
-		this.entries = next;
-		await this.save();
+		await this.replace(next);
 	}
 
 	/** Raw stored entries (oldest-first), for a full backup. */
@@ -123,16 +133,14 @@ export class HistoryManager {
 	/** Replace the entire audit log (full-snapshot restore). */
 	async restore(entries: HistoryEntry[]): Promise<void> {
 		const list = Array.isArray(entries) ? entries : [];
-		this.entries = list.length > this.MAX_ENTRIES ? list.slice(-this.MAX_ENTRIES) : list;
-		await this.save();
+		await this.replace(list.length > this.MAX_ENTRIES ? list.slice(-this.MAX_ENTRIES) : list);
 	}
 
-	private async save(): Promise<void> {
+	private async replace(list: HistoryEntry[]): Promise<void> {
+		this.entries = list;
 		try {
-			// the log lives inside data.json now (Sync-replicated) — re-bind the master reference (an external
-			// reload may have replaced the object), then persist the whole file
-			this.plugin.dataManager.getData().history = this.entries;
-			await this.plugin.dataManager.persist();
+			await this.store?.replaceAll(list);
+			await this.load(); // fresh line-index ids
 		} catch {
 			// write errors are non-fatal
 		}

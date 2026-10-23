@@ -1,5 +1,6 @@
 import { Notice, setIcon } from 'obsidian';
 import { apiErrorMessage } from './ApiService';
+import { fetchReadingCoverById } from './coverRefresh';
 import type WatchLogPlugin from './main';
 import type { ReadingDataManager, ReadingKind } from './ReadingDataManager';
 import { Book, Manga, ReadingStatus, ReadingCustomColumn, ReadingSavedFilterPreset, READING_STATUSES, SELECTABLE_READING_STATUSES, DEFAULT_READING_STATUS_COLORS, normalizeRowsLayout, READING_ROWS_SHELVES, bookUnitProgress, formatCount, sortByFavorited } from './types';
@@ -1322,8 +1323,8 @@ export class ReadingTab {
 					// Persist silently (no re-render) and update this card's <img> directly.
 					// When a title-based lookup resolved a new ID, store it too so future
 					// loads use the cheap ID path instead of re-searching.
-					if (sourceId) this.readingData.updateCoverAndSource(kind, id, url, sourceId);
-					else this.readingData.updateCoverUrl(kind, id, url);
+					if (sourceId) void this.readingData.updateCoverAndSource(kind, id, url, sourceId);
+					else void this.readingData.updateCoverUrl(kind, id, url);
 					this.applyCoverToCard(card, url, item.title);
 				} else {
 					this.coverFetchFailed.add(id);
@@ -1555,14 +1556,14 @@ export class ReadingTab {
 			}
 			void (async () => {
 				try {
-					const result = await this.plugin.apiService.getGoogleBookById(book.googleBooksId);
-					if (!result || !result.coverUrl) {
+					const coverUrl = await fetchReadingCoverById(this.plugin.apiService, 'book', book);
+					if (!coverUrl) {
 						new Notice('Could not fetch cover from API.');
 						return;
 					}
 					const fresh = this.readingData.getBook(book.id);
 					if (!fresh) return;
-					await this.readingData.updateBook({ ...fresh, coverUrl: result.coverUrl });
+					await this.readingData.updateBook({ ...fresh, coverUrl });
 					new Notice('Cover refreshed.');
 				} catch (err) {
 					new Notice(apiErrorMessage(err));
@@ -1576,14 +1577,14 @@ export class ReadingTab {
 			}
 			void (async () => {
 				try {
-					const result = await this.plugin.apiService.getMangaByMalId(Number(manga.malId));
-					if (!result || !result.coverUrl) {
+					const coverUrl = await fetchReadingCoverById(this.plugin.apiService, 'manga', manga);
+					if (!coverUrl) {
 						new Notice('Could not fetch cover from API.');
 						return;
 					}
 					const fresh = this.readingData.getManga(manga.id);
 					if (!fresh) return;
-					await this.readingData.updateManga({ ...fresh, coverUrl: result.coverUrl });
+					await this.readingData.updateManga({ ...fresh, coverUrl });
 					new Notice('Cover refreshed.');
 				} catch {
 					new Notice('Failed to refresh cover.');

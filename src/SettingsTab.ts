@@ -1,7 +1,8 @@
 import { App, Notice, Platform, PluginSettingTab, Setting, SliderComponent, normalizePath, setIcon } from 'obsidian';
+import { typeNameError } from './storage/VaultLayout';
 import { cardSizeToMinWidth } from './VirtualGrid';
 import type WatchLogPlugin from './main';
-import type { TagDefinition, ReadingStatus, ReadingData, GamesData, GamesSettings, DateFormatPref, CardStyleTab, CardTextStyle } from './types';
+import type { TagDefinition, ReadingStatus, GamesSettings, DateFormatPref, CardStyleTab, CardTextStyle } from './types';
 import { SELECTABLE_READING_STATUSES, READING_STATUSES, LAST_USED_TYPE_SENTINEL, formatDateDisplay, needsStudioFetch, getApiGroupForType, isCreditsNone, CREDITS_NONE } from './types';
 import { readingStatusColor } from './ReadingTab';
 import { SteamSyncModal } from './SteamSyncModal';
@@ -36,6 +37,8 @@ interface TagListSectionConfig {
 	/** entries that keep the colour picker but can't be renamed or removed */
 	isLocked?: (name: string) => boolean;
 	add?: (name: string, color: string) => Promise<void>;
+	/** returns a message when the name is unusable (shown instead of adding or renaming) */
+	validateName?: (name: string) => string | null;
 	remove?: (name: string) => Promise<void>;
 	/** present ⇒ the name becomes an editable input; must cascade the rename */
 	rename?: (from: string, to: string) => Promise<void>;
@@ -110,8 +113,9 @@ import { ReadingCsvModal } from './ReadingCsvModal';
 import { WatchLogView } from './WatchLogView';
 import { CustomListManager, DefaultColumnsModal } from './CustomListsTab';
 import { ConfirmModal } from './ConfirmModal';
+import { refreshAllCovers } from './coverRefresh';
 import { apiErrorMessage, apiErrorShort } from './ApiService';
-import type { HistoryEntry } from './HistoryManager';
+import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup, withoutSecrets } from './backup';
 
 type SettingsSection = 'general' | 'api' | 'customize' | 'watchlist' | 'drafts' | 'custom-lists' | 'reading' | 'widgets' | 'quick-info';
 
@@ -448,16 +452,16 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('Re-fetch all posters')
-			.setDesc('Clears all cached poster, reading cover and game cover URLs. Watch posters and game covers reload lazily when you scroll their cards; reading covers can be re-fetched from each card\'s ⋮ menu.')
+			.setName('Replace all images with API images')
+			.setDesc('Replaces the image of every entry with the one from its API, including images you entered by hand. Entries without an ID and failed fetches keep their image.')
 			.addButton((b) =>
-				b.setButtonText('Re-fetch posters').onClick(() => {
+				b.setButtonText('Replace images').onClick(() => {
 					const titles = this.plugin.dataManager.getTitles();
 					const readingCount = this.plugin.readingDataManager.getBooks().length + this.plugin.readingDataManager.getMangaList().length;
 					const gameCount = this.plugin.gameDataManager.getGames().length;
 					new ConfirmModal(
 						this.app,
-						`This will clear cached images for all ${titles.length} watch titles, ${readingCount} reading entries and ${gameCount} games. Items without API access will show placeholder cards. Continue?`,
+						`This replaces the image of all ${titles.length} watch titles, ${readingCount} reading entries and ${gameCount} games with the image from the API, including images you entered by hand. Entries without an API id or match keep their image. This makes many API requests and can take a while. Continue?`,
 						() => { void this.refetchAllPosters(); },
 					).open();
 				}),
@@ -542,7 +546,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		new Setting(bk)
 			.setName('Restore from backup')
-			.setDesc('Restore from a .JSON backup file. This replaces your current watchlist, reading, games and activity-log data with the contents of the backup. Older backups restore only what they contain and leave the newer data untouched.')
+			.setDesc('Restore from a .JSON backup file. Missing notes are created; existing notes are kept. Shared settings, device settings (API keys included) and the activity log are replaced. Backups from older plugin versions are imported too. Keep backup files private.')
 			.addButton((b) =>
 				b.setButtonText('Restore from backup').onClick(() => this.openRestoreDialog()),
 			);
@@ -580,29 +584,16 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 		const filename = `watchlog-backup-${dateStr}.json`;
 
-		// v3 snapshot: a self-describing wrapper around all four data sources. Reading, games
-		// and history all live inside the watch object, so strip them from `watch`.
-		const watchOnly = Object.assign({}, this.plugin.dataManager.getData() ?? {}) as unknown as Record<string, unknown>;
-		delete watchOnly['reading'];
-		delete watchOnly['games'];
-		delete watchOnly['history'];
-		delete watchOnly['migratedReadingHistory'];
-		const snapshot = {
-			version: 3,
-			exportedAt: today.toISOString(),
-			watch: watchOnly,
-			reading: this.plugin.readingDataManager.getData(),
-			games: this.plugin.gameDataManager.getData(),
-			history: this.plugin.historyManager.exportEntries(),
-		};
-		const json = JSON.stringify(snapshot, null, 2);
+		// notes, shared settings, log and the device-local settings including API keys (E7): keep the file private
+		const backup = buildBackup(this.plugin.backupManagers());
 
 		// on mobile a browser download lands in an inaccessible sandbox — write into the vault
-		// instead; desktop keeps the download path
+		// instead, without the API keys (the folder syncs); desktop keeps the download path
 		if (Platform.isMobile) {
-			await this.exportBackupToVault(filename, json);
+			await this.exportBackupToVault(filename, JSON.stringify(withoutSecrets(backup), null, 2));
 			return;
 		}
+		const json = JSON.stringify(backup, null, 2);
 
 		const blob = new Blob([json], { type: 'application/json' });
 		const url = URL.createObjectURL(blob);
@@ -616,10 +607,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		new Notice(`Backup exported as ${filename}`);
 	}
 
-	/** Mobile path: write the backup into WatchLog/backups/, disambiguating on collision. */
+	/** Mobile path: write the backup into <root>/backups/, disambiguating on collision. */
 	private async exportBackupToVault(filename: string, json: string): Promise<void> {
 		const adapter = this.app.vault.adapter;
-		const folder = normalizePath('WatchLog/backups');
+		const folder = normalizePath(`${this.plugin.getLayout().root}/backups`);
 		if (!(await adapter.exists(folder))) {
 			try {
 				await adapter.mkdir(folder);
@@ -640,7 +631,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		}
 
 		await adapter.write(path, json);
-		new Notice(`Backup saved to ${path}`);
+		new Notice(`Backup saved to ${path} (without API keys; enter them again after a restore).`);
 	}
 
 	private openRestoreDialog(): void {
@@ -672,92 +663,31 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			const reader = new FileReader();
 			reader.onload = (e) => {
 				cleanupInput();
-				const text = e.target?.result as string;
-				let parsed: unknown;
-				try { parsed = JSON.parse(text); } catch {
-					new Notice('Invalid backup file: could not parse JSON.');
+				const result = parseBackup(e.target?.result as string);
+				if ('error' in result) {
+					new Notice(`Invalid backup file: ${result.error}`);
 					return;
 				}
-				if (typeof parsed !== 'object' || parsed === null) {
-					new Notice('Invalid backup file: not an object.');
-					return;
-				}
-				const p = parsed as Record<string, unknown>;
-
-				// validate the WHOLE file before touching disk — restore is all-or-nothing
-				const version = p['version'];
-				if (version === 2 || version === 3) {
-					const watch = p['watch'];
-					const reading = p['reading'];
-					const games = p['games'];
-					const history = p['history'];
-					if (!this.isValidWatchData(watch)) {
-						new Notice('Invalid backup file: watch data missing required fields (titles, groups, settings).');
-						return;
-					}
-					if (!this.isValidReadingData(reading)) {
-						new Notice('Invalid backup file: reading data missing required fields (books, manga).');
-						return;
-					}
-					// games are a v3 field; v2 files carry them (if at all) inside `watch`
-					if (version === 3 && !this.isValidGamesData(games)) {
-						new Notice('Invalid backup file: games data missing required fields (games, settings).');
-						return;
-					}
-					if (!Array.isArray(history)) {
-						new Notice('Invalid backup file: activity log is not a list.');
-						return;
-					}
-					const scope = version === 3
-						? 'watchlist, reading (books & manga), games and activity log'
-						: 'watchlist, reading (books & manga) and activity log';
-					new ConfirmModal(this.app, `This will replace ALL current watchlog data; ${scope}. Continue?`, () => {
-						void (async () => {
-							// reading, games + history persist inside data.json — mark the data already-migrated so
-							// the one-time legacy import can't re-run and clobber the restore
-							const restored = Object.assign({}, watch as Record<string, unknown>, { migratedReadingHistory: true });
-							// a v2 file exported before Games shipped has none at all; keep the current ones
-							if (version === 2 && restored['games'] === undefined) {
-								restored['games'] = this.plugin.gameDataManager.getData();
-							}
-							await this.plugin.saveData(restored);
-							await this.plugin.loadSettings();
-							await this.plugin.dataManager.load();
-							await this.plugin.readingDataManager.restore(reading as ReadingData);
-							// v3 restores the explicit field; v2 re-binds the manager to whatever games object landed
-							if (version === 3) await this.plugin.gameDataManager.restore(games as GamesData);
-							else await this.plugin.gameDataManager.load();
-							await this.plugin.historyManager.restore(history as HistoryEntry[]);
-							activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
-							new Notice('Backup restored successfully.');
-						})();
-					}).open();
-					return;
-				}
-
-				// legacy (v1) — the file IS the watch data
-				if (!this.isValidWatchData(parsed)) {
-					new Notice('Invalid backup file: missing required fields (titles, groups, settings).');
-					return;
-				}
-				new ConfirmModal(this.app, 'This is a legacy (watchlist-only) backup. It will replace your current watchlist. Reading and activity-log data are left untouched. Continue?', () => {
+				// validated as a whole before anything is written
+				const legacy = 'legacy' in result ? result.legacy : null;
+				const prompt = legacy
+					? 'This is a backup from an older plugin version. Missing notes are created and missing note properties filled; existing values are kept. Continue?'
+					: 'This restores the backup into your vault: missing notes are created, the shared settings, device settings (API keys included) and the activity log are replaced. Existing notes are kept. Continue?';
+				new ConfirmModal(this.app, prompt, () => {
 					void (async () => {
-						// a legacy backup carries no reading/games/history, so preserve the CURRENT in-memory
-						// data (and the migrated flag) when overwriting the watch data
-						const merged = Object.assign({}, parsed as Record<string, unknown>, {
-							reading: this.plugin.readingDataManager.getData(),
-							games: this.plugin.gameDataManager.getData(),
-							history: this.plugin.historyManager.exportEntries(),
-							migratedReadingHistory: true,
-						});
-						await this.plugin.saveData(merged);
+						const managers = this.plugin.backupManagers();
+						if (legacy) {
+							const errors = await restoreLegacyBackup(managers, legacy);
+							if (errors.length > 0) {
+								new Notice(`Backup import failed: ${errors.join('; ')}`);
+								return;
+							}
+						} else if ('backup' in result) {
+							await restoreBackup(managers, result.backup);
+						}
 						await this.plugin.loadSettings();
-						await this.plugin.dataManager.load();
-						await this.plugin.historyManager.load();
-						await this.plugin.readingDataManager.load();
-						await this.plugin.gameDataManager.load();
 						activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
-						new Notice('Legacy backup restored: watchlist only; reading, games and activity log left untouched.');
+						new Notice('Backup restored successfully.');
 					})();
 				}).open();
 			};
@@ -766,49 +696,19 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		input.click();
 	}
 
-	private isValidWatchData(value: unknown): boolean {
-		if (typeof value !== 'object' || value === null) return false;
-		const w = value as Record<string, unknown>;
-		return Array.isArray(w['titles'])
-			&& Array.isArray(w['groups'])
-			&& typeof w['settings'] === 'object'
-			&& w['settings'] !== null;
-	}
-
-	private isValidReadingData(value: unknown): boolean {
-		if (typeof value !== 'object' || value === null) return false;
-		const r = value as Record<string, unknown>;
-		return Array.isArray(r['books'])
-			&& Array.isArray(r['manga'])
-			&& typeof r['settings'] === 'object'
-			&& r['settings'] !== null;
-	}
-
-	private isValidGamesData(value: unknown): boolean {
-		if (typeof value !== 'object' || value === null) return false;
-		const g = value as Record<string, unknown>;
-		return Array.isArray(g['games'])
-			&& typeof g['settings'] === 'object'
-			&& g['settings'] !== null;
-	}
-
 	private async refetchAllPosters(): Promise<void> {
-		const titles = this.plugin.dataManager.getTitles();
-		for (const t of titles) t.posterUrl = '';
-		await this.plugin.dataManager.save();
-
-		// also clear cached Reading cover URLs so they can be re-fetched
-		const reading = this.plugin.readingDataManager;
-		for (const b of reading.getBooks()) b.coverUrl = '';
-		for (const m of reading.getMangaList()) m.coverUrl = '';
-		await reading.saveAndNotify();
-
-		// games clear the same way; their cards re-fetch lazily on scroll
-		const gameData = this.plugin.gameDataManager;
-		for (const g of gameData.getGames()) g.coverUrl = '';
-		await gameData.saveAndNotify();
-
-		new Notice('Cached posters and covers cleared. Watch posters and game covers reload as you browse; refresh reading covers from each card\'s ⋮ menu.');
+		const p = this.plugin;
+		const res = await refreshAllCovers({
+			api: p.apiService,
+			gamesApiSource: p.settings.gamesApiSource ?? 'rawg',
+			dataManager: p.dataManager,
+			posterService: p.posterService,
+			readingData: p.readingDataManager,
+			gameData: p.gameDataManager,
+			queue: p.dataManager.apiQueue,
+			onStart: (n) => new Notice(`Re-fetching ${n} images…`),
+		});
+		new Notice(`Images re-fetched: ${res.updated} updated, ${res.unchanged} unchanged or failed.`);
 	}
 
 	/**
@@ -2201,6 +2101,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 						new Notice(`"${name}" already exists.`);
 						return;
 					}
+					const problem = cfg.validateName?.(name);
+					if (problem) { new Notice(problem); return; }
 					await cfg.add!(name, colorInput.value);
 					nameInput.value = '';
 					colorInput.value = '#888780';
@@ -2261,6 +2163,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 					nameInput.value = original;
 					return;
 				}
+				const problem = cfg.validateName?.(next);
+				if (problem) { new Notice(problem); nameInput.value = original; return; }
 				committed = true;
 				void (async () => {
 					await cfg.rename!(original, next);
@@ -2313,6 +2217,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			// statuses are colour-only; locked built-in types keep their picker but lose delete
 			isLocked: (name) =>
 				isStatuses || (isTypes && WatchLogSettingsTab.LOCKED_TYPES.includes(name)),
+			...(isTypes ? { validateName: typeNameError } : {}),
 			...(isStatuses ? {} : {
 				add: async (name, color) => {
 					this.plugin.settings[key].push({ name, color });
@@ -2461,18 +2366,6 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		}).body;
 
 		new Setting(folders)
-			.setName('Root folder name')
-			.setDesc('Vault folder where watchlog Markdown files are stored.')
-			.addText((t) =>
-				t
-					.setValue(this.plugin.settings.rootFolder)
-					.onChange(async (v) => {
-						this.plugin.settings.rootFolder = v;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(folders)
 			.setName('Auto-create folders')
 			.setDesc('Automatically create type subfolders on plugin load.')
 			.addToggle((t) =>
@@ -2512,7 +2405,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			row.createSpan({ cls: 'wl-folder-type', text: type.name });
 			row.createSpan({
 				cls: 'wl-folder-path',
-				text: `${this.plugin.settings.rootFolder}/${type.name}`,
+				text: `${this.plugin.getLayout().root}/${type.name}`,
 			});
 		}
 	}
@@ -2591,18 +2484,6 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			variant: 'folders',
 			rows: true,
 		}).body;
-
-		new Setting(folder)
-			.setName('Custom lists folder path')
-			.setDesc('Vault folder where custom list files are stored.')
-			.addText((t) =>
-				t
-					.setValue(this.plugin.settings.customListsFolder ?? 'WatchLog/CustomLists')
-					.onChange(async (v) => {
-						this.plugin.settings.customListsFolder = v;
-						await this.plugin.saveSettings();
-					}),
-			);
 
 		new Setting(folder)
 			.setName('Create folder now')
@@ -2692,28 +2573,6 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 						new ReadingCsvModal(this.app, this.plugin, kind, 'import').open();
 					}).open();
 				}),
-			);
-
-		// folder
-		const folder = this.settingsGroup(page, {
-			title: 'Folder',
-			sub: 'Where reading notes are generated in your vault',
-			icon: 'folder',
-			variant: 'folders',
-			rows: true,
-		}).body;
-
-		new Setting(folder)
-			.setName('Reading folder path')
-			.setDesc('Vault folder where reading note files are generated. Changing this will not move existing files.')
-			.addText((t) =>
-				t
-					.setPlaceholder('WatchLog/Reading')
-					.setValue(settings.defaultFolder)
-					.onChange((v) => {
-						const next = v.trim() || 'WatchLog/Reading';
-						void readingData.updateSettings({ defaultFolder: next });
-					}),
 			);
 	}
 

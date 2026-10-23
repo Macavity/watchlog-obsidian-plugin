@@ -44,9 +44,9 @@ export interface WatchLogTitle {
 	favorite?: boolean;
 	/** ISO stamp of the last favorite toggle-on; absent on pre-field favorites */
 	dateFavorited?: string;
-	/** '' = unfetched, 'none' = nothing found, else a URL */
+	/** note field `poster`. '' = unfetched, 'none' = nothing found (cache only), else a URL */
 	posterUrl?: string;
-	/** override — wins over posterUrl when non-empty */
+	/** legacy (schema 1 data, migration only): wins over posterUrl; v2 notes use `poster` */
 	manualPosterUrl?: string;
 	/** '' = unfetched, 'none' = source has no trailer (e.g. OMDb), else a YouTube URL */
 	trailerUrl?: string;
@@ -64,6 +64,29 @@ export interface WatchLogTitle {
 	studio?: string[];
 	/** user-added, appended after the fetched ones; a refresh never overwrites */
 	manualStudio?: string[];
+	/** considered, not yet in the library (frontmatter `maybe`) */
+	maybe?: boolean;
+	/** seasons were set by hand; frontmatter `seasons` wins over the API cache */
+	seasonsOverride?: boolean;
+	/** `watched`/`skipped` refs in seasons the season list does not know yet; written back unchanged */
+	unmappedWatched?: { season: number; episode: number }[];
+	unmappedSkipped?: { season: number; episode: number }[];
+	/** group names (frontmatter `groups`) */
+	groups?: string[];
+	/** manual Upcoming schedule (frontmatter airtime* keys); absent = none or derived from releaseDate */
+	airtime?: EntryAirtime;
+	/** API fields set in the note by the user; they win over the cached API values and are written back */
+	overrides?: TitleOverrides;
+}
+
+/** Note-side overrides of API data; the trailer override is manualTrailerUrl. */
+export interface TitleOverrides {
+	director?: string[];
+	cast?: string[];
+	studio?: string[];
+	communityRating?: number;
+	communityVotes?: number;
+	communitySource?: WatchLogTitle['communitySource'];
 }
 
 // TMDB collections
@@ -132,8 +155,10 @@ export type CreditsField = 'director' | 'cast' | 'studio';
 /** names shown inline on the studio line before the rest collapse behind "+N more" */
 export const STUDIO_INLINE_LIMIT = 3;
 
-/** fetched names for a field, before the manual merge */
+/** fetched names for a field (a note override wins), before the manual merge */
 function fetchedCredits(title: WatchLogTitle, field: CreditsField): string[] | undefined {
+	const override = title.overrides?.[field];
+	if (override) return override;
 	if (field === 'director') return title.director;
 	if (field === 'cast') return title.cast;
 	return title.studio;
@@ -417,7 +442,6 @@ export interface WatchLogPluginSettings {
 	statuses: TagDefinition[];
 	reviews: TagDefinition[];
 	priorities: TagDefinition[];
-	rootFolder: string;
 	autoCreateFolders: boolean;
 	coloredTypeBadges: boolean;
 	/** Open the panel on the Watchlist tab after the Add title command adds something. */
@@ -455,7 +479,6 @@ export interface WatchLogPluginSettings {
 	dashboardTopCredits: number;
 	/** Colors for the Reading type badges (Manga / Book). */
 	readingTypeColors: { manga: string; book: string };
-	customListsFolder: string;
 	defaultCustomColumns: CustomListColumn[];
 	listFilters: {
 		typeExclude: string[];
@@ -563,6 +586,10 @@ export interface Book {
 	dateAdded: string;
 	dateModified: string;
 	customFields: Record<string, string | number>;
+	/** group names (frontmatter `groups`) */
+	groups?: string[];
+	/** manual Upcoming schedule (frontmatter airtime* keys); absent = none or derived from releaseDate */
+	airtime?: EntryAirtime;
 }
 
 export interface Manga {
@@ -587,6 +614,10 @@ export interface Manga {
 	dateAdded: string;
 	dateModified: string;
 	customFields: Record<string, string | number>;
+	/** group names (frontmatter `groups`) */
+	groups?: string[];
+	/** manual Upcoming schedule (frontmatter airtime* keys); absent = none or derived from releaseDate */
+	airtime?: EntryAirtime;
 }
 
 /** the book's unit, tolerating records written before the field existed */
@@ -749,6 +780,10 @@ export interface Game {
 	dateFinished: string | null;
 	dateAdded: string;
 	dateModified: string;
+	/** group names (frontmatter `groups`) */
+	groups?: string[];
+	/** manual Upcoming schedule (frontmatter airtime* keys); absent = none or derived from releaseDate */
+	airtime?: EntryAirtime;
 }
 
 export interface GamesSettings {
@@ -887,6 +922,19 @@ export const DEFAULT_READING_STATUS_COLORS: Record<ReadingStatus, string> = {
 // Airtime types
 
 export type AirtimeRecurrence = 'once' | 'daily' | 'weekly' | 'monthly';
+
+/** Manual Upcoming schedule stored on the entry's note. Reading reuses season/episode for volume/chapter. */
+export interface EntryAirtime {
+	recurrence: AirtimeRecurrence;
+	/** 0–6 for weekly, 1–31 for monthly */
+	day?: number;
+	/** HH:MM */
+	time?: string;
+	season?: number;
+	episode?: number;
+	/** YYYY-MM-DD */
+	acknowledged?: string;
+}
 
 export interface AirtimeSchedule {
 	recurrence: AirtimeRecurrence;
@@ -1039,7 +1087,6 @@ export const DEFAULT_SETTINGS: WatchLogPluginSettings = {
 		{ name: 'Medium', color: '#3b82f6' },
 		{ name: 'High', color: '#E24B4A' },
 	],
-	rootFolder: 'WatchLog',
 	autoCreateFolders: true,
 	coloredTypeBadges: true,
 	openWatchlistAfterAdd: true,
@@ -1060,7 +1107,6 @@ export const DEFAULT_SETTINGS: WatchLogPluginSettings = {
 	lastAddedType: '',
 	dashboardTopCredits: 5,
 	readingTypeColors: { manga: '#D4537E', book: '#D85A30' },
-	customListsFolder: 'WatchLog/CustomLists',
 	defaultCustomColumns: [],
 	draftsVaultTag: '#watchlog',
 	draftsAfterAdding: 'keep',
@@ -1346,7 +1392,21 @@ export function getApiGroupForType(
 	return mapping?.[type] ?? '';
 }
 
-/** Poster URL to render — a non-empty `manualPosterUrl` wins over `posterUrl`. */
+/** Community rating to render: each field of a note override wins over the cached API value. */
+export function getCommunityRating(title: WatchLogTitle): {
+	rating: number | undefined;
+	votes: number | undefined;
+	source: WatchLogTitle['communitySource'];
+} {
+	const o = title.overrides;
+	return {
+		rating: o?.communityRating ?? title.communityRating,
+		votes: o?.communityVotes ?? title.communityVotes,
+		source: o?.communitySource ?? title.communitySource,
+	};
+}
+
+/** Poster URL to render; a legacy `manualPosterUrl` (schema 1 data) wins over `posterUrl`. */
 export function getDisplayPoster(title: WatchLogTitle): string {
 	if (title.manualPosterUrl && title.manualPosterUrl.trim() !== '') {
 		return title.manualPosterUrl;
@@ -1684,10 +1744,18 @@ export interface TmdbTvDetail {
 	first_air_date?: string;
 	number_of_episodes?: number;
 	seasons?: TmdbTvSeason[];
+	next_episode_to_air?: TmdbEpisodeRef | null;
+	last_episode_to_air?: TmdbEpisodeRef | null;
 	/** only when the detail call uses append_to_response=videos */
 	videos?: TmdbVideosResult;
 	/** only when the detail call uses append_to_response=credits */
 	credits?: TmdbCreditsResult;
+}
+
+export interface TmdbEpisodeRef {
+	season_number?: number;
+	episode_number?: number;
+	air_date?: string | null;
 }
 
 export interface TmdbExternalIds {

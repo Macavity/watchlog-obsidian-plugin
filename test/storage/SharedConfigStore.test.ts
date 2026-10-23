@@ -1,0 +1,156 @@
+import { describe, it, expect, vi } from 'vitest';
+import { parse, stringify } from 'yaml';
+import { createFakeApp } from '../fakes/fakeApp';
+import { VaultLayout } from '../../src/storage/VaultLayout';
+import { SharedConfigStore } from '../../src/storage/SharedConfigStore';
+const yaml = { parse, stringify };
+const mk = (files: Record<string, string>) => {
+	const f = createFakeApp(files);
+	const s = new SharedConfigStore(f.app, () => new VaultLayout('W', () => []), yaml);
+	return { f, s };
+};
+describe('SharedConfigStore', () => {
+	it('never writes secrets', async () => {
+		const { f, s } = mk({ 'W/WatchLog.base': 'filters:\n  and:\n    - file.inFolder("W")\n' });
+		await s.load();
+		await s.update({ statuses: [{ name: 'A', color: '#000' }], tmdbApiKey: 'SECRET' });
+		expect(f.files.get('W/WatchLog.base')).not.toContain('SECRET');
+		expect(s.get().settings.statuses).toEqual([{ name: 'A', color: '#000' }]);
+	});
+	it('keeps only the vocabulary of reading/games', async () => {
+		const { f, s } = mk({ 'W/WatchLog.base': 'filters:\n  and:\n    - file.inFolder("W")\n' });
+		await s.load();
+		await s.update({
+			games: { steamId: 'S1', defaultFolder: 'X', defaultStatus: 'Playing', rowsLayout: [], savedFilterPreset: { a: 1 } },
+			reading: { defaultStatus: 'Reading', statusColors: { Reading: '#fff' }, savedFilters: {}, bookColumns: [] },
+		});
+		const out = f.files.get('W/WatchLog.base')!;
+		for (const k of ['S1', 'defaultFolder', 'rowsLayout', 'savedFilterPreset', 'statusColors', 'savedFilters']) expect(out).not.toContain(k);
+		expect(out).toContain('defaultStatus: Playing');
+		expect(out).toContain('defaultStatus: Reading');
+		expect(out).toContain('bookColumns');
+	});
+	it('drops retired keys on write', async () => {
+		const { f, s } = mk({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n  seasonPalette:\n    - "#000"\n  futureKey: 1\n' });
+		await s.load();
+		await s.update({ halfStarRatings: true });
+		const out = f.files.get('W/WatchLog.base')!;
+		expect(out).not.toContain('seasonPalette');
+		expect(out).toContain('futureKey: 1');
+	});
+	it('fixes a stale inFolder line', async () => {
+		const { f, s } = mk({ 'W/WatchLog.base': 'filters:\n  and:\n    - file.inFolder("Old")\n' });
+		expect(await s.ensureFilter()).toBe('fixed');
+		expect(f.files.get('W/WatchLog.base')).toContain('file.inFolder("W")');
+	});
+	it('reports missing base / filter', async () => {
+		expect((await mk({}).s.ensureFilter())).toBe('missing');
+		expect((await mk({ 'W/WatchLog.base': 'views: []\n' }).s.ensureFilter())).toBe('missing');
+	});
+	it('reloads on external change', async () => {
+		const { f, s } = mk({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n' });
+		await s.load(); s.start();
+		const cb = vi.fn(); s.onChange(cb);
+		f.externalWrite('W/WatchLog.base', 'watchlog:\n  version: 1\n  halfStarRatings: true\n');
+		await new Promise(r => setTimeout(r, 0));
+		expect(cb).toHaveBeenCalled();
+		expect(s.get().settings.halfStarRatings).toBe(true);
+	});
+	it('ignores the echo of its own writes', async () => {
+		const { s } = mk({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n' });
+		await s.load(); s.start();
+		const cb = vi.fn(); s.onChange(cb);
+		await s.update({ halfStarRatings: true });
+		await new Promise(r => setTimeout(r, 0));
+		expect(cb).not.toHaveBeenCalled();
+	});
+	it('creates a base without secrets', async () => {
+		const { f, s } = mk({});
+		await s.createBase({ halfStarRatings: true, steamId: 'X' });
+		const out = f.files.get('W/WatchLog.base')!;
+		expect(out).toContain('file.inFolder("W")');
+		expect(out).toContain('halfStarRatings: true');
+		expect(out).not.toContain('steamId');
+		expect(s.get().settings.halfStarRatings).toBe(true);
+	});
+	it('patches only the given keys and keeps foreign keys of the current block', async () => {
+		const { f, s } = mk({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n  halfStarRatings: true\n  futureKey: 7\n' });
+		await s.load();
+		// a sync arrived after load: the file holds a newer value for a key we do not touch
+		f.externalWrite('W/WatchLog.base', 'watchlog:\n  version: 1\n  halfStarRatings: false\n  futureKey: 8\n');
+		await s.update({ episodeNumbering: 'absolute' });
+		const out = f.files.get('W/WatchLog.base')!;
+		expect(out).toContain('halfStarRatings: false');
+		expect(out).toContain('futureKey: 8');
+		expect(out).toContain('episodeNumbering: absolute');
+	});
+	it('does not write with an empty patch or an unreadable block', async () => {
+		const src = 'watchlog:\n  version: 1\n  statuses: [\n';
+		const { f, s } = mk({ 'W/WatchLog.base': src });
+		await s.load();
+		await s.update({});
+		await s.update({ halfStarRatings: true });
+		expect(f.files.get('W/WatchLog.base')).toBe(src);
+	});
+	it('diff returns only changed shared keys', async () => {
+		const { s } = mk({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n  halfStarRatings: true\n' });
+		await s.load();
+		expect(s.diff({ halfStarRatings: true, autoCompleteOnLastEpisode: false, tmdbApiKey: 'x' }))
+			.toEqual({ autoCompleteOnLastEpisode: false });
+	});
+	it('creates a deferred base on the first write only', async () => {
+		const { f, s } = mk({});
+		const create = vi.fn(async () => { await s.createBase({}); });
+		s.deferBase({ create, appeared: vi.fn() });
+		await s.update({});
+		expect(create).not.toHaveBeenCalled();
+		await s.update({ halfStarRatings: true });
+		expect(create).toHaveBeenCalledTimes(1);
+		expect(f.files.has('W/WatchLog.base')).toBe(true);
+	});
+	it('adopts a base that syncs in while deferred', async () => {
+		const { f, s } = mk({});
+		const appeared = vi.fn();
+		const create = vi.fn();
+		s.deferBase({ create, appeared }); s.start();
+		f.externalWrite('X/WatchLog.base', 'views: []\n');
+		await new Promise(r => setTimeout(r, 0));
+		expect(appeared).not.toHaveBeenCalled();
+		f.externalWrite('W/WatchLog.base', 'watchlog:\n  version: 1\n');
+		await new Promise(r => setTimeout(r, 0));
+		expect(appeared).toHaveBeenCalledTimes(1);
+		await s.update({ halfStarRatings: true });
+		expect(create).not.toHaveBeenCalled();
+	});
+	it('adopts instead of failing when the base already exists on create', async () => {
+		const { f, s } = mk({});
+		const appeared = vi.fn();
+		const create = vi.fn(async () => {
+			f.externalWrite('W/WatchLog.base', 'watchlog:\n  version: 1\n');
+			throw new Error('File already exists.');
+		});
+		s.deferBase({ create, appeared });
+		await s.ensureBase();
+		expect(appeared).toHaveBeenCalledTimes(1);
+	});
+	it('keeps the deferred base when create fails otherwise', async () => {
+		const { s } = mk({});
+		const create = vi.fn().mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(undefined);
+		s.deferBase({ create, appeared: vi.fn() });
+		await expect(s.ensureBase()).rejects.toThrow('boom');
+		await s.ensureBase();
+		expect(create).toHaveBeenCalledTimes(2);
+	});
+	it('does not update config when the block is unreadable, and retries on the next save', async () => {
+		const bad = 'watchlog:\n  : [\n';
+		const { f, s } = mk({ 'W/WatchLog.base': bad });
+		await s.load();
+		await s.update({ halfStarRatings: true });
+		expect(s.get().settings.halfStarRatings).toBeUndefined();
+		expect(s.diff({ halfStarRatings: true })).toEqual({ halfStarRatings: true });
+		f.files.set('W/WatchLog.base', 'watchlog:\n  version: 1\n');
+		await s.update({ halfStarRatings: true });
+		expect(f.files.get('W/WatchLog.base')).toContain('halfStarRatings: true');
+		expect(s.get().settings.halfStarRatings).toBe(true);
+	});
+});

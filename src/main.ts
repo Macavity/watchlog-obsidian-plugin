@@ -1,8 +1,7 @@
-import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, normalizePath, setIcon } from 'obsidian';
-import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, AirtimeSchedule, normalizeRowsLayout, setActiveDateFormat } from './types';
+import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, parseYaml, setIcon, stringifyYaml } from 'obsidian';
+import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, setActiveDateFormat } from './types';
 import { cardSizeToMinWidth } from './VirtualGrid';
-import type { ReadingData, CardStyleTab } from './types';
-import type { HistoryEntry } from './HistoryManager';
+import type { CardStyleTab, WatchLogData } from './types';
 import { DataManager } from './DataManager';
 import { ReadingDataManager } from './ReadingDataManager';
 import { GameDataManager } from './GameDataManager';
@@ -16,14 +15,75 @@ import { AddTitleModal } from './AddTitleModal';
 import { TitleDetailModal } from './TitleDetailModal';
 import { InsertWidgetModal } from './InsertWidgetModal';
 import { WidgetRenderer } from './WidgetRenderer';
+import { VaultLayout } from './storage/VaultLayout';
+import { LocalStore } from './storage/LocalStore';
+import { SharedConfigStore } from './storage/SharedConfigStore';
+import { EntryIndex } from './storage/EntryIndex';
+import { HistoryStore } from './storage/HistoryStore';
+import { hasWatchlogKey } from './storage/baseFile';
+import { legacyRoot, migrateV1 } from './storage/migrateV1';
+import { loadOwnOrOriginal, ORIGINAL_PLUGIN_ID } from './storage/legacyPlugin';
+import type { BackupManagers } from './backup';
+import { composeSettings, persistSettings } from './settingsSplit';
+import { runAirtimeScheduler } from './airtimeScheduler';
+
+/** Root folder created on a fresh install (no `.base` with a `watchlog:` key found). */
+const DEFAULT_ROOT = 'WatchLog';
 
 export default class WatchLogPlugin extends Plugin {
 	settings: WatchLogPluginSettings = DEFAULT_SETTINGS;
-	dataManager: DataManager = new DataManager(this);
-	readingDataManager: ReadingDataManager = new ReadingDataManager(this);
-	gameDataManager: GameDataManager = new GameDataManager(this);
+	// schema-1 data.json awaiting migration; LocalStore never writes data.json meanwhile
+	private legacyData: WatchLogData | null = null;
+	// folder of the original plugin when its data.json was adopted; backups go next to it
+	private legacySourceDir: string | null = null;
+	private indexReady = false;
+	private typeNamesKey: string | null = null;
+	private layout = new VaultLayout(DEFAULT_ROOT, () => this.settings.types.map((t) => t.name));
+	private local = new LocalStore({
+		loadData: async () => {
+			const loaded = await loadOwnOrOriginal(() => this.loadData(), {
+				configDir: this.app.vault.configDir,
+				adapter: this.app.vault.adapter,
+			});
+			this.legacySourceDir = loaded.dir ?? null;
+			return loaded.raw;
+		},
+		saveData: (d) => this.saveData(d),
+	});
+	private yaml = { parse: parseYaml, stringify: stringifyYaml };
+	private shared = new SharedConfigStore(
+		this.app,
+		() => this.layout,
+		this.yaml,
+		(ref) => this.registerEvent(ref),
+	);
+	private index = new EntryIndex(this.app, () => this.layout, this.local, (ref) => this.registerEvent(ref));
+	dataManager: DataManager = new DataManager(this, {
+		index: this.index,
+		local: this.local,
+		shared: this.shared,
+		layout: () => this.layout,
+	});
+	readingDataManager: ReadingDataManager = new ReadingDataManager(this, {
+		index: this.index,
+		local: this.local,
+		shared: this.shared,
+		layout: () => this.layout,
+	});
+	gameDataManager: GameDataManager = new GameDataManager(this, {
+		index: this.index,
+		local: this.local,
+		shared: this.shared,
+		layout: () => this.layout,
+	});
 	apiService: ApiService = new ApiService('', '');
-	historyManager: HistoryManager = new HistoryManager(this);
+	/** TMDB/OMDb key snapshot of the last settings save; null before onload set it */
+	private apiKeys: string | null = null;
+	historyManager: HistoryManager = new HistoryManager(this, new HistoryStore(
+		this.app,
+		() => this.layout,
+		(ref) => this.registerEvent(ref),
+	));
 	posterService!: PosterService;
 	widgetRenderer?: WidgetRenderer;
 
@@ -37,19 +97,22 @@ export default class WatchLogPlugin extends Plugin {
 	private statusBarEl: HTMLElement | null = null;
 
 	async onload(): Promise<void> {
+		const loaded = await this.local.load();
+		if (loaded.schema === 1) {
+			// migrated in startVaultStorage, once the vault is ready; until then its settings act as local
+			this.legacyData = loaded.legacy;
+		} else if (loaded.schema === 'newer') {
+			new Notice('Watchlog: data.json was written by a newer plugin version. Device settings are not saved until you update.', 0);
+		} else if (this.legacySourceDir !== null) {
+			// a schema-2 data.json taken over from the original plugin: persist the copy as our own
+			this.local.queueSave();
+		}
+		this.warnIfOriginalEnabled();
+		// local + defaults only; shared keys are re-composed once the base is loaded (startVaultStorage)
 		await this.loadSettings();
 		// the card-size CSS var must be live before any view or modal renders a grid
 		this.applyCardSizeCssVar();
 		this.register(() => activeDocument.body.style.removeProperty('--wl-card-min-width'));
-		this.dataManager = new DataManager(this);
-		await this.dataManager.load();
-
-		// one-time migration: pull legacy reading.json / history.json into data.json so Sync replicates
-		// them. After data.json loads, before the reading/history managers bind. Idempotent — gated by a
-		// flag in data.json.
-		await this.migrateReadingHistory();
-
-		this.dataManager.startWatchingExternalChanges();
 
 		this.apiService = new ApiService(
 			this.settings.omdbApiKey,
@@ -61,24 +124,21 @@ export default class WatchLogPlugin extends Plugin {
 			this.settings.steamApiKey,
 			this.settings.steamId,
 		);
-		this.readingDataManager = new ReadingDataManager(this);
-		this.gameDataManager = new GameDataManager(this);
-		this.historyManager = new HistoryManager(this);
+		this.apiKeys = [this.settings.tmdbApiKey, this.settings.omdbApiKey].join('\n');
 		this.dataManager.setHistoryManager(this.historyManager);
 		this.readingDataManager.setHistoryManager(this.historyManager);
 		this.gameDataManager.setHistoryManager(this.historyManager);
 		// history binds first so any reading-load logging has a live target
 		await this.historyManager.load();
-		await this.readingDataManager.load();
-		await this.gameDataManager.load();
 
 		this.posterService = new PosterService(
 			this.dataManager,
 			() => this.settings,
 		);
 
-		await this.dataManager.ensureFolders();
 		this.startAirtimeScheduler();
+		// notes are read once the vault and metadata cache are ready
+		this.app.workspace.onLayoutReady(() => void this.startVaultStorage());
 
 		this.registerView(WATCHLOG_VIEW_TYPE, (leaf) => {
 			return new WatchLogView(leaf, this, this.dataManager);
@@ -151,11 +211,161 @@ export default class WatchLogPlugin extends Plugin {
 		this.dataManager.flushPendingSaveSync();
 		this.dataManager.flushPosterSaveSync();
 		this.dataManager.flushQueuedSaveSync();
-		this.readingDataManager?.flushCoverSave();
-		this.gameDataManager?.flushCoverSave();
+		const flushes = [this.readingDataManager?.flushPending(), this.gameDataManager?.flushPending()];
 		this.posterService?.destroy();
 		this.widgetRenderer?.cleanup();
+		this.index.stop();
+		this.shared.stop();
+		// local state last: the note flushes above may still touch it
+		void Promise.allSettled(flushes).then(() => this.local.flush());
+	}
 
+	/**
+	 * Locates the root (folder of the first `.base` with a `watchlog:` key), creates the base on a
+	 * fresh install, loads the shared config and builds the entry index from the notes.
+	 */
+	private async startVaultStorage(): Promise<void> {
+		try {
+			const root = await this.findRoot();
+			const legacy = this.legacyData;
+			this.layout = new VaultLayout(
+				root ?? (legacy ? legacyRoot(legacy) : DEFAULT_ROOT),
+				() => this.settings.types.map((t) => t.name),
+			);
+			if (legacy) await this.migrate(legacy);
+			if (root === null && !legacy) {
+				// fresh install (or base not synced yet): no base until the first write; a synced one is adopted
+				this.shared.deferBase({
+					create: async () => {
+						await this.dataManager.ensureFolder(this.layout.root);
+						await this.shared.createBase(this.settings as unknown as Record<string, unknown>);
+					},
+					appeared: () => this.adoptSyncedBase(),
+				});
+				this.index.onLocalWrite(() => void this.shared.ensureBase().catch((e) => console.error('[WL] could not create the base', e)));
+			}
+			await this.shared.load();
+			await this.applySharedSettings();
+			this.shared.onChange(() => void this.applySharedSettings());
+			if (root !== null && (await this.shared.ensureFilter()) === 'missing') {
+				new Notice('Watchlog: the folder filter in WatchLog.base was not found; the base view may list other notes.');
+			}
+			this.shared.start();
+			await this.index.build();
+			this.index.sweepCache();
+			this.indexReady = true;
+			this.index.start();
+			await this.historyManager.start();
+			await this.dataManager.init();
+			await this.readingDataManager.init();
+			await this.gameDataManager.init();
+			await this.dataManager.ensureFolders();
+		} catch (e) {
+			console.error('[WL] vault storage failed to start', e);
+			new Notice('Watchlog could not load its notes. See the developer console for details.');
+		}
+	}
+
+	/** A base appeared by sync after startup: take over its root and settings, then rebuild and refresh. */
+	private async adoptSyncedBase(): Promise<void> {
+		try {
+			const root = await this.findRoot();
+			if (root !== null) {
+				this.layout = new VaultLayout(root, () => this.settings.types.map((t) => t.name));
+			}
+			await this.shared.load();
+			await this.applySharedSettings();
+			await this.shared.ensureFilter();
+			await this.index.rebuild();
+			activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
+		} catch (e) {
+			console.error('[WL] could not adopt the synced base', e);
+		}
+	}
+
+	/** Type names drive classification: a change (local or synced) needs a re-scan of all notes. */
+	private syncTypeNames(): void {
+		const key = this.settings.types.map((t) => t.name).join('\n');
+		const changed = this.typeNamesKey !== null && key !== this.typeNamesKey;
+		this.typeNamesKey = key;
+		if (!changed || !this.indexReady) return;
+		void this.index.rebuild().then(() => activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed')));
+	}
+
+	/** Both plugins manage the same folders; the original would keep writing from its own data.json. */
+	private warnIfOriginalEnabled(): void {
+		const plugins = (this.app as unknown as { plugins?: { enabledPlugins?: Set<string> } }).plugins;
+		if (plugins?.enabledPlugins?.has(ORIGINAL_PLUGIN_ID)) {
+			new Notice('The original WatchLog plugin is still enabled. Disable it, otherwise both plugins write the same notes.', 0);
+		}
+	}
+
+	/** Moves a schema-1 data.json into notes, base and History.md; on failure it is retried next start. */
+	private async migrate(legacy: WatchLogData): Promise<void> {
+		const report = await migrateV1({
+			app: this.app,
+			plugin: { manifest: { dir: this.legacySourceDir ?? this.manifest.dir } },
+			local: this.local,
+			legacy,
+			shared: this.shared,
+			history: new HistoryStore(this.app, () => this.layout),
+			yaml: this.yaml,
+			layout: this.layout,
+		});
+		if (report.skipped.length > 0) console.warn('[WL] migration skipped', report.skipped);
+		if (report.errors.length > 0) {
+			console.error('[WL] migration failed; data.json is kept and the migration retried next start', report.errors);
+			new Notice('Watchlog could not migrate its data to notes. It will retry on the next start; see the developer console.', 0);
+			return;
+		}
+		this.legacyData = null;
+		await this.loadSettings();
+		const skipped = report.skipped.length > 0 ? ` ${report.skipped.length} item(s) were skipped, see the developer console.` : '';
+		new Notice(`Watchlog moved its data into notes (backup: data.v1-backup.json).${skipped}`, 10000);
+	}
+
+	/** Everything backup export and restore need. */
+	backupManagers(): BackupManagers {
+		return {
+			dataManager: this.dataManager,
+			readingDataManager: this.readingDataManager,
+			gameDataManager: this.gameDataManager,
+			historyManager: this.historyManager,
+			storage: {
+				local: this.local,
+				shared: this.shared,
+				importContext: () => ({
+					app: this.app,
+					local: this.local,
+					shared: this.shared,
+					history: new HistoryStore(this.app, () => this.layout),
+					yaml: this.yaml,
+					layout: this.layout,
+				}),
+			},
+		};
+	}
+
+	/** Current vault layout (root and central folders). */
+	getLayout(): VaultLayout {
+		return this.layout;
+	}
+
+	/** Re-composes settings from the (re)loaded base, then refreshes derived state and views. */
+	private async applySharedSettings(): Promise<void> {
+		await this.loadSettings();
+		this.applyCardSizeCssVar();
+		activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
+	}
+
+	private async findRoot(): Promise<string | null> {
+		const { vault } = this.app;
+		const bases = await Promise.all(
+			vault.getFiles()
+				.filter((f) => f.extension === 'base')
+				.map(async (f) => ({ path: f.path, hasWatchlogKey: hasWatchlogKey(await vault.cachedRead(f)) })),
+		);
+		return VaultLayout.findRoot(bases);
 	}
 
 	private startAirtimeScheduler(): void {
@@ -171,60 +381,12 @@ export default class WatchLogPlugin extends Plugin {
 	}
 
 	private checkAirtimeNotifications(): void {
-		const now = new Date();
-		const currentHHMM =
-			`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-		const today =
-			`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-		const entries = this.dataManager.getAirtimeEntries();
-		for (const entry of entries) {
-			// only fire when the entry has a specific time set and it matches now
-			if (!entry.schedule.releaseTime) continue;
-			if (entry.schedule.releaseTime !== currentHHMM) continue;
-
-			// direct day-of-week / date check, avoiding the getAirtimeCountdown rollover bug
-			if (!this.isScheduledForToday(entry.schedule)) continue;
-
-			// deduplicate: only fire once per entry per day
-			const notifKey = `${entry.id}-${today}`;
-			if (this.notifiedEntries.has(notifKey)) continue;
-			this.notifiedEntries.add(notifKey);
-
-			// resolve the entry's subject — a watch title, a reading item, or a game
-			let name: string;
-			let maxUnits: number;
-			if (entry.source === 'game') {
-				const game = this.gameDataManager.getGame(entry.titleId);
-				if (!game) continue;
-				name = game.title;
-				maxUnits = 0; // games are single releases — nothing to auto-increment
-			} else if (entry.source === 'reading') {
-				const kind = entry.readingKind ?? 'book';
-				const item = kind === 'book'
-					? this.readingDataManager.getBook(entry.titleId)
-					: this.readingDataManager.getManga(entry.titleId);
-				if (!item) continue;
-				name = item.title;
-				maxUnits = entry.totalEpisodes ?? item.totalChapters ?? 0;
-			} else {
-				const title = this.dataManager.getTitle(entry.titleId);
-				if (!title) continue;
-				name = title.title;
-				maxUnits = entry.totalEpisodes ?? title.totalEpisodes;
-			}
-			new Notice(name, 8000);
-
-			// auto-increment the unit for recurring schedules — a single release ('once') has no next unit
-			if (entry.schedule.recurrence !== 'once' && maxUnits > 1 && entry.currentEpisode !== undefined) {
-				const nextEp = entry.currentEpisode + 1;
-				if (nextEp <= maxUnits) {
-					entry.currentEpisode = nextEp;
-					void this.dataManager.updateAirtimeEntry(entry);
-				}
-				// final unit: leave in Upcoming, handled via the tick button
-			}
-		}
+		runAirtimeScheduler({
+			dataManager: this.dataManager,
+			readingDataManager: this.readingDataManager,
+			gameDataManager: this.gameDataManager,
+			notify: (name) => new Notice(name, 8000),
+		}, this.notifiedEntries);
 
 		// the due count is time-based, so refresh the status bar on every tick
 		this.updateStatusBar();
@@ -268,29 +430,6 @@ export default class WatchLogPlugin extends Plugin {
 	 * True when today is a day the given schedule fires. Avoids the rollover in
 	 * getAirtimeNextDate/getAirtimeCountdown.
 	 */
-	private isScheduledForToday(schedule: AirtimeSchedule): boolean {
-		const now = new Date();
-		const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-		if (schedule.recurrence === 'daily') return true;
-
-		if (schedule.recurrence === 'weekly') {
-			return schedule.dayOfWeek === now.getDay();
-		}
-
-		if (schedule.recurrence === 'monthly') {
-			return now.getDate() === (schedule.dayOfMonth ?? -1);
-		}
-
-		if (schedule.recurrence === 'once' && schedule.releaseDate) {
-			const rel = new Date(schedule.releaseDate + 'T00:00:00');
-			const relDay = new Date(rel.getFullYear(), rel.getMonth(), rel.getDate());
-			return relDay.getTime() === today.getTime();
-		}
-
-		return false;
-	}
-
 	/**
 	 * Minimum card width (px) for every poster/cover grid and shelf, from the card-size step for this
 	 * device class (desktop vs mobile).
@@ -317,97 +456,28 @@ export default class WatchLogPlugin extends Plugin {
 		activeDocument.body.style.setProperty('--wl-card-min-width', `${this.getCardMinWidth()}px`);
 	}
 
+	/** Composes settings from defaults, data.json and the shared base (shared keys win). */
 	async loadSettings(): Promise<void> {
-		const saved = (await this.loadData()) as {
-			settings?: Partial<WatchLogPluginSettings>;
-		} | null;
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved?.settings ?? {});
-		if (saved?.settings?.listFilters) {
-			this.settings.listFilters = Object.assign(
-				{},
-				DEFAULT_SETTINGS.listFilters,
-				saved.settings.listFilters,
-			);
-		}
-		// per-tab merge so a partially saved record keeps defaults for the rest
-		this.settings.cardTextStyles = Object.assign(
-			{},
-			DEFAULT_SETTINGS.cardTextStyles,
-			saved?.settings?.cardTextStyles ?? {},
+		// a schema-1 data.json is not adopted yet: its settings are the local part until migration
+		const localSettings = this.legacyData?.settings ?? this.local.data.settings;
+		this.settings = composeSettings(
+			localSettings as Record<string, unknown>,
+			this.shared.get().settings,
 		);
-		if (this.settings.animeApiSource === undefined) {
-			this.settings.animeApiSource = 'jikan';
-		}
-		// date display format. Existing installs saw DD/MM/YYYY everywhere, so 'european' is both the
-		// default and the migration target for a missing or hand-edited value. Storage is unaffected.
-		if (
-			this.settings.dateFormat !== 'european' &&
-			this.settings.dateFormat !== 'american' &&
-			this.settings.dateFormat !== 'iso'
-		) {
-			this.settings.dateFormat = 'european';
-		}
 		// mirror into types.ts so the pure formatters render in the chosen order without a settings ref
 		setActiveDateFormat(this.settings.dateFormat);
-		if (this.settings.typeApiMapping === undefined) {
-			this.settings.typeApiMapping = {};
-		}
-		// reading type badge colors (Manga / Book) — backfill defaults for old installs
-		if (!this.settings.readingTypeColors) {
-			this.settings.readingTypeColors = { manga: '#D4537E', book: '#D85A30' };
-		} else {
-			if (!this.settings.readingTypeColors.manga) this.settings.readingTypeColors.manga = '#D4537E';
-			if (!this.settings.readingTypeColors.book) this.settings.readingTypeColors.book = '#D85A30';
-		}
-		// watchlist view: 'rows' is the default, and the removed 'cards' view migrates to 'rows'
-		if (this.settings.defaultWatchlistView !== 'list' && this.settings.defaultWatchlistView !== 'rows') {
-			this.settings.defaultWatchlistView = 'rows';
-		}
-		// backfill the status-bar Upcoming counter toggle for existing installs (default ON)
-		if (this.settings.showUpcomingStatusBar === undefined) {
-			this.settings.showUpcomingStatusBar = true;
-		}
-		// normalize the stored rows layout (drops unknown ids, appends shelves missing from an older
-		// layout) and always take a fresh array so later in-place edits can't mutate DEFAULT_SETTINGS
-		this.settings.rowsLayout = normalizeRowsLayout(this.settings.rowsLayout);
-		// backfill the default Add type setting for existing installs
-		if (this.settings.defaultAddType === undefined) {
-			this.settings.defaultAddType = LAST_USED_TYPE_SENTINEL;
-		}
-		if (this.settings.lastAddedType === undefined) {
-			this.settings.lastAddedType = '';
-		}
-		// array fields are never undefined after a partial merge
-		if (!this.settings.types?.length) this.settings.types = DEFAULT_SETTINGS.types;
-		if (!this.settings.statuses?.length) this.settings.statuses = DEFAULT_SETTINGS.statuses;
-		if (!this.settings.reviews?.length) this.settings.reviews = DEFAULT_SETTINGS.reviews;
-		if (!this.settings.priorities?.length) this.settings.priorities = DEFAULT_SETTINGS.priorities;
-		if (!this.settings.seasonPalette?.length) this.settings.seasonPalette = DEFAULT_SETTINGS.seasonPalette;
-		// the rating system must always be exactly five well-formed tiers; a missing or malformed value
-		// (older or hand-edited data) resets to defaults
-		if (
-			!Array.isArray(this.settings.ratingSystem) ||
-			this.settings.ratingSystem.length !== 5 ||
-			this.settings.ratingSystem.some((t) => !t || typeof t.label !== 'string' || typeof t.color !== 'string')
-		) {
-			this.settings.ratingSystem = DEFAULT_SETTINGS.ratingSystem.map((t) => ({ ...t }));
-		}
-		// migrate the Plan to watch colour from old grey to new teal
-		const ptw = this.settings.statuses.find((s) => s.name === 'Plan to watch');
-		if (ptw && ptw.color === '#888780') ptw.color = '#00A9A5';
-
-		// ensure the "To be released" status exists (migration for existing users)
-		if (!this.settings.statuses.find((s) => s.name === 'To be released')) {
-			const completedIdx = this.settings.statuses.findIndex((s) => s.name === 'Completed');
-			const insertAt = completedIdx >= 0 ? completedIdx + 1 : this.settings.statuses.length;
-			this.settings.statuses.splice(insertAt, 0, { name: 'To be released', color: '#E8873A' });
-		}
+		this.syncTypeNames();
 	}
 
 	async saveSettings(): Promise<void> {
 		// keep the date formatters in step with the setting on every save
 		setActiveDateFormat(this.settings.dateFormat);
-		await this.dataManager.saveSettings(this.settings);
+		this.syncTypeNames();
+		// a changed key makes "no key" checks worth repeating
+		const keys = [this.settings.tmdbApiKey, this.settings.omdbApiKey].join('\n');
+		if (this.apiKeys !== null && keys !== this.apiKeys) this.dataManager.resetNoKeyChecks();
+		this.apiKeys = keys;
+		await persistSettings(this.settings, this.local, this.shared);
 	}
 
 	/**
@@ -424,89 +494,6 @@ export default class WatchLogPlugin extends Plugin {
 			return exists(this.settings.lastAddedType) ? this.settings.lastAddedType : firstAvailable;
 		}
 		return exists(choice) ? choice : firstAvailable;
-	}
-
-	/**
-	 * One-time migration of legacy `reading.json` / `history.json` into `data.json`.
-	 *
-	 * Obsidian Sync replicates data.json (the saveData channel) but NOT the raw adapter-written files,
-	 * so their contents are copied into the single saveData object.
-	 *
-	 * Gated by `data.migratedReadingHistory`. Flag and migrated data are written together in ONE atomic
-	 * saveData(), so an interrupted load simply re-runs the idempotent migration. The flag is only set
-	 * when both legacy reads succeeded (an absent file counts as success); a parse failure leaves it
-	 * unset to preserve a recovery chance. Legacy files are left on disk as a backup.
-	 */
-	private async migrateReadingHistory(): Promise<void> {
-		const master = this.dataManager.getData();
-		if (master.migratedReadingHistory === true) {
-			return;
-		}
-
-		const adapter = this.app.vault.adapter;
-		const dir = `${this.app.vault.configDir}/plugins/watchlog`;
-		const readingPath = normalizePath(`${dir}/reading.json`);
-		const historyPath = normalizePath(`${dir}/history.json`);
-
-		// read legacy reading.json
-		let readingOk = false;
-		let readingData: ReadingData | null = null;
-		try {
-			if (await adapter.exists(readingPath)) {
-				const raw = await adapter.read(readingPath);
-				readingData = JSON.parse(raw) as ReadingData;
-				readingOk = true;
-			} else {
-				readingOk = true; // absent = nothing to migrate (still a success)
-			}
-		} catch (e) {
-			readingOk = false;
-			console.warn('[WL] reading.json read/parse failed; migration will retry next load:', e);
-		}
-
-		// read legacy history.json
-		let historyOk = false;
-		let historyEntries: HistoryEntry[] | null = null;
-		try {
-			if (await adapter.exists(historyPath)) {
-				const raw = await adapter.read(historyPath);
-				const parsed = JSON.parse(raw) as { entries?: HistoryEntry[] };
-				historyEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
-				historyOk = true;
-			} else {
-				historyOk = true;
-			}
-		} catch (e) {
-			historyOk = false;
-			console.warn('[WL] history.json read/parse failed; migration will retry next load:', e);
-		}
-
-		// copy into the saveData object (with the don't-overwrite-with-empty belt)
-		if (readingOk && readingData) {
-			const legacyHasReading =
-				(readingData.books?.length ?? 0) > 0 || (readingData.manga?.length ?? 0) > 0 ||
-				(readingData.bookColumns?.length ?? 0) > 0 || (readingData.mangaColumns?.length ?? 0) > 0;
-			const masterHasReading = !!master.reading &&
-				(((master.reading.books?.length ?? 0) > 0) || ((master.reading.manga?.length ?? 0) > 0));
-			if (legacyHasReading || !masterHasReading) {
-				master.reading = readingData;
-			}
-		}
-
-		if (historyOk && historyEntries) {
-			const masterHasHistory = Array.isArray(master.history) && master.history.length > 0;
-			if (historyEntries.length > 0 || !masterHasHistory) {
-				master.history = historyEntries;
-			}
-		}
-
-		// only mark migrated when both reads succeeded; otherwise retry next load
-		if (readingOk && historyOk) {
-			master.migratedReadingHistory = true;
-		}
-
-		// single atomic write: migrated data AND flag together
-		await this.dataManager.persist();
 	}
 
 	private openWidgetPalette(editor: Editor): void {

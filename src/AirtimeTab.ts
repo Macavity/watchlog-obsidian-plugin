@@ -1165,10 +1165,18 @@ export class AirtimeTab {
 		deleteBtn.title = 'Remove from upcoming';
 		deleteBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
-			new ConfirmModal(this.plugin.app, `Remove "${r.title}" from Upcoming?`, () => {
-				void this.dataManager.removeAirtimeEntry(entry.id).then(() => this.render());
-			}).open();
+			this.confirmRemove(entry, r);
 		});
+	}
+
+	/** Removes what the card shows: a derived card clears the release date, a manual schedule only itself. */
+	private confirmRemove(entry: AirtimeEntry, r: ResolvedUpcoming): void {
+		const msg = this.dataManager.removeClearsReleaseDate(entry)
+			? `Remove "${r.title}" from Upcoming and clear its release date?`
+			: `Remove "${r.title}" from Upcoming?`;
+		new ConfirmModal(this.plugin.app, msg, () => {
+			void this.dataManager.removeAirtimeEntry(entry.id).then(() => this.render());
+		}).open();
 	}
 
 	/** Tick confirm + apply, shared by the List row button and the Cards overlay button/menu. */
@@ -1185,7 +1193,9 @@ export class AirtimeTab {
 			? `"${r.title}" has been released.\nRemove from Upcoming and set status to ${r.planStatus}?`
 			: isFinalEpisode
 				? `Final ${r.unitNoun} of "${r.title}".\nRemove from Upcoming? (status unchanged)`
-				: `${r.unitNounCap} ${entry.currentEpisode ?? ''} of "${r.title}".\nMark and track next ${r.unitNoun}?`;
+				: this.dataManager.isAiringTracked(entry)
+					? `${r.unitNounCap} ${entry.currentEpisode ?? ''} of "${r.title}" is out.\nMark as seen in Upcoming?`
+					: `${r.unitNounCap} ${entry.currentEpisode ?? ''} of "${r.title}".\nMark and track next ${r.unitNoun}?`;
 
 		// single releases get an escape hatch: a due title that turns out to be a serial jumps into the
 		// schedule modal in Recurring mode instead of being removed. Games have no recurring units.
@@ -1207,16 +1217,15 @@ export class AirtimeTab {
 				this.plugin.markAirtimeHandled(`${entry.id}-${todayStr}`);
 
 				if (isMovie) {
-					await this.dataManager.removeAirtimeEntry(entry.id);
+					// a derived premiere card goes with the status change; its release date stays
+					if (!this.dataManager.removeClearsReleaseDate(entry)) await this.dataManager.removeAirtimeEntry(entry.id);
 					await this.revertToBeReleasedStatus(entry, r);
 				} else if (isFinalEpisode) {
 					// final unit: remove from Upcoming, do NOT change status
 					await this.dataManager.removeAirtimeEntry(entry.id);
 				} else {
-					// non-final: increment the unit and record the acknowledgement date so the countdown resets
-					entry.currentEpisode = (entry.currentEpisode ?? 1) + 1;
-					entry.lastAcknowledgedDate = todayStr;
-					await this.dataManager.updateAirtimeEntry(entry);
+					// non-final: acknowledge so the countdown resets; without an API pointer also advance the unit
+					await this.dataManager.tickAirtimeEntry(entry, todayStr);
 				}
 				this.render();
 			})();
@@ -1402,12 +1411,11 @@ export class AirtimeTab {
 			if (title) {
 				cell.dataset.titleId = title.id;
 				const display = getDisplayPoster(title);
-				const isManual = !!(title.manualPosterUrl && title.manualPosterUrl.trim() !== '');
-				const needsPoster = !isManual && !title.posterUrl && title.posterUrl !== 'none';
+				const needsPoster = !title.posterUrl;
 				if (display && display.startsWith('http')) {
 					img.onerror = () => {
 						card.removeClass('has-poster');
-						if (!isManual) this.dataManager.updatePosterUrl(title.id, 'none');
+						void this.dataManager.updatePosterUrl(title.id, 'none');
 					};
 					card.addClass('has-poster');
 					img.src = display;
@@ -1513,11 +1521,7 @@ export class AirtimeTab {
 		openCardMenu(card, anchorBtn, [
 			{
 				label: 'Remove from upcoming',
-				onClick: () => {
-					new ConfirmModal(this.plugin.app, `Remove "${r.title}" from Upcoming?`, () => {
-						void this.dataManager.removeAirtimeEntry(entry.id).then(() => this.render());
-					}).open();
-				},
+				onClick: () => this.confirmRemove(entry, r),
 			},
 		], { container: this.container, cleanups: this.activeCleanups });
 	}
@@ -1535,9 +1539,8 @@ export class AirtimeTab {
 
 			const title = this.dataManager.getTitle(titleId);
 			if (!title) continue;
-			// same gates as the Watchlist cards: manual override wins; 'none' means tried, nothing found
-			if (title.manualPosterUrl && title.manualPosterUrl.trim() !== '') continue;
-			if (title.posterUrl || title.posterUrl === 'none') continue;
+			// same gate as the Watchlist cards: a poster is set, or 'none' means tried, nothing found
+			if (title.posterUrl) continue;
 
 			const placeholder = cell.querySelector('.wl-card-poster-placeholder');
 			placeholder?.addClass('is-loading');
@@ -1549,7 +1552,7 @@ export class AirtimeTab {
 				const img = cell.querySelector<HTMLImageElement>('.wl-card-poster');
 				if (!card || !img) return;
 				img.onload = () => card.addClass('has-poster');
-				img.onerror = () => this.dataManager.updatePosterUrl(titleId, 'none');
+				img.onerror = () => void this.dataManager.updatePosterUrl(titleId, 'none');
 				img.src = url;
 			});
 		}

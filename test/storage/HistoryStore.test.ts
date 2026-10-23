@@ -1,0 +1,150 @@
+import { describe, it, expect, vi } from 'vitest';
+import { createFakeApp } from '../fakes/fakeApp';
+import { VaultLayout } from '../../src/storage/VaultLayout';
+import { HistoryStore } from '../../src/storage/HistoryStore';
+
+const layout = () => new VaultLayout('W', () => []);
+const entry = (i: number, extra = {}) => ({
+	id: '', timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(), message: `m${i}`,
+	action: 'added' as const, titleName: `T${i}`, ...extra,
+});
+const tick = () => new Promise((r) => setTimeout(r, 20));
+
+describe('HistoryStore', () => {
+	it('appends, caps and keeps foreign lines', async () => {
+		const f = createFakeApp({ 'W/History.md': '# My log\n' });
+		const h = new HistoryStore(f.app, layout);
+		for (let i = 0; i < 1001; i++) await h.append(entry(i));
+		const all = await h.load();
+		expect(all.length).toBe(1000);
+		expect(all[0]!.message).toBe('m1');
+		expect(f.files.get('W/History.md')!.startsWith('# My log\n')).toBe(true);
+	});
+
+	it('caps by timestamp, not position: a legacy import appended at the end keeps the newest', async () => {
+		const iso = (sec: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, sec)).toISOString();
+		const line = (sec: number) => `- ${iso(sec)} · added · T${sec} · m${sec}`;
+		// 1000 local entries (seconds 1000..1999), then an older import (seconds 0..4) appended at the end
+		const local = Array.from({ length: 1000 }, (_, i) => line(1000 + i));
+		const legacy = Array.from({ length: 5 }, (_, i) => line(i));
+		const f = createFakeApp({ 'W/History.md': ['# x', ...local, ...legacy, ''].join('\n') });
+		const h = new HistoryStore(f.app, layout);
+		await h.append(entry(2000));
+		const all = await h.load();
+		expect(all).toHaveLength(1000);
+		expect(all[0]!.message).toBe('m1001');
+		expect(all[all.length - 1]!.message).toBe('m2000');
+		expect(f.files.get('W/History.md')).not.toContain('m0 ');
+		expect(f.files.get('W/History.md')).not.toContain('· m4\n');
+	});
+
+	it('load returns entries sorted by timestamp, oldest first', async () => {
+		const iso = (sec: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, sec)).toISOString();
+		const f = createFakeApp({ 'W/History.md': [
+			'# x', `- ${iso(30)} · added · T30 · m30`, `- ${iso(10)} · added · T10 · m10`, `- ${iso(20)} · added · T20 · m20`, '',
+		].join('\n') });
+		const h = new HistoryStore(f.app, layout);
+		expect((await h.load()).map((e) => e.message)).toEqual(['m10', 'm20', 'm30']);
+	});
+
+	it('cap keeps foreign lines in place while dropping the oldest entries', async () => {
+		const iso = (sec: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, sec)).toISOString();
+		const local = Array.from({ length: 1000 }, (_, i) => `- ${iso(1000 + i)} · added · T${i} · m${1000 + i}`);
+		const f = createFakeApp({ 'W/History.md': ['# x', 'my note', ...local, ''].join('\n') });
+		const h = new HistoryStore(f.app, layout);
+		await h.append(entry(3000));
+		const txt = f.files.get('W/History.md')!;
+		expect(txt.startsWith('# x\nmy note\n')).toBe(true);
+		expect(txt).not.toContain('m1000\n');
+		expect(txt).toContain('m3000');
+	});
+
+	it('roundtrips entries incl. source, wikilink and ids', async () => {
+		const f = createFakeApp();
+		const h = new HistoryStore(f.app, layout);
+		await h.append(entry(1, { source: 'Reading', titleId: 'Movie/T1' }));
+		await h.append(entry(2));
+		expect(f.files.get('W/History.md')).toContain('[[Movie/T1]]');
+		expect(f.files.get('W/History.md')).not.toContain('[[T2');
+		const all = await h.load();
+		expect(all.map((e) => [e.titleName, e.message, e.source, e.action])).toEqual([
+			['T1', 'm1', 'Reading', 'added'], ['T2', 'm2', undefined, 'added']]);
+		expect(all[0]!.id).toMatch(/^2026-01-01T00:00:01\.000Z#\d+$/);
+	});
+
+	it('skips unreadable lines on load and maps group-created', async () => {
+		const f = createFakeApp({ 'W/History.md': '# x\nnotes\n- 2026-01-01T00:00:00.000Z · group-created · Favs\n- bad line\n' });
+		const h = new HistoryStore(f.app, layout);
+		const all = await h.load();
+		expect(all).toHaveLength(1);
+		expect(all[0]!.message).toBe('Group "Favs" was created');
+		await h.replaceAll(all);
+		const txt = f.files.get('W/History.md')!;
+		expect(txt).toContain('group-created · Favs');
+		expect(txt).toContain('notes\n');
+		expect(txt).toContain('- bad line');
+	});
+
+	it('replaceAll replaces entries and keeps foreign lines', async () => {
+		const f = createFakeApp({ 'W/History.md': '# x\n' });
+		const h = new HistoryStore(f.app, layout);
+		await h.append(entry(1)); await h.append(entry(2));
+		await h.replaceAll([entry(2)]);
+		expect((await h.load()).map((e) => e.message)).toEqual(['m2']);
+		expect(f.files.get('W/History.md')!.startsWith('# x\n')).toBe(true);
+	});
+
+	it('notifies on external change, not on own writes', async () => {
+		const f = createFakeApp({ 'W/History.md': '# x\n' });
+		const h = new HistoryStore(f.app, layout);
+		const cb = vi.fn();
+		h.start(cb);
+		await h.append(entry(1));
+		await tick();
+		expect(cb).not.toHaveBeenCalled();
+		f.externalWrite('W/History.md', f.files.get('W/History.md')! + '- 2026-01-02T00:00:00.000Z · added · Z\n');
+		await tick();
+		expect(cb).toHaveBeenCalledTimes(1);
+	});
+	it('links by titleId without a vault scan, also for sanitized names', async () => {
+		const f = createFakeApp();
+		const scan = vi.spyOn(f.app.vault, 'getMarkdownFiles');
+		const h = new HistoryStore(f.app, () => new VaultLayout('W', () => ['Movie']));
+		await h.append(entry(1, { titleName: 'Léon: The Professional', titleId: 'Movie/Léon- The Professional' }));
+		expect(f.files.get('W/History.md')).toContain('[[Movie/Léon- The Professional]]');
+		expect(scan).not.toHaveBeenCalled();
+		const [e] = await h.load();
+		expect(e!.titleId).toBe('Movie/Léon- The Professional');
+		expect(e!.titleName).toBe('Léon- The Professional');
+	});
+
+	it('links two same-named titles of different types to their own notes', async () => {
+		const f = createFakeApp();
+		const h = new HistoryStore(f.app, () => new VaultLayout('W', () => ['Movie', 'TV Show']));
+		await h.appendMany([
+			entry(1, { titleName: 'Dark', titleId: 'Movie/Dark' }),
+			entry(2, { titleName: 'Dark', titleId: 'TV Show/Dark' }),
+		]);
+		const txt = f.files.get('W/History.md')!;
+		expect(txt).toContain('[[Movie/Dark]]');
+		expect(txt).toContain('[[TV Show/Dark]]');
+	});
+
+	it('keeps entries without id as plain text', async () => {
+		const f = createFakeApp({ 'W/Movie/Dark.md': '---\n---\n' });
+		const h = new HistoryStore(f.app, () => new VaultLayout('W', () => ['Movie']));
+		await h.append(entry(1, { titleName: 'Dark' }));
+		expect(f.files.get('W/History.md')).not.toContain('[[');
+	});
+
+	it('replaceAll keeps existing link targets', async () => {
+		const f = createFakeApp();
+		const h = new HistoryStore(f.app, () => new VaultLayout('W', () => ['Movie']));
+		await h.append(entry(1, { titleName: 'Léon: The Professional', titleId: 'Movie/Léon- The Professional' }));
+		await h.append(entry(2));
+		await h.replaceAll(await h.load());
+		const txt = f.files.get('W/History.md')!;
+		expect(txt).toContain('[[Movie/Léon- The Professional]]');
+		expect(txt).not.toContain('[[T2');
+	});
+});

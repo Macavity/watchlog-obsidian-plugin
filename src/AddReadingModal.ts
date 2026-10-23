@@ -102,6 +102,7 @@ export class AddReadingModal extends Modal {
 	private linkVaultBtn: HTMLButtonElement | null = null;
 	private lookupSearchGen = 0;
 	private selectGen = 0;
+	// cover last prefilled from an API result (or the cached one when editing); unchanged it is not an override
 	private prefillSearch: string;
 	private searchDebounce: number | null = null;
 	// built on first lookup, reused for the modal's life
@@ -357,7 +358,9 @@ export class AddReadingModal extends Modal {
 					const detail = await this.plugin.apiService.getGoogleBookById(r.googleBooksId);
 					if (gen !== this.selectGen || !detail) return; // a newer selection superseded this one
 					if (detail.totalPages > 0) this.state.totalPages = detail.totalPages;
-					if (detail.coverUrl) this.state.coverUrl = detail.coverUrl;
+					if (detail.coverUrl) {
+						this.state.coverUrl = detail.coverUrl;
+					}
 					this.refreshForm();
 				} catch {
 					// best-effort enrichment; the book is already applied from the search results

@@ -328,8 +328,8 @@ export class TitleDetailModal extends Modal {
 	}
 
 	/**
-	 * One-time credits backfill for titles predating the fields. Fetches from the stored IMDb link,
-	 * then persists through the normal path (data.json + frontmatter). A failed or empty fetch marks
+	 * One-time credits backfill for titles predating the fields. Fetches from the stored IMDb link and
+	 * stores the result in the cache only; the note is never written. A failed or empty fetch marks
 	 * the fields 'none' so no later open retries.
 	 */
 	private maybeBackfillCredits(): void {
@@ -454,14 +454,13 @@ export class TitleDetailModal extends Modal {
 		};
 
 		const display = getDisplayPoster(this.title);
-		const isManual = !!(this.title.manualPosterUrl && this.title.manualPosterUrl.trim() !== '');
 		if (display && display.startsWith('http')) {
 			showImg(display);
 			img.onerror = () => {
 				showPlaceholder();
-				if (!isManual) void this.dataManager.updatePosterUrl(this.title.id, 'none');
+				void this.dataManager.updatePosterUrl(this.title.id, 'none');
 			};
-		} else if (!isManual && this.title.posterUrl === '') {
+		} else if (this.title.posterUrl === '') {
 			placeholder.addClass('is-loading');
 			void this.plugin.posterService?.enqueue(this.title).then((url) => {
 				placeholder.removeClass('is-loading');
@@ -1415,14 +1414,13 @@ export function buildTitleCardElement(
 	};
 
 	const display = getDisplayPoster(title);
-	const isManual = !!(title.manualPosterUrl && title.manualPosterUrl.trim() !== '');
 	if (display && display.startsWith('http')) {
 		showImg(display);
 		img.onerror = () => {
 			showPlaceholder();
-			if (!isManual) plugin.dataManager.updatePosterUrl(title.id, 'none');
+			void plugin.dataManager.updatePosterUrl(title.id, 'none');
 		};
-	} else if (!isManual && title.posterUrl === '') {
+	} else if (title.posterUrl === '') {
 		placeholder.addClass('is-loading');
 		void plugin.posterService?.enqueue(title).then((url) => {
 			placeholder.removeClass('is-loading');
