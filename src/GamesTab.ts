@@ -17,6 +17,7 @@ import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown } from './ui/TabToolbar';
 import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
 import { renderGroupCard } from './ui/GroupCard';
+import { PRIORITY_ORDER, pickRandom, compareUnsetLast, comparePriority, isRecentlyReleased } from './ui/TabHelpers';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { rawgResizedCover } from './ApiService';
 import { resolveGameCover, type GameCover } from './coverRefresh';
@@ -30,17 +31,6 @@ type GameDisplayItem =
 	| { kind: 'game'; data: Game }
 	| { kind: 'group'; data: GameGroup; members: Game[] };
 
-const PRIORITY_ORDER = ['High', 'Medium', 'Low'] as const;
-
-/** Released within the last 7 days (the Watchlist "Recently arrived" rule). */
-function isRecentlyReleased(releaseDate: string | null): boolean {
-	if (!releaseDate || !/^\d{4}-\d{2}-\d{2}$/.test(releaseDate)) return false;
-	const releaseMs = new Date(releaseDate + 'T00:00:00').getTime();
-	const today = new Date();
-	today.setHours(0, 0, 0, 0);
-	const diffDays = (today.getTime() - releaseMs) / 86400000;
-	return diffDays >= 0 && diffDays <= 7;
-}
 
 /**
  * Games tab: the Watchlist toolbar (search + Saved filter / Filters / Sorting / Select / + Add,
@@ -340,33 +330,15 @@ export class GamesTab {
 			}
 			case 'progress':
 				return dir === 'asc' ? a.progress - b.progress : b.progress - a.progress;
-			case 'playtime': {
-				// untracked (0) sorts below every real playtime, like the rating rule
-				const pa = a.playtimeMinutes;
-				const pb = b.playtimeMinutes;
-				if (pa === 0 && pb === 0) return 0;
-				if (pa === 0) return 1;
-				if (pb === 0) return -1;
-				return dir === 'asc' ? pa - pb : pb - pa;
-			}
-			case 'rating': {
-				if (dir === 'desc') {
-					// un-rated (0) sorts below every real rating
-					const ra = a.rating === 0 ? -1 : a.rating;
-					const rb = b.rating === 0 ? -1 : b.rating;
-					return rb - ra;
-				}
-				if (a.rating === 0 && b.rating === 0) return 0;
-				if (a.rating === 0) return 1;
-				if (b.rating === 0) return -1;
-				return a.rating - b.rating;
-			}
-			case 'priority': {
-				// direction-agnostic High → Low, empty last (the Watchlist rule)
-				const ai = PRIORITY_ORDER.indexOf(a.priority as typeof PRIORITY_ORDER[number]);
-				const bi = PRIORITY_ORDER.indexOf(b.priority as typeof PRIORITY_ORDER[number]);
-				return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-			}
+			// untracked (0) sorts below every real playtime, like the rating rule
+			case 'playtime':
+				return compareUnsetLast(a.playtimeMinutes, b.playtimeMinutes, dir);
+			// un-rated (0) sorts below every real rating
+			case 'rating':
+				return compareUnsetLast(a.rating, b.rating, dir);
+			// direction-agnostic High → Low, empty last (the Watchlist rule)
+			case 'priority':
+				return comparePriority(a.priority, b.priority);
 			case 'started':
 				return GamesTab.compareNullableDates(a.dateStarted, b.dateStarted, dir);
 			case 'status': {
@@ -888,7 +860,7 @@ export class GamesTab {
 				.filter((g): g is Game => g !== undefined);
 			if (picks.length < GamesTab.RECOMMENDED_COUNT && picks.length < pool.length) {
 				const used = new Set(picks.map((g) => g.id));
-				picks.push(...GamesTab.pickRandom(
+				picks.push(...pickRandom(
 					pool.filter((g) => !used.has(g.id)),
 					GamesTab.RECOMMENDED_COUNT - picks.length,
 				));
@@ -897,7 +869,7 @@ export class GamesTab {
 			return picks;
 		}
 
-		const picks = GamesTab.pickRandom(pool, GamesTab.RECOMMENDED_COUNT);
+		const picks = pickRandom(pool, GamesTab.RECOMMENDED_COUNT);
 		this.gameData.setRecommendedDaily({ date: today, ids: picks.map((g) => g.id) });
 		return picks;
 	}
@@ -920,18 +892,6 @@ export class GamesTab {
 				return (b.dateModified ?? '').localeCompare(a.dateModified ?? '');
 			})
 			.slice(0, 10);
-	}
-
-	/** Fisher–Yates on a copy, returning the first `count` items. */
-	private static pickRandom<T>(pool: T[], count: number): T[] {
-		const arr = [...pool];
-		for (let i = arr.length - 1; i > 0; i--) {
-			const j = Math.floor(Math.random() * (i + 1));
-			const tmp = arr[i]!;
-			arr[i] = arr[j]!;
-			arr[j] = tmp;
-		}
-		return arr.slice(0, count);
 	}
 
 	private renderSearch(parent: HTMLElement): void {

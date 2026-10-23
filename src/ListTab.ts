@@ -14,6 +14,7 @@ import { AddTitleChoiceModal } from './AddTitleChoiceModal';
 import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown, renderViewDropdown } from './ui/TabToolbar';
 import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
 import { renderGroupCard } from './ui/GroupCard';
+import { PRIORITY_ORDER, pickRandom, compareUnsetLast, comparePriority, isRecentlyReleased } from './ui/TabHelpers';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { EditTitleModal } from './EditTitleModal';
 import { ConfirmModal } from './ConfirmModal';
@@ -33,9 +34,6 @@ import { renderFiltersDropdown, buildFilterSections, buildRatingOpts } from './u
 type DisplayItem =
 	| { kind: 'title'; data: WatchLogTitle }
 	| { kind: 'group'; data: WatchLogGroup; members: WatchLogTitle[] };
-
-
-const PRIORITY_ORDER = ['High', 'Medium', 'Low'] as const;
 
 // selection key of a group: its id is its name, which could equal a title id
 const GROUP_KEY_PREFIX = 'group:';
@@ -258,20 +256,11 @@ export class ListTab {
 		}
 	}
 
-	private static isRecentlyArrived(title: WatchLogTitle): boolean {
-		if (!title.releaseDate || !/^\d{4}-\d{2}-\d{2}$/.test(title.releaseDate)) return false;
-		const releaseMs = new Date(title.releaseDate + 'T00:00:00').getTime();
-		const today = new Date();
-		today.setHours(0, 0, 0, 0);
-		const diffDays = (today.getTime() - releaseMs) / 86400000;
-		return diffDays >= 0 && diffDays <= 7;
-	}
-
 	private titlePassesFilters(t: WatchLogTitle): boolean {
 		if (this.filterFavoritesOnly && !t.favorite) return false;
 		if (this.filterTypeExclude.size > 0 && this.filterTypeExclude.has(t.type)) return false;
 		if (this.filterRecentlyArrivedOnly) {
-			if (!ListTab.isRecentlyArrived(t)) return false;
+			if (!isRecentlyReleased(t.releaseDate)) return false;
 		} else if (this.filterStatusExclude.size > 0 && this.filterStatusExclude.has(t.status)) {
 			return false;
 		}
@@ -677,7 +666,7 @@ export class ListTab {
 				.filter((t): t is WatchLogTitle => t !== undefined);
 			if (picks.length < ListTab.RECOMMENDED_COUNT && picks.length < pool.length) {
 				const used = new Set(picks.map((t) => t.id));
-				picks.push(...ListTab.pickRandom(
+				picks.push(...pickRandom(
 					pool.filter((t) => !used.has(t.id)),
 					ListTab.RECOMMENDED_COUNT - picks.length,
 				));
@@ -686,7 +675,7 @@ export class ListTab {
 			return picks;
 		}
 
-		const picks = ListTab.pickRandom(pool, ListTab.RECOMMENDED_COUNT);
+		const picks = pickRandom(pool, ListTab.RECOMMENDED_COUNT);
 		this.dataManager.setRecommendedDaily({ date: today, ids: picks.map((t) => t.id) });
 		return picks;
 	}
@@ -726,18 +715,6 @@ export class ListTab {
 			if (out.length >= 10) break;
 		}
 		return out;
-	}
-
-	/** Fisher–Yates on a copy, returning the first `count` items. */
-	private static pickRandom<T>(pool: T[], count: number): T[] {
-		const arr = [...pool];
-		for (let i = arr.length - 1; i > 0; i--) {
-			const j = Math.floor(Math.random() * (i + 1));
-			const tmp = arr[i]!;
-			arr[i] = arr[j]!;
-			arr[j] = tmp;
-		}
-		return arr.slice(0, count);
 	}
 
 	private buildCardElement(
@@ -1254,6 +1231,10 @@ export class ListTab {
 		});
 	}
 
+	private collapseIfExpanded(id: string): void {
+		if (this.expandedId === id) this.expandedId = null;
+	}
+
 	private renderActionBar(parent: HTMLElement): void {
 		const bar = renderActionBar(parent, this.plugin.app, {
 			title: 'Delete selected',
@@ -1269,7 +1250,7 @@ export class ListTab {
 						this.expandedGroups.delete(groupId);
 					} else {
 						titleIds.push(id);
-						if (this.expandedId === id) this.expandedId = null;
+						this.collapseIfExpanded(id);
 					}
 				}
 				if (titleIds.length > 0) {
@@ -1880,7 +1861,7 @@ export class ListTab {
 		// release year after the type badge; omitted when unknown
 		const yearMatch = title.releaseDate?.match(/^(\d{4})/);
 		if (yearMatch) badgeRow.createSpan({ cls: 'wl-row-year', text: yearMatch[1] });
-		if (ListTab.isRecentlyArrived(title)) {
+		if (isRecentlyReleased(title.releaseDate)) {
 			badgeRow.createSpan({ cls: 'wl-recently-arrived', text: '· Recently arrived' });
 		}
 		const barWrap = colTitle.createDiv({ cls: 'wl-progress-wrap' });
@@ -2653,22 +2634,9 @@ export class ListTab {
 			case 'dateAdded-oldest': return new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime();
 			case 'progress-high':    return this.dataManager.getProgress(b) - this.dataManager.getProgress(a);
 			case 'progress-low':     return this.dataManager.getProgress(a) - this.dataManager.getProgress(b);
-			case 'rating-high': {
-				const ra = a.rating === 0 ? -1 : a.rating;
-				const rb = b.rating === 0 ? -1 : b.rating;
-				return rb - ra;
-			}
-			case 'rating-low': {
-				if (a.rating === 0 && b.rating === 0) return 0;
-				if (a.rating === 0) return 1;
-				if (b.rating === 0) return -1;
-				return a.rating - b.rating;
-			}
-			case 'priority': {
-				const ai = PRIORITY_ORDER.indexOf(a.priority as typeof PRIORITY_ORDER[number]);
-				const bi = PRIORITY_ORDER.indexOf(b.priority as typeof PRIORITY_ORDER[number]);
-				return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-			}
+			case 'rating-high':      return compareUnsetLast(a.rating, b.rating, 'desc');
+			case 'rating-low':       return compareUnsetLast(a.rating, b.rating, 'asc');
+			case 'priority':         return comparePriority(a.priority, b.priority);
 			case 'started-asc': {
 				const da = a.dateStarted ? new Date(a.dateStarted).getTime() : Infinity;
 				const db = b.dateStarted ? new Date(b.dateStarted).getTime() : Infinity;
