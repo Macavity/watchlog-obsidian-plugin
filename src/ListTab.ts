@@ -2,7 +2,7 @@ import { setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, TagDefinition, SavedFilterPreset, Season } from './types';
-import { formatTime, formatDateDisplay, todayIso, getThemedColor, getDisplayPoster, getTitleCredits, getManualCredits, normalizeRowsLayout, ROWS_SHELVES, ROWS_EXCLUSIVE_SHELVES, sortByFavorited, priorityFilterOpts, formatPriorityOpt, migratePriorityExclude } from './types';
+import { formatTime, formatDateDisplay, todayIso, getThemedColor, getDisplayPoster, getTitleCredits, getManualCredits, normalizeRowsLayout, ROWS_SHELVES, ROWS_EXCLUSIVE_SHELVES, sortByFavorited, migratePriorityExclude } from './types';
 import { searchItems, yearOf, type SearchFieldSpec } from './SearchQuery';
 import { renderSearchHelpButton } from './SearchHelpModal';
 import { createDatePicker } from './DatePicker';
@@ -26,7 +26,7 @@ import { LazyCardObserver } from './LazyCardObserver';
 import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { RowsCustomizeModal } from './RowsCustomizeModal';
-import { toggleFilterPanel, FilterSection } from './FilterPanel';
+import { renderFiltersDropdown, buildFilterSections, buildRatingOpts } from './ui/TabFilters';
 
 
 type DisplayItem =
@@ -176,6 +176,12 @@ export class ListTab {
 				(this.filterGroupsOnly === (savedPreset.groupsOnly ?? false)) &&
 				(this.filterFavoritesOnly === (savedPreset.favoritesOnly ?? false));
 		}
+	}
+
+	/** Saves the live filters and drops the saved-preset highlight. */
+	private persistFilters(): void {
+		this.saveFiltersToSettings();
+		this.deactivateSavedFilter();
 	}
 
 	private saveFiltersToSettings(): void {
@@ -1168,111 +1174,53 @@ export class ListTab {
 	}
 
 	private renderFiltersDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Filters ▼' });
-		const dotEl = btn.createSpan({ cls: 'wl-filter-dot' });
-		if (this.hasActiveFilter()) { dotEl.show(); } else { dotEl.hide(); }
-
-		const clearBtn = parent.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-clear-filters', text: '✕ clear' });
-		clearBtn.title = 'Clear all filters';
-		if (this.hasActiveFilter()) { clearBtn.show(); } else { clearBtn.hide(); }
-		clearBtn.addEventListener('click', () => {
-			this.clearAllFilters();
-			this.saveFiltersToSettings();
-			this.deactivateSavedFilter();
-			dotEl.hide();
-			clearBtn.hide();
-			this.rerenderTable();
-		});
-
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-
-			const typeOpts = this.plugin.settings.types.map((t) => t.name);
-			const statusOpts = this.plugin.settings.statuses.map((s) => s.name);
-			// half options (½ … 4½) appear only when a title holds that exact rating; keys
-			// mirror titlePassesFilters' `${t.rating}★`, so 4.5 matches "4.5★", never 4 or 5
-			const presentHalfRatings = new Set<number>();
-			for (const t of this.dataManager.getTitles()) {
-				if (t.rating % 1 === 0.5) presentHalfRatings.add(t.rating);
-			}
-			const ratingOpts: string[] = [];
-			for (let i = 1; i <= 5; i++) {
-				if (presentHalfRatings.has(i - 0.5)) ratingOpts.push(`${i - 0.5}★`);
-				ratingOpts.push(`${i}★`);
-			}
-			const formatRatingOpt = (opt: string): string =>
-				opt.replace(/^(\d+)\.5/, (_m, whole: string) => (whole === '0' ? '½' : `${whole}½`));
-			const priorityOpts = priorityFilterOpts(this.plugin.settings.priorities);
-			const groupOpts = this.dataManager.getGroups().map((g) => g.name);
-
-			// draft — live filter state only changes on Apply
-			const draft = {
-				typeExclude:              new Set(this.filterTypeExclude),
-				statusExclude:            new Set(this.filterStatusExclude),
-				ratingExclude:            new Set(this.filterRatingExclude),
-				priorityExclude:          new Set(this.filterPriorityExclude),
-				groupExclude:             new Set(this.filterGroupExclude),
-				filterRatingEmptyOnly:    this.filterRatingEmptyOnly,
-				filterRecentlyArrivedOnly: this.filterRecentlyArrivedOnly,
-				filterGroupsOnly:         this.filterGroupsOnly,
-				filterFavoritesOnly:      this.filterFavoritesOnly,
-			};
-
-			const sections: FilterSection[] = [
-				{ label: 'Type',     opts: typeOpts,     excludeSet: draft.typeExclude },
-				{
-					label: 'Status', opts: statusOpts, excludeSet: draft.statusExclude,
-					specials: [{
-						text: '✦ Recently arrived',
-						spanCls: 'wl-recently-arrived-filter',
-						get: () => draft.filterRecentlyArrivedOnly,
-						set: (v) => { draft.filterRecentlyArrivedOnly = v; },
-						mode: 'exclusive',
-						resetOnGlobal: true,
-					}],
+		renderFiltersDropdown(parent, {
+			hasActiveFilter: () => this.hasActiveFilter(),
+			clearAll: () => this.clearAllFilters(),
+			rerender: () => this.rerenderTable(),
+			persist: () => this.persistFilters(),
+			rerenderAll: () => this.render(),
+			registerCleanup: (fn) => this.activeCleanups.push(fn),
+			preset: {
+				exists: () => this.dataManager.getSavedFilterPreset() !== null,
+				remove: async () => {
+					await this.dataManager.setSavedFilterPreset(null);
+					this.savedFilterActive = false;
 				},
-				{
-					label: 'Rating', opts: ratingOpts, excludeSet: draft.ratingExclude,
-					formatOpt: formatRatingOpt,
-					specials: [{
-						text: 'Empty',
-						get: () => draft.filterRatingEmptyOnly,
-						set: (v) => { draft.filterRatingEmptyOnly = v; },
-						mode: 'exclusive',
-					}],
-				},
-				{
-					label: 'Priority', opts: priorityOpts, excludeSet: draft.priorityExclude,
-					formatOpt: formatPriorityOpt,
-				},
-			];
-			if (groupOpts.length > 0) {
-				sections.push({
-					label: 'Group', opts: groupOpts, excludeSet: draft.groupExclude,
-					specials: [{
-						text: '◇ Groups only',
-						spanCls: 'wl-recently-arrived-filter',
-						get: () => draft.filterGroupsOnly,
-						set: (v) => { draft.filterGroupsOnly = v; },
-						mode: 'independent',
-						dividerAfter: true,
-					}],
-				});
-			}
+			},
+			openDraft: () => {
+				// draft — live filter state only changes on Apply
+				const draft = {
+					typeExclude:              new Set(this.filterTypeExclude),
+					statusExclude:            new Set(this.filterStatusExclude),
+					ratingExclude:            new Set(this.filterRatingExclude),
+					priorityExclude:          new Set(this.filterPriorityExclude),
+					groupExclude:             new Set(this.filterGroupExclude),
+					filterRatingEmptyOnly:    this.filterRatingEmptyOnly,
+					filterRecentlyArrivedOnly: this.filterRecentlyArrivedOnly,
+					filterGroupsOnly:         this.filterGroupsOnly,
+					filterFavoritesOnly:      this.filterFavoritesOnly,
+				};
 
-			toggleFilterPanel({
-				anchor: btn,
-				outsideGuard: wrap,
-				registerCleanup: (fn) => this.activeCleanups.push(fn),
-				sections,
-				favorites: {
-					get: () => draft.filterFavoritesOnly,
-					set: (v) => { draft.filterFavoritesOnly = v; },
-				},
-				presetExists: this.dataManager.getSavedFilterPreset() !== null,
-				onPresetSave: async () => {
-					await this.dataManager.setSavedFilterPreset({
+				return {
+					sections: buildFilterSections({
+						lead: [{
+							label: 'Type',
+							opts: this.plugin.settings.types.map((t) => t.name),
+							excludeSet: draft.typeExclude,
+						}],
+						statusOpts: this.plugin.settings.statuses.map((s) => s.name),
+						// half options appear only when a title holds that exact rating
+						ratingOpts: buildRatingOpts(this.dataManager.getTitles().map((t) => t.rating)),
+						priorities: this.plugin.settings.priorities,
+						groupOpts: this.dataManager.getGroups().map((g) => g.name),
+						draft,
+					}),
+					favorites: {
+						get: () => draft.filterFavoritesOnly,
+						set: (v) => { draft.filterFavoritesOnly = v; },
+					},
+					savePreset: () => this.dataManager.setSavedFilterPreset({
 						typeExclude:     Array.from(draft.typeExclude),
 						statusExclude:   Array.from(draft.statusExclude),
 						groupExclude:    Array.from(draft.groupExclude),
@@ -1282,30 +1230,20 @@ export class ListTab {
 						recentlyArrivedOnly:   draft.filterRecentlyArrivedOnly,
 						groupsOnly:            draft.filterGroupsOnly,
 						favoritesOnly:         draft.filterFavoritesOnly,
-					});
-				},
-				onPresetDelete: async () => {
-					await this.dataManager.setSavedFilterPreset(null);
-					this.savedFilterActive = false;
-				},
-				onPresetChanged: () => this.render(),
-				onApply: () => {
-					this.filterTypeExclude     = draft.typeExclude;
-					this.filterStatusExclude   = draft.statusExclude;
-					this.filterRatingExclude   = draft.ratingExclude;
-					this.filterPriorityExclude = draft.priorityExclude;
-					this.filterGroupExclude    = draft.groupExclude;
-					this.filterRatingEmptyOnly      = draft.filterRatingEmptyOnly;
-					this.filterRecentlyArrivedOnly  = draft.filterRecentlyArrivedOnly;
-					this.filterGroupsOnly           = draft.filterGroupsOnly;
-					this.filterFavoritesOnly        = draft.filterFavoritesOnly;
-					this.saveFiltersToSettings();
-					this.deactivateSavedFilter();
-					const active = this.hasActiveFilter();
-					if (active) { dotEl.show(); clearBtn.show(); } else { dotEl.hide(); clearBtn.hide(); }
-					this.rerenderTable();
-				},
-			});
+					}),
+					commit: () => {
+						this.filterTypeExclude     = draft.typeExclude;
+						this.filterStatusExclude   = draft.statusExclude;
+						this.filterRatingExclude   = draft.ratingExclude;
+						this.filterPriorityExclude = draft.priorityExclude;
+						this.filterGroupExclude    = draft.groupExclude;
+						this.filterRatingEmptyOnly      = draft.filterRatingEmptyOnly;
+						this.filterRecentlyArrivedOnly  = draft.filterRecentlyArrivedOnly;
+						this.filterGroupsOnly           = draft.filterGroupsOnly;
+						this.filterFavoritesOnly        = draft.filterFavoritesOnly;
+					},
+				};
+			},
 		});
 	}
 

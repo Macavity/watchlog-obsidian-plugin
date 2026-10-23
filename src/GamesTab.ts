@@ -4,7 +4,7 @@ import type { GameDataManager } from './GameDataManager';
 import {
 	Game, GameGroup, GamesSavedFilterPreset, GAME_AUTO_STATUS, GAME_FINISHED_STATUS,
 	normalizeRowsLayout, GAMES_ROWS_SHELVES, ROWS_EXCLUSIVE_SHELVES, sortByFavorited,
-	priorityFilterOpts, formatPriorityOpt, migratePriorityExclude,
+	migratePriorityExclude,
 } from './types';
 import { searchItems, yearOf, type SearchFieldSpec } from './SearchQuery';
 import { renderSearchHelpButton } from './SearchHelpModal';
@@ -19,7 +19,7 @@ import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCar
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { rawgResizedCover } from './ApiService';
 import { resolveGameCover, type GameCover } from './coverRefresh';
-import { toggleFilterPanel, FilterSection } from './FilterPanel';
+import { renderFiltersDropdown, buildFilterSections, buildRatingOpts } from './ui/TabFilters';
 import { ConfirmModal } from './ConfirmModal';
 import { GameDetailModal, GameGroupDetailModal, gameGroupProgress } from './GameDetailModal';
 import { AddGameModal } from './AddGameModal';
@@ -164,6 +164,12 @@ export class GamesTab {
 	}
 
 	// Filter state helpers (the Watchlist pattern)
+
+	/** Saves the live filters and drops the saved-preset highlight. */
+	private persistFilters(): void {
+		this.saveFiltersToSettings();
+		this.deactivateSavedFilter();
+	}
 
 	private saveFiltersToSettings(): void {
 		this.plugin.settings.gamesFilters = {
@@ -990,123 +996,63 @@ export class GamesTab {
 	}
 
 	private renderFiltersDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Filters ▼' });
-		const dotEl = btn.createSpan({ cls: 'wl-filter-dot' });
-		if (this.hasActiveFilter()) { dotEl.show(); } else { dotEl.hide(); }
+		renderFiltersDropdown(parent, {
+			hasActiveFilter: () => this.hasActiveFilter(),
+			clearAll: () => this.clearAllFilters(),
+			rerender: () => this.renderContent(),
+			persist: () => this.persistFilters(),
+			rerenderAll: () => this.render(),
+			registerCleanup: (fn) => this.activeCleanups.push(fn),
+			preset: {
+				exists: () => this.gameData.getSavedFilterPreset() !== null,
+				remove: async () => {
+					await this.gameData.setSavedFilterPreset(null);
+					this.savedFilterActive = false;
+				},
+			},
+			openDraft: () => {
+				const settings = this.gameData.getSettings();
+				const platformOpts = settings.platforms.map((p) => p.name);
 
-		const clearBtn = parent.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-clear-filters', text: '✕ clear' });
-		clearBtn.title = 'Clear all filters';
-		if (this.hasActiveFilter()) { clearBtn.show(); } else { clearBtn.hide(); }
-		clearBtn.addEventListener('click', () => {
-			this.clearAllFilters();
-			this.saveFiltersToSettings();
-			this.deactivateSavedFilter();
-			dotEl.hide();
-			clearBtn.hide();
-			this.renderContent();
-		});
+				// draft — live filter state only changes on Apply
+				const draft = {
+					genreExclude:    new Set(this.filterGenreExclude),
+					statusExclude:   new Set(this.filterStatusExclude),
+					ratingExclude:   new Set(this.filterRatingExclude),
+					priorityExclude: new Set(this.filterPriorityExclude),
+					platformExclude: new Set(this.filterPlatformExclude),
+					groupExclude:    new Set(this.filterGroupExclude),
+					filterRatingEmptyOnly:     this.filterRatingEmptyOnly,
+					filterRecentlyArrivedOnly: this.filterRecentlyArrivedOnly,
+					filterFavoritesOnly:       this.filterFavoritesOnly,
+					filterWishlistOnly:        this.filterWishlistOnly,
+					filterGroupsOnly:          this.filterGroupsOnly,
+				};
 
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const settings = this.gameData.getSettings();
-
-			const genreOpts = settings.types.map((t) => t.name);
-			const statusOpts = settings.statuses.map((s) => s.name);
-			// half options (½ … 4½) appear only when a game holds that exact rating (the Watchlist rule)
-			const presentHalfRatings = new Set<number>();
-			for (const g of this.gameData.getGames()) {
-				if (g.rating % 1 === 0.5) presentHalfRatings.add(g.rating);
-			}
-			const ratingOpts: string[] = [];
-			for (let i = 1; i <= 5; i++) {
-				if (presentHalfRatings.has(i - 0.5)) ratingOpts.push(`${i - 0.5}★`);
-				ratingOpts.push(`${i}★`);
-			}
-			const formatRatingOpt = (opt: string): string =>
-				opt.replace(/^(\d+)\.5/, (_m, whole: string) => (whole === '0' ? '½' : `${whole}½`));
-			const priorityOpts = priorityFilterOpts(this.plugin.settings.priorities);
-			const platformOpts = settings.platforms.map((p) => p.name);
-			const groupOpts = this.gameData.getGroups().map((g) => g.name);
-
-			// draft — live filter state only changes on Apply
-			const draft = {
-				genreExclude:    new Set(this.filterGenreExclude),
-				statusExclude:   new Set(this.filterStatusExclude),
-				ratingExclude:   new Set(this.filterRatingExclude),
-				priorityExclude: new Set(this.filterPriorityExclude),
-				platformExclude: new Set(this.filterPlatformExclude),
-				groupExclude:    new Set(this.filterGroupExclude),
-				filterRatingEmptyOnly:     this.filterRatingEmptyOnly,
-				filterRecentlyArrivedOnly: this.filterRecentlyArrivedOnly,
-				filterFavoritesOnly:       this.filterFavoritesOnly,
-				filterWishlistOnly:        this.filterWishlistOnly,
-				filterGroupsOnly:          this.filterGroupsOnly,
-			};
-
-			const sections: FilterSection[] = [
-				{ label: 'Genre', opts: genreOpts, excludeSet: draft.genreExclude },
-				{
-					label: 'Status', opts: statusOpts, excludeSet: draft.statusExclude,
-					specials: [{
-						text: '✦ Recently arrived',
-						spanCls: 'wl-recently-arrived-filter',
-						get: () => draft.filterRecentlyArrivedOnly,
-						set: (v) => { draft.filterRecentlyArrivedOnly = v; },
-						mode: 'exclusive',
-						resetOnGlobal: true,
+				return {
+					sections: buildFilterSections({
+						lead: [{ label: 'Genre', opts: settings.types.map((t) => t.name), excludeSet: draft.genreExclude }],
+						statusOpts: settings.statuses.map((s) => s.name),
+						// half options appear only when a game holds that exact rating (the Watchlist rule)
+						ratingOpts: buildRatingOpts(this.gameData.getGames().map((g) => g.rating)),
+						priorities: this.plugin.settings.priorities,
+						middle: platformOpts.length > 0
+							? [{ label: 'Platform', opts: platformOpts, excludeSet: draft.platformExclude }]
+							: [],
+						groupOpts: this.gameData.getGroups().map((g) => g.name),
+						draft,
+					}),
+					favorites: {
+						get: () => draft.filterFavoritesOnly,
+						set: (v) => { draft.filterFavoritesOnly = v; },
+					},
+					standaloneRows: [{
+						text: '🎁 Wishlist',
+						spanCls: 'wl-wishlist-filter',
+						get: () => draft.filterWishlistOnly,
+						set: (v) => { draft.filterWishlistOnly = v; },
 					}],
-				},
-				{
-					label: 'Rating', opts: ratingOpts, excludeSet: draft.ratingExclude,
-					formatOpt: formatRatingOpt,
-					specials: [{
-						text: 'Empty',
-						get: () => draft.filterRatingEmptyOnly,
-						set: (v) => { draft.filterRatingEmptyOnly = v; },
-						mode: 'exclusive',
-					}],
-				},
-				{
-					label: 'Priority', opts: priorityOpts, excludeSet: draft.priorityExclude,
-					formatOpt: formatPriorityOpt,
-				},
-			];
-			if (platformOpts.length > 0) {
-				sections.push({ label: 'Platform', opts: platformOpts, excludeSet: draft.platformExclude });
-			}
-			if (groupOpts.length > 0) {
-				sections.push({
-					label: 'Group', opts: groupOpts, excludeSet: draft.groupExclude,
-					specials: [{
-						text: '◇ Groups only',
-						spanCls: 'wl-recently-arrived-filter',
-						get: () => draft.filterGroupsOnly,
-						set: (v) => { draft.filterGroupsOnly = v; },
-						mode: 'independent',
-						dividerAfter: true,
-					}],
-				});
-			}
-
-			toggleFilterPanel({
-				anchor: btn,
-				outsideGuard: wrap,
-				registerCleanup: (fn) => this.activeCleanups.push(fn),
-				sections,
-				favorites: {
-					get: () => draft.filterFavoritesOnly,
-					set: (v) => { draft.filterFavoritesOnly = v; },
-				},
-				standaloneRows: [{
-					text: '🎁 Wishlist',
-					spanCls: 'wl-wishlist-filter',
-					get: () => draft.filterWishlistOnly,
-					set: (v) => { draft.filterWishlistOnly = v; },
-				}],
-				presetExists: this.gameData.getSavedFilterPreset() !== null,
-				onPresetSave: async () => {
-					await this.gameData.setSavedFilterPreset({
+					savePreset: () => this.gameData.setSavedFilterPreset({
 						genreExclude:    Array.from(draft.genreExclude),
 						statusExclude:   Array.from(draft.statusExclude),
 						ratingExclude:   Array.from(draft.ratingExclude),
@@ -1118,32 +1064,22 @@ export class GamesTab {
 						favoritesOnly:       draft.filterFavoritesOnly,
 						wishlistOnly:        draft.filterWishlistOnly,
 						groupsOnly:          draft.filterGroupsOnly,
-					});
-				},
-				onPresetDelete: async () => {
-					await this.gameData.setSavedFilterPreset(null);
-					this.savedFilterActive = false;
-				},
-				onPresetChanged: () => this.render(),
-				onApply: () => {
-					this.filterGenreExclude    = draft.genreExclude;
-					this.filterStatusExclude   = draft.statusExclude;
-					this.filterRatingExclude   = draft.ratingExclude;
-					this.filterPriorityExclude = draft.priorityExclude;
-					this.filterPlatformExclude = draft.platformExclude;
-					this.filterGroupExclude    = draft.groupExclude;
-					this.filterRatingEmptyOnly     = draft.filterRatingEmptyOnly;
-					this.filterRecentlyArrivedOnly = draft.filterRecentlyArrivedOnly;
-					this.filterFavoritesOnly       = draft.filterFavoritesOnly;
-					this.filterWishlistOnly        = draft.filterWishlistOnly;
-					this.filterGroupsOnly          = draft.filterGroupsOnly;
-					this.saveFiltersToSettings();
-					this.deactivateSavedFilter();
-					const active = this.hasActiveFilter();
-					if (active) { dotEl.show(); clearBtn.show(); } else { dotEl.hide(); clearBtn.hide(); }
-					this.renderContent();
-				},
-			});
+					}),
+					commit: () => {
+						this.filterGenreExclude    = draft.genreExclude;
+						this.filterStatusExclude   = draft.statusExclude;
+						this.filterRatingExclude   = draft.ratingExclude;
+						this.filterPriorityExclude = draft.priorityExclude;
+						this.filterPlatformExclude = draft.platformExclude;
+						this.filterGroupExclude    = draft.groupExclude;
+						this.filterRatingEmptyOnly     = draft.filterRatingEmptyOnly;
+						this.filterRecentlyArrivedOnly = draft.filterRecentlyArrivedOnly;
+						this.filterFavoritesOnly       = draft.filterFavoritesOnly;
+						this.filterWishlistOnly        = draft.filterWishlistOnly;
+						this.filterGroupsOnly          = draft.filterGroupsOnly;
+					},
+				};
+			},
 		});
 	}
 
