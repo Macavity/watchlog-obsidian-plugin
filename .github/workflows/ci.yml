@@ -24,6 +24,9 @@ jobs:
 
         steps:
             - uses: actions/checkout@v5
+              with:
+                  # fallow audit diffs against the PR base ref
+                  fetch-depth: 0
             - uses: pnpm/action-setup@v4
             - name: Use Node.js ${{ matrix.node-version }}
               uses: actions/setup-node@v5
@@ -34,3 +37,8 @@ jobs:
             - run: pnpm lint
             - run: pnpm test
             - run: pnpm build
+            - name: Code health (fallow)
+              if: github.event_name == 'pull_request'
+              env:
+                  BASE_REF: ${{ github.base_ref }}
+              run: pnpm fallow:audit --base "origin/$BASE_REF"
