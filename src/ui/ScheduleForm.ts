@@ -48,7 +48,7 @@ export interface CounterGroup {
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 /** Single release needs a date; recurring is always saveable. */
-function isScheduleValid(state: ScheduleFormState): boolean {
+export function isScheduleValid(state: ScheduleFormState): boolean {
 	return state.mode !== 'single' || state.releaseDate !== '';
 }
 
@@ -149,18 +149,20 @@ function renderRecurringFields(parent: HTMLElement, state: ScheduleFormState, op
 	}
 
 	const extraEl = parent.createDiv();
-	const renderExtra = (): void => {
-		extraEl.empty();
-		if (state.recurrence === 'weekly') renderWeekdayRow(extraEl, state, options);
-		if (state.recurrence === 'monthly') renderMonthdayRow(extraEl, state, options);
-		if (options.withTime) renderTimeRow(extraEl, state, options);
-	};
 	recSelect.addEventListener('change', () => {
 		state.recurrence = recSelect.value;
-		renderExtra();
+		renderRecurrenceExtras(extraEl, state, options);
 		options.onChange();
 	});
-	renderExtra();
+	renderRecurrenceExtras(extraEl, state, options);
+}
+
+/** The field the active cadence needs (weekday / day of month) plus the optional time. */
+function renderRecurrenceExtras(extraEl: HTMLElement, state: ScheduleFormState, options: ScheduleFormOptions): void {
+	extraEl.empty();
+	if (state.recurrence === 'weekly') renderWeekdayRow(extraEl, state, options);
+	if (state.recurrence === 'monthly') renderMonthdayRow(extraEl, state, options);
+	if (options.withTime) renderTimeRow(extraEl, state, options);
 }
 
 function renderSingleFields(parent: HTMLElement, state: ScheduleFormState, options: ScheduleFormOptions): void {
