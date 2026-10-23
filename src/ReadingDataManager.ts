@@ -141,7 +141,7 @@ export class ReadingDataManager {
 		for (const status of READING_STATUSES) {
 			if (typeof colors[status] !== 'string') colors[status] = DEFAULT_READING_STATUS_COLORS[status];
 		}
-		settings.statusColors = colors as ReadingSettings['statusColors'];
+		settings.statusColors = colors;
 		this.settings = settings;
 		const clean = (cols: unknown): ReadingCustomColumn[] =>
 			(Array.isArray(cols) ? (cols as ReadingCustomColumn[]) : []).map((c) => ({
@@ -156,7 +156,7 @@ export class ReadingDataManager {
 	/** Synced keys go to the base, the rest (colors, layout, filters) to data.json. */
 	private async saveShared(): Promise<void> {
 		const all = { ...this.settings, bookColumns: this.bookColumns, mangaColumns: this.mangaColumns };
-		const { shared, local } = splitNested('reading', all as unknown as Record<string, unknown>);
+		const { shared, local } = splitNested('reading', all);
 		this.local.data.reading = local;
 		this.local.queueSave();
 		await this.shared.update({ reading: shared });
@@ -369,7 +369,7 @@ export class ReadingDataManager {
 			customFields: { ...(src.customFields ?? {}) },
 			...(src.groups ? { groups: [...src.groups] } : {}),
 			vaultPage: this.layout().pathFromId(src.id),
-		} as Item;
+		};
 		this.applyReleaseStatus(view);
 		this.views.set(src.id, { src, view });
 		setBaseline(view, src);

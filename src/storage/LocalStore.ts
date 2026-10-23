@@ -22,7 +22,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
  */
 export class LocalStore {
 	data: LocalData = emptyData();
-	private timer: ReturnType<typeof setTimeout> | null = null;
+	private timer: number | null = null;
 	private dirty = false;
 	// false while data.json holds a legacy or newer format that must not be overwritten
 	private writable = true;
@@ -90,7 +90,7 @@ export class LocalStore {
 	queueSave(): void {
 		this.dirty = true;
 		this.clearTimer();
-		this.timer = setTimeout(() => {
+		this.timer = window.setTimeout(() => {
 			this.timer = null;
 			void this.save();
 		}, SAVE_DEBOUNCE_MS);
@@ -104,7 +104,7 @@ export class LocalStore {
 
 	private clearTimer(): void {
 		if (this.timer !== null) {
-			clearTimeout(this.timer);
+			window.clearTimeout(this.timer);
 			this.timer = null;
 		}
 	}

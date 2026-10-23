@@ -461,7 +461,7 @@ export default class WatchLogPlugin extends Plugin {
 		// a schema-1 data.json is not adopted yet: its settings are the local part until migration
 		const localSettings = this.legacyData?.settings ?? this.local.data.settings;
 		this.settings = composeSettings(
-			localSettings as Record<string, unknown>,
+			localSettings,
 			this.shared.get().settings,
 		);
 		// mirror into types.ts so the pure formatters render in the chosen order without a settings ref

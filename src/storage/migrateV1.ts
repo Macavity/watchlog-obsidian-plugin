@@ -563,8 +563,8 @@ class Migration {
 		const local: LocalData = { schemaVersion: 2, settings, cache: this.cache, ui };
 		// the device-local half of the reading / games settings (colors, layouts, saved filters)
 		const reading = data.reading as ReadingData;
-		local.reading = splitNested('reading', { ...reading.settings } as unknown as Record<string, unknown>).local;
-		local.games = splitNested('games', { ...(data.games as GamesData).settings } as unknown as Record<string, unknown>).local;
+		local.reading = splitNested('reading', { ...reading.settings }).local;
+		local.games = splitNested('games', { ...(data.games as GamesData).settings }).local;
 		if (data.drafts) local.drafts = data.drafts;
 		return local;
 	}

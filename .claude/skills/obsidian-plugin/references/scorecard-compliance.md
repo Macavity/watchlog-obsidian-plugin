@@ -192,7 +192,7 @@ A plugin's `styles.css` is loaded globally. Rules targeting Obsidian's built-in 
 
 ### `obsidianmd` ESLint rules (Warnings and Risks)
 
-`eslint-plugin-obsidianmd` enforces Obsidian-idiomatic patterns. This repo is still on 0.1.9; the scorecard runs the current release (0.4.x), so rules listed below may fire there before they fire locally. Upgrading the plugin is a tracked follow-up (see the config pattern section below). Common signals and fixes:
+`eslint-plugin-obsidianmd` enforces Obsidian-idiomatic patterns. This repo runs 0.4.x with ESLint 10; `pnpm lint` fails on warnings, so what the scorecard flags should fail locally first. The plugin pins an older `obsidian` peer; `pnpm.peerDependencyRules` in `package.json` silences that one warning. Common signals and fixes:
 
 #### `obsidianmd/ui/sentence-case` (Risk if disabled, Warning if violated)
 

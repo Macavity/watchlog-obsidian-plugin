@@ -40,7 +40,7 @@ export class EntryIndex {
 	private listeners: ((ids: Set<string>) => void)[] = [];
 	private localWriteCbs: (() => void)[] = [];
 	private pending = new Set<string>();
-	private timer: ReturnType<typeof setTimeout> | null = null;
+	private timer: number | null = null;
 
 	constructor(
 		private readonly app: App,
@@ -73,7 +73,7 @@ export class EntryIndex {
 
 	/** Drops a pending change notification (plugin unload). */
 	stop(): void {
-		if (this.timer !== null) clearTimeout(this.timer);
+		if (this.timer !== null) window.clearTimeout(this.timer);
 		this.timer = null;
 		this.pending.clear();
 	}
@@ -149,7 +149,7 @@ export class EntryIndex {
 	private decode(file: TFile): Slot | null {
 		const c = this.layout().classify(file.path);
 		if (!c) return null;
-		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
 		if (!fm || Object.keys(fm).length === 0) return null;
 		try {
 			switch (c.kind) {
@@ -214,8 +214,8 @@ export class EntryIndex {
 
 	private queue(id: string): void {
 		this.pending.add(id);
-		if (this.timer !== null) clearTimeout(this.timer);
-		this.timer = setTimeout(() => this.flush(), CHANGE_DEBOUNCE_MS);
+		if (this.timer !== null) window.clearTimeout(this.timer);
+		this.timer = window.setTimeout(() => this.flush(), CHANGE_DEBOUNCE_MS);
 	}
 
 	private flush(): void {

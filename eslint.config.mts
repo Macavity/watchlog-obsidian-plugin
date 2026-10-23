@@ -1,9 +1,8 @@
-import tseslint from 'typescript-eslint';
 import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
-import { globalIgnores } from "eslint/config";
+import { defineConfig, globalIgnores } from "eslint/config";
 
-export default tseslint.config(
+export default defineConfig(
 	{
 		languageOptions: {
 			globals: {
@@ -20,7 +19,7 @@ export default tseslint.config(
 			parserOptions: {
 				projectService: {
 					allowDefaultProject: [
-						'eslint.config.js',
+						'eslint.config.mts',
 						'manifest.json'
 					]
 				},
@@ -55,8 +54,12 @@ export default tseslint.config(
 					'"N due"',                 // N is a number placeholder
 					'^\\* Last type used$',    // sentinel option; * confuses sentence-start detection
 					'"Last type used"',        // quotes that sentinel option's label
+					'^#\\w+$',                 // tag placeholder (#watchlog)
+					'^\\d+h$',                 // duration placeholder (0h)
 				],
 			}],
+			// Declarative settings API (Obsidian 1.13+) is a separate migration of the whole SettingsTab.
+			'obsidianmd/settings-tab/prefer-setting-definitions': 'off',
 		},
 	},
 	globalIgnores([
