@@ -17,9 +17,31 @@ pnpm vitest run test/DataManager.test.ts        # single file
 pnpm vitest run -t "pattern"                    # single test by name
 pnpm run deploy -- <vault-name>       # build + copy into a vault; "run" needed, "pnpm deploy" is a builtin
 pnpm version <patch|minor|major>      # bumps manifest.json + versions.json, commits, tags
+pnpm fallow:audit                     # code-health gate for changed files, run before every commit
+pnpm fallow:report                    # whole-repo fallow report + health score, never a gate
 ```
 
-`main.js` is build output and not tracked. CI runs lint, test and build on every push and PR.
+`main.js` is build output and not tracked. CI runs lint, test and build on every push and PR,
+plus `fallow audit` on PRs.
+
+## Git
+
+`git push`, opening a PR and merging into `main` each need the user's explicit go-ahead in the
+conversation. Commits on a feature branch are fine. Never chain a push with other commands.
+Never post comments on GitHub (PRs, issues, reviews) on the user's behalf; everything written
+there goes through the user's account and must come from them.
+
+## Code health
+
+`pnpm fallow:audit` must be green before a commit. It gates only findings the change introduces
+(duplication, unused exports/members, complexity); inherited debt in touched files is shown but
+not enforced, and is being reduced separately. Fixes, in this order: introduced duplication means
+extract a shared helper; dead code means remove it (check with `fallow dead-code --trace
+<file>:<export>` first); complexity means split the function or write a test for it (test
+reachability lowers the estimated CRAP score). Suppressions, inline
+(`// fallow-ignore-next-line <rule>` with a reason) or in `.fallowrc.jsonc`, only with the user's
+explicit go-ahead in the conversation. fallow is pinned exactly; when bumping it, repeat the probe
+from `.fallowrc.jsonc` (a copied file must fail the audit).
 
 ## Releases
 
