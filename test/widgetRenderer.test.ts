@@ -29,7 +29,16 @@ describe('findNextRelease', () => {
 			[t('a', []), t('b', []), t('c', [])],
 			now,
 		);
-		expect(res).toEqual({ titleName: 'Tb', type: 'Series', releaseDate: '2030-01-12', daysUntil: 3 });
+		expect(res).toEqual({ titleName: 'Tb', type: 'Series', releaseDate: '2030-01-12', daysUntil: 2 });
+	});
+	it('keeps a release dated today until midnight and drops yesterday', () => {
+		const evening = new Date('2030-01-10T18:30:00').getTime();
+		const res = findNextRelease(
+			[entry('a', '2030-01-09'), entry('b', '2030-01-10'), entry('c', '2030-01-11')],
+			[t('a', []), t('b', []), t('c', [])],
+			evening,
+		);
+		expect(res).toMatchObject({ releaseDate: '2030-01-10', daysUntil: 0 });
 	});
 	it('ignores recurring, undated and unknown-title entries', () => {
 		expect(findNextRelease(

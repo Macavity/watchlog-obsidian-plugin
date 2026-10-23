@@ -20,19 +20,23 @@ export function findNextRelease(
 	now: number,
 ): NextRelease | null {
 	const titleMap = new Map(titles.map((t) => [t.id, t]));
+	// date-only releases compare by local calendar day: a release stays "today" until midnight
+	const today = new Date(now);
+	today.setHours(0, 0, 0, 0);
+	const todayMs = today.getTime();
 	let best: NextRelease | null = null;
 	let bestMs = Infinity;
 	for (const entry of entries) {
 		const title = titleMap.get(entry.titleId);
 		if (!title || entry.schedule.recurrence !== 'once' || !entry.schedule.releaseDate) continue;
-		const ms = new Date(entry.schedule.releaseDate + 'T12:00:00').getTime();
-		if (ms >= now && ms < bestMs) {
-			bestMs = ms;
+		const dayMs = new Date(entry.schedule.releaseDate + 'T00:00:00').getTime();
+		if (dayMs >= todayMs && dayMs < bestMs) {
+			bestMs = dayMs;
 			best = {
 				titleName: title.title,
 				type: title.type,
 				releaseDate: entry.schedule.releaseDate,
-				daysUntil: Math.round((ms - now) / 86400000),
+				daysUntil: Math.round((dayMs - todayMs) / 86400000),
 			};
 		}
 	}
