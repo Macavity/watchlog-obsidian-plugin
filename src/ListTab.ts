@@ -11,7 +11,8 @@ import { inferHistoryAction, inferHistorySource } from './HistoryManager';
 import { AddTitleModal } from './AddTitleModal';
 import { AddFromUrlModal } from './AddFromUrlModal';
 import { AddTitleChoiceModal } from './AddTitleChoiceModal';
-import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown } from './ui/TabToolbar';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown, renderViewDropdown } from './ui/TabToolbar';
+import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { EditTitleModal } from './EditTitleModal';
 import { ConfirmModal } from './ConfirmModal';
@@ -1265,103 +1266,57 @@ export class ListTab {
 	}
 
 	private renderViewDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm wl-view-btn' });
-		setIcon(btn, this.currentView === 'rows' ? 'layout-grid' : 'list');
-		btn.title = 'View';
-
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const existing = wrap.querySelector('.wl-dropdown');
-			if (existing) { existing.remove(); return; }
-
-			const panel = wrap.createDiv({ cls: 'wl-dropdown wl-view-panel' });
-
-			const options: { key: 'list' | 'rows'; label: string; icon: string }[] = [
+		renderViewDropdown<'list' | 'rows'>(parent, {
+			current: this.currentView,
+			options: [
 				{ key: 'rows', label: 'Cards', icon: 'layout-grid' },
 				{ key: 'list', label: 'List', icon: 'list' },
-			];
-			for (const opt of options) {
-				const active = this.currentView === opt.key;
-				const row = panel.createDiv({ cls: `wl-view-option-row${active ? ' is-active' : ''}` });
-				const iconEl = row.createSpan({ cls: 'wl-view-option-icon' });
-				setIcon(iconEl, opt.icon);
-				row.createSpan({ cls: 'wl-view-option-label', text: opt.label });
-				if (active) {
-					const checkEl = row.createSpan({ cls: 'wl-view-option-check' });
-					setIcon(checkEl, 'check');
+			],
+			onSelect: (key) => {
+				if (this.currentView === 'rows') {
+					// this also tears down the shared poster observer
+					this.destroyVirtualScroll();
+					this.destroyRowsVirtual();
 				}
-				row.addEventListener('click', (ev) => {
-					ev.stopPropagation();
-					panel.remove();
-					activeDocument.removeEventListener('click', closer, true);
-					if (this.currentView === opt.key) return;
-					if (this.currentView === 'rows') {
-						// this also tears down the shared poster observer
-						this.destroyVirtualScroll();
-						this.destroyRowsVirtual();
-					}
-					this.currentView = opt.key;
-					// last-used persistence (the Upcoming pattern) — no separate default setting
-					this.plugin.settings.defaultWatchlistView = opt.key;
-					void this.plugin.saveSettings();
-					this.render();
-				});
-			}
-
-			const closer = (ev: MouseEvent) => {
-				if (!wrap.contains(ev.target as Node)) {
-					panel.remove();
-					activeDocument.removeEventListener('click', closer, true);
-				}
-			};
-			window.setTimeout(() => activeDocument.addEventListener('click', closer, true), 0);
+				this.currentView = key;
+				// last-used persistence (the Upcoming pattern) — no separate default setting
+				this.plugin.settings.defaultWatchlistView = key;
+				void this.plugin.saveSettings();
+				this.render();
+			},
 		});
 	}
 
 	private renderActionBar(parent: HTMLElement): void {
-		const bar = parent.createDiv({ cls: 'wl-action-bar' });
-
-		const deleteBtn = bar.createEl('button', {
-			cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
-			text: '✕',
-		});
-		deleteBtn.title = 'Delete selected';
-		deleteBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const count = this.selectedItems.size;
-			new ConfirmModal(this.plugin.app, `Delete ${count} selected item${count !== 1 ? 's' : ''}? This cannot be undone.`, () => {
-				void (async () => {
-					const groupIds = new Map(this.dataManager.getGroups().map((g) => [groupKey(g.id), g.id]));
-					const titleIds: string[] = [];
-					for (const id of Array.from(this.selectedItems)) {
-						const groupId = groupIds.get(id);
-						if (groupId !== undefined) {
-							await this.dataManager.removeGroup(groupId);
-							this.expandedGroups.delete(groupId);
-						} else {
-							titleIds.push(id);
-							if (this.expandedId === id) this.expandedId = null;
-						}
+		const bar = renderActionBar(parent, this.plugin.app, {
+			title: 'Delete selected',
+			selected: this.selectedItems,
+			message: (count) => `Delete ${count} selected item${count !== 1 ? 's' : ''}? This cannot be undone.`,
+			onConfirm: async () => {
+				const groupIds = new Map(this.dataManager.getGroups().map((g) => [groupKey(g.id), g.id]));
+				const titleIds: string[] = [];
+				for (const id of Array.from(this.selectedItems)) {
+					const groupId = groupIds.get(id);
+					if (groupId !== undefined) {
+						await this.dataManager.removeGroup(groupId);
+						this.expandedGroups.delete(groupId);
+					} else {
+						titleIds.push(id);
+						if (this.expandedId === id) this.expandedId = null;
 					}
-					if (titleIds.length > 0) {
-						await this.dataManager.removeTitlesBatch(titleIds);
-					}
-					this.selectedItems.clear();
-					this.render();
-				})();
-			}).open();
+				}
+				if (titleIds.length > 0) {
+					await this.dataManager.removeTitlesBatch(titleIds);
+				}
+				this.selectedItems.clear();
+				this.render();
+			},
 		});
 
-		const statusSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
-		statusSelect.createEl('option', { text: 'Status…', value: '' });
-		for (const s of this.plugin.settings.statuses.filter((s) => s.name !== 'To be released')) {
-			statusSelect.createEl('option', { text: s.name, value: s.name });
-		}
-		statusSelect.addEventListener('change', () => {
-			void (async () => {
-				const newStatus = statusSelect.value;
-				if (!newStatus) return;
+		renderBatchStatusSelect(
+			bar,
+			this.plugin.settings.statuses.map((s) => s.name).filter((name) => name !== 'To be released'),
+			async (newStatus) => {
 				const groupIds = new Set(this.dataManager.getGroups().map((g) => groupKey(g.id)));
 				const updated: WatchLogTitle[] = [];
 				for (const id of this.selectedItems) {
@@ -1378,80 +1333,37 @@ export class ListTab {
 						await this.dataManager.updateMarkdownFile(t);
 					}
 				}
-				statusSelect.value = '';
 				this.render();
-			})();
-		});
+			},
+		);
 
 		const allGroups = this.dataManager.getGroups();
-		const hasGroupSelected = Array.from(this.selectedItems).some((id) =>
-			allGroups.some((g) => groupKey(g.id) === id),
-		);
-		const moveSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
-		if (hasGroupSelected) {
-			moveSelect.disabled = true;
-			moveSelect.title = 'A group is selected; cannot move groups into other groups';
-		}
-		moveSelect.createEl('option', { text: 'Group…', value: '' });
-		for (const g of allGroups) {
-			moveSelect.createEl('option', { text: g.name, value: g.id });
-		}
-		moveSelect.createEl('option', { text: 'Create new group…', value: '__new__' });
-		moveSelect.addEventListener('change', () => {
-			void (async () => {
-				const value = moveSelect.value;
-				if (!value) return;
-				const groupIds = new Set(allGroups.map((g) => groupKey(g.id)));
-				const titleIds = Array.from(this.selectedItems).filter((id) => !groupIds.has(id));
-
-				if (value === '__new__') {
-					// inline input — prompt() is unavailable in Obsidian/Electron
-					moveSelect.value = '';
-					moveSelect.hide();
-					const nameInput = bar.createEl('input', {
-						cls: 'wl-modal-input wl-group-name-input',
-						attr: { type: 'text', placeholder: 'Group name…', maxlength: '64' },
-					});
-					const confirmBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✓' });
-					confirmBtn.title = 'Create group';
-					const cancelBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✕' });
-					cancelBtn.title = 'Cancel';
-
-					const doCreate = async () => {
-						const name = nameInput.value.trim();
-						if (!name) return;
-						const newGroup: WatchLogGroup = {
-							id: this.dataManager.generateGroupId(name),
-							name,
-							titleIds,
-							dateAdded: new Date().toISOString(),
-						};
-						await this.dataManager.addGroup(newGroup);
-						this.selectedItems.clear();
-						this.selectionMode = false;
-						this.render();
-					};
-					confirmBtn.addEventListener('click', (e) => { e.stopPropagation(); void doCreate(); });
-					// cancel only needs the toolbar back
-					cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); this.refreshToolbarActions(); });
-					nameInput.addEventListener('keydown', (e) => {
-						e.stopPropagation();
-						if (e.key === 'Enter') void doCreate();
-						if (e.key === 'Escape') this.refreshToolbarActions();
-					});
-					nameInput.addEventListener('click', (e) => e.stopPropagation());
-					window.setTimeout(() => nameInput.focus(), 0);
-					return;
+		const groupIds = new Set(allGroups.map((g) => groupKey(g.id)));
+		const selectedTitleIds = () => Array.from(this.selectedItems).filter((id) => !groupIds.has(id));
+		renderMoveToGroupSelect(bar, {
+			groups: allGroups,
+			disabled: Array.from(this.selectedItems).some((id) => groupIds.has(id)),
+			onMove: async (groupId) => {
+				for (const id of selectedTitleIds()) {
+					await this.dataManager.addTitleToGroup(groupId, id);
 				}
-
-				for (const id of titleIds) {
-					await this.dataManager.addTitleToGroup(value, id);
-				}
-				moveSelect.value = '';
 				this.selectedItems.clear();
 				this.selectionMode = false;
 				this.render();
-			})();
+			},
+			onCreate: async (name) => {
+				const newGroup: WatchLogGroup = {
+					id: this.dataManager.generateGroupId(name),
+					name,
+					titleIds: selectedTitleIds(),
+					dateAdded: new Date().toISOString(),
+				};
+				await this.dataManager.addGroup(newGroup);
+				this.selectedItems.clear();
+				this.selectionMode = false;
+				this.render();
+			},
+			onCancel: () => this.refreshToolbarActions(),
 		});
 	}
 

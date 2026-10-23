@@ -1,4 +1,4 @@
-import { App, Modal, Notice, setIcon } from 'obsidian';
+import { App, Modal, Notice } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { ReadingDataManager } from './ReadingDataManager';
@@ -25,7 +25,8 @@ import { MaybeAddModal } from './MaybeAddModal';
 import { ReadingScheduleModal } from './ReadingScheduleModal';
 import { GameScheduleModal } from './GameScheduleModal';
 import { UpcomingFinderModal, type UpcomingFinderItem } from './UpcomingFinderModal';
-import { renderAddButton } from './ui/TabToolbar';
+import { renderAddButton, renderViewDropdown } from './ui/TabToolbar';
+import { renderActionBar } from './ui/ActionBar';
 
 /**
  * A normalized Upcoming card subject — a watchlist title, a reading item or a game — so the
@@ -660,78 +661,33 @@ export class AirtimeTab {
 
 	/** The Watchlist view popover, reduced to List / Cards. Persisted in upcomingTrackerView. */
 	private renderViewDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm wl-view-btn' });
-		setIcon(btn, this.trackerView === 'cards' ? 'layout-grid' : 'list');
-		btn.title = 'View';
-
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const existing = wrap.querySelector('.wl-dropdown');
-			if (existing) { existing.remove(); return; }
-
-			const panel = wrap.createDiv({ cls: 'wl-dropdown wl-view-panel' });
-
-			const options: { key: 'cards' | 'list'; label: string; icon: string }[] = [
+		renderViewDropdown<'cards' | 'list'>(parent, {
+			current: this.trackerView,
+			options: [
 				{ key: 'cards', label: 'Cards', icon: 'layout-grid' },
 				{ key: 'list', label: 'List', icon: 'list' },
-			];
-			for (const opt of options) {
-				const active = this.trackerView === opt.key;
-				const row = panel.createDiv({ cls: `wl-view-option-row${active ? ' is-active' : ''}` });
-				const iconEl = row.createSpan({ cls: 'wl-view-option-icon' });
-				setIcon(iconEl, opt.icon);
-				row.createSpan({ cls: 'wl-view-option-label', text: opt.label });
-				if (active) {
-					const checkEl = row.createSpan({ cls: 'wl-view-option-check' });
-					setIcon(checkEl, 'check');
-				}
-				row.addEventListener('click', (ev) => {
-					ev.stopPropagation();
-					panel.remove();
-					activeDocument.removeEventListener('click', closer, true);
-					if (this.trackerView === opt.key) return;
-					this.trackerView = opt.key;
-					this._trackerPersistentScrollTop = 0;
-					this.plugin.settings.upcomingTrackerView = opt.key;
-					void this.plugin.saveSettings();
-					this.render();
-				});
-			}
-
-			const closer = (ev: MouseEvent) => {
-				if (!wrap.contains(ev.target as Node)) {
-					panel.remove();
-					activeDocument.removeEventListener('click', closer, true);
-				}
-			};
-			window.setTimeout(() => activeDocument.addEventListener('click', closer, true), 0);
-			this.activeCleanups.push(() => activeDocument.removeEventListener('click', closer, true));
+			],
+			registerCleanup: (fn) => this.activeCleanups.push(fn),
+			onSelect: (key) => {
+				this.trackerView = key;
+				this._trackerPersistentScrollTop = 0;
+				this.plugin.settings.upcomingTrackerView = key;
+				void this.plugin.saveSettings();
+				this.render();
+			},
 		});
 	}
 
 	private renderActionBar(parent: HTMLElement): void {
-		const bar = parent.createDiv({ cls: 'wl-action-bar' });
-
-		const deleteBtn = bar.createEl('button', {
-			cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
-			text: '✕',
-		});
-		deleteBtn.title = 'Remove from upcoming';
-		deleteBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const count = this.selectedItems.size;
-			new ConfirmModal(
-				this.plugin.app,
-				`Remove ${count} selected item${count !== 1 ? 's' : ''} from Upcoming? This cannot be undone.`,
-				() => {
-					void (async () => {
-						await this.dataManager.removeAirtimeEntriesBatch(Array.from(this.selectedItems));
-						this.selectedItems.clear();
-						this.render();
-					})();
-				},
-			).open();
+		renderActionBar(parent, this.plugin.app, {
+			title: 'Remove from upcoming',
+			selected: this.selectedItems,
+			message: (count) => `Remove ${count} selected item${count !== 1 ? 's' : ''} from Upcoming? This cannot be undone.`,
+			onConfirm: async () => {
+				await this.dataManager.removeAirtimeEntriesBatch(Array.from(this.selectedItems));
+				this.selectedItems.clear();
+				this.render();
+			},
 		});
 	}
 

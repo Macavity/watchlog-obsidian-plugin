@@ -277,3 +277,58 @@ export function renderSortingDropdown(parent: HTMLElement, fields: SortFields, o
 	});
 }
 
+
+export interface ViewOption<K extends string> {
+	key: K;
+	label: string;
+	icon: string;
+}
+
+export interface ViewDropdownOptions<K extends string> {
+	current: K;
+	options: Array<ViewOption<K>>;
+	/** Called for a key other than the current one; the popover is already closed. */
+	onSelect: (key: K) => void;
+	/** Hands the tab a teardown for the open popover's document listener. */
+	registerCleanup?: (fn: () => void) => void;
+}
+
+/** The icon-only view button with its Cards/List popover. */
+export function renderViewDropdown<K extends string>(parent: HTMLElement, opts: ViewDropdownOptions<K>): void {
+	const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
+	const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm wl-view-btn' });
+	setIcon(btn, opts.options.find((o) => o.key === opts.current)?.icon ?? 'list');
+	btn.title = 'View';
+
+	btn.addEventListener('click', (e) => {
+		e.stopPropagation();
+		const existing = wrap.querySelector('.wl-dropdown');
+		if (existing) { existing.remove(); return; }
+
+		const panel = wrap.createDiv({ cls: 'wl-dropdown wl-view-panel' });
+		for (const opt of opts.options) {
+			const active = opts.current === opt.key;
+			const row = panel.createDiv({ cls: `wl-view-option-row${active ? ' is-active' : ''}` });
+			setIcon(row.createSpan({ cls: 'wl-view-option-icon' }), opt.icon);
+			row.createSpan({ cls: 'wl-view-option-label', text: opt.label });
+			if (active) {
+				setIcon(row.createSpan({ cls: 'wl-view-option-check' }), 'check');
+			}
+			row.addEventListener('click', (ev) => {
+				ev.stopPropagation();
+				panel.remove();
+				activeDocument.removeEventListener('click', closer, true);
+				if (!active) opts.onSelect(opt.key);
+			});
+		}
+
+		const closer = (ev: MouseEvent) => {
+			if (!wrap.contains(ev.target as Node)) {
+				panel.remove();
+				activeDocument.removeEventListener('click', closer, true);
+			}
+		};
+		window.setTimeout(() => activeDocument.addEventListener('click', closer, true), 0);
+		opts.registerCleanup?.(() => activeDocument.removeEventListener('click', closer, true));
+	});
+}

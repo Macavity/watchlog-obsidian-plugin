@@ -16,6 +16,7 @@ import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard'
 import { renderGroupCollage } from './CollageUtil';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown } from './ui/TabToolbar';
+import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { rawgResizedCover } from './ApiService';
 import { resolveGameCover, type GameCover } from './coverRefresh';
@@ -1147,53 +1148,36 @@ export class GamesTab {
 	}
 
 	private renderActionBar(parent: HTMLElement): void {
-		const bar = parent.createDiv({ cls: 'wl-action-bar' });
-
-		const deleteBtn = bar.createEl('button', {
-			cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
-			text: '✕',
-		});
-		deleteBtn.title = 'Delete selected';
-		deleteBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const count = this.selectedIds.size;
-			new ConfirmModal(
-				this.plugin.app,
-				`Delete ${count} selected item${count !== 1 ? 's' : ''}? Deleted games' note files will be moved to the trash; deleting a group returns its games to the main list.`,
-				() => {
-					void (async () => {
-						// selected groups are dissolved (games return to the grid); selected games are batch-deleted
-						// with their note files
-						const groupIds = new Set(this.gameData.getGroups().map((g) => g.id));
-						const gameIds: string[] = [];
-						for (const id of Array.from(this.selectedIds)) {
-							if (groupIds.has(id)) {
-								await this.gameData.removeGroup(id);
-							} else {
-								gameIds.push(id);
-							}
-						}
-						if (gameIds.length > 0) {
-							await this.gameData.removeGamesBatch(gameIds);
-						}
-						this.selectedIds.clear();
-						this.render();
-					})();
-				},
-			).open();
+		const bar = renderActionBar(parent, this.plugin.app, {
+			title: 'Delete selected',
+			selected: this.selectedIds,
+			message: (count) => `Delete ${count} selected item${count !== 1 ? 's' : ''}? Deleted games' note files will be moved to the trash; deleting a group returns its games to the main list.`,
+			onConfirm: async () => {
+				// selected groups are dissolved (games return to the grid); selected games are batch-deleted
+				// with their note files
+				const groupIds = new Set(this.gameData.getGroups().map((g) => g.id));
+				const gameIds: string[] = [];
+				for (const id of Array.from(this.selectedIds)) {
+					if (groupIds.has(id)) {
+						await this.gameData.removeGroup(id);
+					} else {
+						gameIds.push(id);
+					}
+				}
+				if (gameIds.length > 0) {
+					await this.gameData.removeGamesBatch(gameIds);
+				}
+				this.selectedIds.clear();
+				this.render();
+			},
 		});
 
 		// batch status change (the auto "To be released" stays release-date-driven; groups are skipped —
 		// status belongs to the member games)
-		const statusSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
-		statusSelect.createEl('option', { text: 'Status…', value: '' });
-		for (const s of this.gameData.getSettings().statuses.filter((s) => s.name !== GAME_AUTO_STATUS)) {
-			statusSelect.createEl('option', { text: s.name, value: s.name });
-		}
-		statusSelect.addEventListener('change', () => {
-			void (async () => {
-				const newStatus = statusSelect.value;
-				if (!newStatus) return;
+		renderBatchStatusSelect(
+			bar,
+			this.gameData.getSettings().statuses.map((s) => s.name).filter((name) => name !== GAME_AUTO_STATUS),
+			async (newStatus) => {
 				for (const id of this.selectedIds) {
 					const game = this.gameData.getGame(id);
 					if (game) {
@@ -1201,76 +1185,35 @@ export class GamesTab {
 					}
 				}
 				await this.gameData.saveAndNotify();
-				statusSelect.value = '';
-			})();
-		});
+			},
+		);
 
 		const allGroups = this.gameData.getGroups();
-		const hasGroupSelected = Array.from(this.selectedIds).some((id) =>
-			allGroups.some((g) => g.id === id),
-		);
-		const moveSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
-		if (hasGroupSelected) {
-			moveSelect.disabled = true;
-			moveSelect.title = 'A group is selected; cannot move groups into other groups';
-		}
-		moveSelect.createEl('option', { text: 'Group…', value: '' });
-		for (const g of allGroups) {
-			moveSelect.createEl('option', { text: g.name, value: g.id });
-		}
-		moveSelect.createEl('option', { text: 'Create new group…', value: '__new__' });
-		moveSelect.addEventListener('change', () => {
-			void (async () => {
-				const value = moveSelect.value;
-				if (!value) return;
-				const groupIds = new Set(allGroups.map((g) => g.id));
-				const gameIds = Array.from(this.selectedIds).filter((id) => !groupIds.has(id));
-
-				if (value === '__new__') {
-					// inline input — prompt() is unavailable in Obsidian/Electron
-					moveSelect.value = '';
-					moveSelect.hide();
-					const nameInput = bar.createEl('input', {
-						cls: 'wl-modal-input wl-group-name-input',
-						attr: { type: 'text', placeholder: 'Group name…', maxlength: '64' },
-					});
-					const confirmBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✓' });
-					confirmBtn.title = 'Create group';
-					const cancelBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✕' });
-					cancelBtn.title = 'Cancel';
-
-					const doCreate = async () => {
-						const name = nameInput.value.trim();
-						if (!name) return;
-						const newGroup: GameGroup = {
-							id: this.gameData.generateGroupId(name),
-							name,
-							gameIds,
-							dateAdded: new Date().toISOString(),
-						};
-						this.selectedIds.clear();
-						this.selectionMode = false;
-						await this.gameData.addGroup(newGroup);
-					};
-					confirmBtn.addEventListener('click', (e) => { e.stopPropagation(); void doCreate(); });
-					// cancel only needs the toolbar back
-					cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); this.refreshToolbarActions(); });
-					nameInput.addEventListener('keydown', (e) => {
-						e.stopPropagation();
-						if (e.key === 'Enter') void doCreate();
-						if (e.key === 'Escape') this.refreshToolbarActions();
-					});
-					nameInput.addEventListener('click', (e) => e.stopPropagation());
-					window.setTimeout(() => nameInput.focus(), 0);
-					return;
-				}
-
+		const groupIds = new Set(allGroups.map((g) => g.id));
+		const selectedGameIds = () => Array.from(this.selectedIds).filter((id) => !groupIds.has(id));
+		renderMoveToGroupSelect(bar, {
+			groups: allGroups,
+			disabled: Array.from(this.selectedIds).some((id) => groupIds.has(id)),
+			onMove: async (groupId) => {
+				const gameIds = selectedGameIds();
 				this.selectedIds.clear();
 				this.selectionMode = false;
 				for (const id of gameIds) {
-					await this.gameData.addGameToGroup(value, id);
+					await this.gameData.addGameToGroup(groupId, id);
 				}
-			})();
+			},
+			onCreate: async (name) => {
+				const newGroup: GameGroup = {
+					id: this.gameData.generateGroupId(name),
+					name,
+					gameIds: selectedGameIds(),
+					dateAdded: new Date().toISOString(),
+				};
+				this.selectedIds.clear();
+				this.selectionMode = false;
+				await this.gameData.addGroup(newGroup);
+			},
+			onCancel: () => this.refreshToolbarActions(),
 		});
 	}
 
