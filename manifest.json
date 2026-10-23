@@ -4,7 +4,7 @@
 	"version": "4.0.0",
 	"minAppVersion": "1.11.0",
 	"description": "Track anime, movies, TV shows, books, manga and games as notes in your vault, synced across devices. Fork of WatchLog by BogdanS.",
-	"author": "Alexander Pape",
+	"author": "Macavity",
 	"authorUrl": "https://github.com/Macavity",
 	"isDesktopOnly": false
 }

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ci-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+
+        strategy:
+            fail-fast: false
+            matrix:
+                node-version: [22.x, 24.x]
+
+        steps:
+            - uses: actions/checkout@v5
+            - name: Use Node.js ${{ matrix.node-version }}
+              uses: actions/setup-node@v5
+              with:
+                  node-version: ${{ matrix.node-version }}
+                  cache: npm
+            - run: npm ci
+            - run: npm run lint
+            - run: npm test
+            - run: npm run build
+            - name: Committed main.js matches the source
+              run: git diff --exit-code --stat -- main.js
