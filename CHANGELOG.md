@@ -3,7 +3,7 @@
 All notable changes to WatchLog Sync are documented here. Versions up to 3.1.2 are the upstream
 [WatchLog](https://github.com/Shynkro/watchlog-obsidian-plugin) by BogdanS.
 
-## [4.0.0] - unreleased
+## [4.0.0] - 2026-10-23
 
 Fork as **WatchLog Sync** (plugin id `watchlog-sync`).
 
@@ -19,6 +19,7 @@ Fork as **WatchLog Sync** (plugin id `watchlog-sync`).
 * Backup restore converts old backups into notes.
 * `pnpm run deploy` copies a build into a registered vault.
 * Test suite (vitest).
+
 ## [3.1.2] - 2026-08-11
 
 * Mobile add modal fix: stack year + search under the query
