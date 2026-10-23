@@ -14,6 +14,17 @@ function rowName(row: CustomListRow): string {
 	return String((row as Record<string, string | undefined>)['name'] ?? '').trim();
 }
 
+/** Key handling of an inline cell editor: Tab / Shift+Tab / Enter commit and navigate, Escape cancels. */
+function handleEditKey(
+	e: KeyboardEvent,
+	commit: (nav: 'tab' | 'shift-tab' | 'enter') => void,
+	cancel: () => void,
+): void {
+	if (e.key === 'Tab') { e.preventDefault(); commit(e.shiftKey ? 'shift-tab' : 'tab'); }
+	else if (e.key === 'Enter') { e.preventDefault(); commit('enter'); }
+	else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); cancel(); }
+}
+
 /** Minimum width (px) a resizable column can be dragged to. */
 const MIN_COL_WIDTH = 60;
 /** Fallback width (px) for a resizable column with no explicit width. */
@@ -1215,6 +1226,32 @@ export class CustomListsTab {
 
 	// Cell rendering
 
+	/**
+	 * Mobile: scrolls the active element into view when the keyboard shrinks the viewport.
+	 * Returns a function that detaches the listener (also registered as cleanup).
+	 */
+	private watchKeyboardScroll(cell: HTMLElement): () => void {
+		const onResize = (): void => {
+			const active = activeDocument.activeElement as HTMLElement | null;
+			if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		};
+		const detach = (): void => {
+			if (window.visualViewport) window.visualViewport.removeEventListener('resize', onResize);
+		};
+		if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
+		this.addCleanup(detach);
+		window.setTimeout(() => cell.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+		return detach;
+	}
+
+	/** Removes the capture-phase Escape guard installed while a name cell is edited. */
+	private releaseEscapeGuard(): void {
+		if (!this._escapeKeyHandler) return;
+		activeDocument.removeEventListener('keydown', this._escapeKeyHandler, true);
+		activeDocument.removeEventListener('keyup', this._escapeKeyHandler, true);
+		this._escapeKeyHandler = null;
+	}
+
 	private renderNameCell(
 		cell: HTMLElement,
 		row: CustomListRow,
@@ -1267,16 +1304,7 @@ export class CustomListsTab {
 			activeDocument.removeEventListener('keyup', escHandler, true);
 		});
 
-		// mobile: scroll the active element into view when the keyboard shrinks the viewport
-		const vpResizeHandler = (): void => {
-			const active = activeDocument.activeElement as HTMLElement | null;
-			if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
-		};
-		if (window.visualViewport) window.visualViewport.addEventListener('resize', vpResizeHandler);
-		this.addCleanup(() => {
-			if (window.visualViewport) window.visualViewport.removeEventListener('resize', vpResizeHandler);
-		});
-		window.setTimeout(() => cell.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+		const stopKeyboardScroll = this.watchKeyboardScroll(cell);
 
 		const wrap = cell.createDiv({ cls: 'wl-cl-autofill-wrap' });
 		const input = wrap.createEl('input', {
@@ -1325,12 +1353,8 @@ export class CustomListsTab {
 		const doSave = async (cancel: boolean): Promise<void> => {
 			if (saved) return;
 			saved = true;
-			if (window.visualViewport) window.visualViewport.removeEventListener('resize', vpResizeHandler);
-			if (this._escapeKeyHandler) {
-    			activeDocument.removeEventListener('keydown', this._escapeKeyHandler, true);
-    			activeDocument.removeEventListener('keyup', this._escapeKeyHandler, true);
-    			this._escapeKeyHandler = null;
-			}
+			stopKeyboardScroll();
+			this.releaseEscapeGuard();
 			clearDropdown();
 			const newVal = input.value.trim();
 			if (!cancel) {
@@ -1347,22 +1371,12 @@ export class CustomListsTab {
 		input.addEventListener('keydown', (e) => {
 			if (dropdown) {
 				const items = Array.from(dropdown.querySelectorAll<HTMLElement>('.wl-result-item'));
-				if (e.key === 'ArrowDown') {
+				if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 					e.preventDefault();
-					focusedSuggestionIdx = Math.min(focusedSuggestionIdx + 1, items.length - 1);
-					items.forEach((item, i) => {
-						if (i === focusedSuggestionIdx) item.addClass('wl-result-item-focused');
-						else item.removeClass('wl-result-item-focused');
-					});
-					return;
-				}
-				if (e.key === 'ArrowUp') {
-					e.preventDefault();
-					focusedSuggestionIdx = Math.max(focusedSuggestionIdx - 1, 0);
-					items.forEach((item, i) => {
-						if (i === focusedSuggestionIdx) item.addClass('wl-result-item-focused');
-						else item.removeClass('wl-result-item-focused');
-					});
+					focusedSuggestionIdx = e.key === 'ArrowDown'
+						? Math.min(focusedSuggestionIdx + 1, items.length - 1)
+						: Math.max(focusedSuggestionIdx - 1, 0);
+					items.forEach((item, i) => item.toggleClass('wl-result-item-focused', i === focusedSuggestionIdx));
 					return;
 				}
 				if (e.key === 'Enter' && focusedSuggestionIdx >= 0) {
@@ -1381,10 +1395,7 @@ export class CustomListsTab {
 				}
 			}
 
-			if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); navDirection = 'shift-tab'; void doSave(false); }
-			else if (e.key === 'Tab') { e.preventDefault(); navDirection = 'tab'; void doSave(false); }
-			else if (e.key === 'Enter') { e.preventDefault(); navDirection = 'enter'; void doSave(false); }
-			else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); void doSave(true); }
+			handleEditKey(e, (nav) => { navDirection = nav; void doSave(false); }, () => void doSave(true));
 		});
 	}
 
@@ -1475,16 +1486,7 @@ export class CustomListsTab {
 		cell.empty();
 		cell.addClass('wl-cl-editing');
 
-		// mobile: scroll the active element into view when the keyboard shrinks the viewport
-		const vpResizeHandler = (): void => {
-			const active = activeDocument.activeElement as HTMLElement | null;
-			if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
-		};
-		if (window.visualViewport) window.visualViewport.addEventListener('resize', vpResizeHandler);
-		this.addCleanup(() => {
-			if (window.visualViewport) window.visualViewport.removeEventListener('resize', vpResizeHandler);
-		});
-		window.setTimeout(() => cell.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+		const stopKeyboardScroll = this.watchKeyboardScroll(cell);
 
 		let getValue: () => string | number | undefined;
 		let saved = false;
@@ -1493,12 +1495,8 @@ export class CustomListsTab {
 		const doSave = async (cancel: boolean): Promise<void> => {
 			if (saved) return;
 			saved = true;
-			if (window.visualViewport) window.visualViewport.removeEventListener('resize', vpResizeHandler);
-			if (this._escapeKeyHandler) {
-    			activeDocument.removeEventListener('keydown', this._escapeKeyHandler, true);
-    			activeDocument.removeEventListener('keyup', this._escapeKeyHandler, true);
-    			this._escapeKeyHandler = null;
-			}
+			stopKeyboardScroll();
+			this.releaseEscapeGuard();
 			cell.removeClass('wl-cl-editing');
 			if (!cancel) {
 				const newVal = getValue();
@@ -1510,37 +1508,20 @@ export class CustomListsTab {
 		};
 
 		// select cells never reach startCustomEdit — they open the shared dropdown (openSelectDropdown)
-		if (col.type === 'number') {
-			const input = cell.createEl('input', {
-				cls: 'wl-cl-cell-input',
-				attr: { type: 'number', value: currentVal !== undefined && currentVal !== null ? String(currentVal) : '' },
-			});
-			getValue = () => { const n = parseFloat(input.value); return isNaN(n) ? '' : n; };
-			input.focus();
-			input.select();
-			input.addEventListener('blur', () => void doSave(false));
-			input.addEventListener('keydown', (e) => {
-				if (e.key === 'Enter') { e.preventDefault(); navDirection = 'enter'; void doSave(false); }
-				else if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); navDirection = 'shift-tab'; void doSave(false); }
-				else if (e.key === 'Tab') { e.preventDefault(); navDirection = 'tab'; void doSave(false); }
-				else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); void doSave(true); }
-			});
-		} else {
-			const input = cell.createEl('input', {
-				cls: 'wl-cl-cell-input',
-				attr: { type: 'text', value: currentVal !== undefined && currentVal !== null ? String(currentVal) : '' },
-			});
-			getValue = () => input.value;
-			input.focus();
-			input.select();
-			input.addEventListener('blur', () => void doSave(false));
-			input.addEventListener('keydown', (e) => {
-				if (e.key === 'Enter') { e.preventDefault(); navDirection = 'enter'; void doSave(false); }
-				else if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); navDirection = 'shift-tab'; void doSave(false); }
-				else if (e.key === 'Tab') { e.preventDefault(); navDirection = 'tab'; void doSave(false); }
-				else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); void doSave(true); }
-			});
-		}
+		const isNumber = col.type === 'number';
+		const input = cell.createEl('input', {
+			cls: 'wl-cl-cell-input',
+			attr: { type: isNumber ? 'number' : 'text', value: currentVal !== undefined && currentVal !== null ? String(currentVal) : '' },
+		});
+		getValue = isNumber
+			? () => { const n = parseFloat(input.value); return isNaN(n) ? '' : n; }
+			: () => input.value;
+		input.focus();
+		input.select();
+		input.addEventListener('blur', () => void doSave(false));
+		input.addEventListener('keydown', (e) => {
+			handleEditKey(e, (nav) => { navDirection = nav; void doSave(false); }, () => void doSave(true));
+		});
 	}
 
 	// Auto-populate time column
