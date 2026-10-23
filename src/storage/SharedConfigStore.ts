@@ -5,37 +5,48 @@ import {
 	createBaseFile, findInFolderPath, hasWatchlogKey, readWatchlogBlock, replaceInFolderPath, writeWatchlogBlock,
 } from './baseFile';
 
-/** Whitelist of settings synced via the base. Everything else (API keys, secrets, ids) stays local. */
+/**
+ * Whitelist of settings synced via the base: the vocabulary and schema every device needs to read
+ * and write the same notes, plus the write behaviour that shapes them. Colors, palettes, layouts,
+ * filters and secrets stay local.
+ */
 export const SHARED_SETTING_KEYS: readonly string[] = [
-	'types', 'statuses', 'reviews', 'priorities', 'ratingSystem', 'halfStarRatings',
-	'typeApiMapping', 'episodeNumbering', 'seasonPalette', 'readingTypeColors',
+	'types', 'statuses', 'reviews', 'priorities', 'halfStarRatings',
+	'typeApiMapping', 'episodeNumbering',
 	'defaultCustomColumns', 'autoCompleteOnLastEpisode', 'setFinishDateAutomatically',
 	'reading', 'games',
 ];
 
-const NESTED_KEYS = new Set(['reading', 'games']);
-const SECRET_RE = /api.?key|secret|steam.?id|client.?id|token/i;
+/** Same split inside the `reading:` and `games:` objects; everything else in them is device-local. */
+export const NESTED_SHARED_KEYS: Readonly<Record<'reading' | 'games', readonly string[]>> = {
+	reading: ['defaultStatus', 'bookColumns', 'mangaColumns'],
+	games: ['defaultStatus', 'statuses', 'types', 'platforms'],
+};
+
+/** Keys once synced, now local; dropped from the block on the next write. */
+const RETIRED_KEYS = ['ratingSystem', 'seasonPalette', 'readingTypeColors'];
 const VERSION = 1;
 
-/** Drops secret-looking keys and `defaultFolder` (device-local) from nested settings, recursively. */
-function scrub(v: unknown): unknown {
-	if (Array.isArray(v)) return v.map(scrub);
-	if (v && typeof v === 'object') {
-		const out: Record<string, unknown> = {};
-		for (const [k, val] of Object.entries(v)) {
-			if (k === 'defaultFolder' || SECRET_RE.test(k)) continue;
-			out[k] = scrub(val);
-		}
-		return out;
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+	typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Splits a `reading`/`games` object into its synced and its device-local part. */
+export function splitNested(key: keyof typeof NESTED_SHARED_KEYS, obj: Record<string, unknown>):
+	{ shared: Record<string, unknown>; local: Record<string, unknown> } {
+	const shared: Record<string, unknown> = {};
+	const local: Record<string, unknown> = {};
+	for (const [k, v] of Object.entries(obj)) {
+		if (v === undefined || k === 'defaultFolder') continue;
+		(NESTED_SHARED_KEYS[key].includes(k) ? shared : local)[k] = v;
 	}
-	return v;
+	return { shared, local };
 }
 
 function pick(src: Record<string, unknown>): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
 	for (const k of SHARED_SETTING_KEYS) {
 		if (!(k in src) || src[k] === undefined) continue;
-		out[k] = NESTED_KEYS.has(k) ? scrub(src[k]) : src[k];
+		out[k] = (k === 'reading' || k === 'games') && isRecord(src[k]) ? splitNested(k, src[k]).shared : src[k];
 	}
 	return out;
 }
@@ -136,7 +147,9 @@ export class SharedConfigStore {
 					return src;
 				}
 			}
-			return writeWatchlogBlock(src, { version, ...current, ...changes }, this.yaml);
+			const block: Record<string, unknown> = { version, ...current, ...changes };
+			for (const k of RETIRED_KEYS) delete block[k];
+			return writeWatchlogBlock(src, block, this.yaml);
 		});
 		if (!written) {
 			console.warn('[WL] unreadable watchlog block in the base; settings not written');

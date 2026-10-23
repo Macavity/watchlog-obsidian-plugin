@@ -17,14 +17,26 @@ describe('SharedConfigStore', () => {
 		expect(f.files.get('W/WatchLog.base')).not.toContain('SECRET');
 		expect(s.get().settings.statuses).toEqual([{ name: 'A', color: '#000' }]);
 	});
-	it('strips secrets nested in reading/games', async () => {
+	it('keeps only the vocabulary of reading/games', async () => {
 		const { f, s } = mk({ 'W/WatchLog.base': 'filters:\n  and:\n    - file.inFolder("W")\n' });
 		await s.load();
-		await s.update({ games: { steamId: 'S1', defaultFolder: 'X', keep: 1 } });
+		await s.update({
+			games: { steamId: 'S1', defaultFolder: 'X', defaultStatus: 'Playing', rowsLayout: [], savedFilterPreset: { a: 1 } },
+			reading: { defaultStatus: 'Reading', statusColors: { Reading: '#fff' }, savedFilters: {}, bookColumns: [] },
+		});
 		const out = f.files.get('W/WatchLog.base')!;
-		expect(out).not.toContain('S1');
-		expect(out).not.toContain('defaultFolder');
-		expect(out).toContain('keep: 1');
+		for (const k of ['S1', 'defaultFolder', 'rowsLayout', 'savedFilterPreset', 'statusColors', 'savedFilters']) expect(out).not.toContain(k);
+		expect(out).toContain('defaultStatus: Playing');
+		expect(out).toContain('defaultStatus: Reading');
+		expect(out).toContain('bookColumns');
+	});
+	it('drops retired keys on write', async () => {
+		const { f, s } = mk({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n  seasonPalette:\n    - "#000"\n  futureKey: 1\n' });
+		await s.load();
+		await s.update({ halfStarRatings: true });
+		const out = f.files.get('W/WatchLog.base')!;
+		expect(out).not.toContain('seasonPalette');
+		expect(out).toContain('futureKey: 1');
 	});
 	it('fixes a stale inFolder line', async () => {
 		const { f, s } = mk({ 'W/WatchLog.base': 'filters:\n  and:\n    - file.inFolder("Old")\n' });

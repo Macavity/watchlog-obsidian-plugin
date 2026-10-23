@@ -9,7 +9,7 @@ import type {
 } from '../types';
 import type { HistoryEntry } from '../HistoryManager';
 import type { LocalStore } from './LocalStore';
-import { SHARED_SETTING_KEYS, type SharedConfigStore } from './SharedConfigStore';
+import { SHARED_SETTING_KEYS, splitNested, type SharedConfigStore } from './SharedConfigStore';
 import { historyKey, type HistoryStore } from './HistoryStore';
 import type { VaultLayout } from './VaultLayout';
 import type { EntryCache, LocalData, YamlIO } from './storageTypes';
@@ -561,6 +561,10 @@ class Migration {
 		}
 
 		const local: LocalData = { schemaVersion: 2, settings, cache: this.cache, ui };
+		// the device-local half of the reading / games settings (colors, layouts, saved filters)
+		const reading = data.reading as ReadingData;
+		local.reading = splitNested('reading', { ...reading.settings } as unknown as Record<string, unknown>).local;
+		local.games = splitNested('games', { ...(data.games as GamesData).settings } as unknown as Record<string, unknown>).local;
 		if (data.drafts) local.drafts = data.drafts;
 		return local;
 	}

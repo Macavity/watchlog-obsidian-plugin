@@ -16,13 +16,14 @@ describe('GameDataManager on vault storage', () => {
 		expect(g.vaultPage).toBe('W/Games/Hades.md');
 	});
 
-	it('writes settings to the base block without defaultFolder', async () => {
+	it('splits settings: vocabulary to the base, layout and filters to data.json', async () => {
 		const { gdm, f } = await setupGames({ 'W/WatchLog.base': 'watchlog:\n  version: 1\nfilters: {}\n' });
-		await gdm.updateSettings({ defaultStatus: 'Playing' });
+		await gdm.updateSettings({ defaultStatus: 'Playing', rowsLayout: [{ id: 'recent', enabled: false }] });
 		const base = f.files.get('W/WatchLog.base')!;
 		expect(base).toContain('Playing');
-		expect(base).not.toContain('defaultFolder');
+		for (const k of ['defaultFolder', 'rowsLayout']) expect(base).not.toContain(k);
 		expect(gdm.getSettings().defaultStatus).toBe('Playing');
+		expect(gdm.getSettings().rowsLayout).toEqual([{ id: 'recent', enabled: false }]);
 	});
 
 	it('substitutes the default status for a note without status', async () => {

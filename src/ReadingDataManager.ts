@@ -6,7 +6,7 @@ import type { DataStores } from './DataManager';
 import type { EntryIndex } from './storage/EntryIndex';
 import type { LocalStore } from './storage/LocalStore';
 import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
-import type { SharedConfigStore } from './storage/SharedConfigStore';
+import { splitNested, type SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { FOLDERS } from './storage/VaultLayout';
 import { decodeBook, decodeManga, encodeBook, encodeManga } from './storage/readingCodec';
@@ -126,9 +126,9 @@ export class ReadingDataManager {
 
 	// Settings + columns (shared config)
 
-	/** Normalizes `settings.reading` of the shared config into memory; never writes. */
+	/** Composes the local (data.json) and shared (base) reading settings into memory; never writes. */
 	private readShared(): void {
-		const raw = (this.shared.get().settings.reading ?? {}) as Partial<ReadingSettings> & {
+		const raw = { ...this.local.data.reading, ...(this.shared.get().settings.reading as object | undefined) } as Partial<ReadingSettings> & {
 			bookColumns?: ReadingCustomColumn[];
 			mangaColumns?: ReadingCustomColumn[];
 		};
@@ -153,12 +153,13 @@ export class ReadingDataManager {
 		this.mangaColumns = clean(mangaColumns);
 	}
 
+	/** Synced keys go to the base, the rest (colors, layout, filters) to data.json. */
 	private async saveShared(): Promise<void> {
-		const rest: Partial<ReadingSettings> = { ...this.settings };
-		delete rest.defaultFolder;
-		await this.shared.update({
-			reading: { ...rest, bookColumns: this.bookColumns, mangaColumns: this.mangaColumns },
-		});
+		const all = { ...this.settings, bookColumns: this.bookColumns, mangaColumns: this.mangaColumns };
+		const { shared, local } = splitNested('reading', all as unknown as Record<string, unknown>);
+		this.local.data.reading = local;
+		this.local.queueSave();
+		await this.shared.update({ reading: shared });
 	}
 
 	/** Current dataset as a backup snapshot. */

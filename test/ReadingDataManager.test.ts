@@ -64,12 +64,14 @@ describe('ReadingDataManager on vault storage', () => {
 		expect(f.files.get('W/Books/A.md')).not.toContain('cf_c1');
 	});
 
-	it('settings round-trip through the shared config without defaultFolder', async () => {
+	it('splits settings: default status to the base, UI state and colors to data.json', async () => {
 		const { rdm, f } = await setupReadingDataManager({});
-		await rdm.updateSettings({ defaultSubTab: 'manga', defaultFolder: 'X' });
-		expect(f.files.get('W/WatchLog.base')).toContain('defaultSubTab: manga');
-		expect(f.files.get('W/WatchLog.base')).not.toContain('defaultFolder');
+		await rdm.updateSettings({ defaultStatus: 'Reading', defaultSubTab: 'manga', statusColors: { Reading: '#ABCDEF' }, defaultFolder: 'X' });
+				const base = f.files.get('W/WatchLog.base')!;
+		expect(base).toContain('defaultStatus: Reading');
+		for (const k of ['defaultSubTab', 'ABCDEF', 'defaultFolder']) expect(base).not.toContain(k);
 		expect(rdm.getSettings().defaultSubTab).toBe('manga');
+		expect(rdm.getSettings().statusColors?.Reading).toBe('#ABCDEF');
 	});
 
 	it('appends quotes to the Quotes section', async () => {

@@ -4,7 +4,7 @@ import type { HistoryManager } from './HistoryManager';
 import type { DataStores } from './DataManager';
 import type { EntryIndex } from './storage/EntryIndex';
 import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
-import type { SharedConfigStore } from './storage/SharedConfigStore';
+import { splitNested, type SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { decodeGame, encodeGame } from './storage/gameCodec';
 import {
@@ -160,12 +160,12 @@ export class GameDataManager {
 		return false;
 	}
 
-	// Settings (shared base, `games:` block)
+	// Settings: vocabulary in the shared base (`games:` block), layout and filters in data.json
 
 	getSettings(): GamesSettings {
 		if (this.settingsCache) return this.settingsCache;
 		const defaults = defaultGamesSettings();
-		const stored = (this.shared.get().settings.games ?? {}) as Partial<GamesSettings>;
+		const stored = { ...this.local.data.games, ...(this.shared.get().settings.games as object | undefined) } as Partial<GamesSettings>;
 		const merged: GamesSettings = { ...defaults, ...stored, defaultFolder: defaults.defaultFolder };
 		if (!Array.isArray(merged.statuses) || merged.statuses.length === 0) merged.statuses = defaults.statuses;
 		if (!Array.isArray(merged.types) || merged.types.length === 0) merged.types = defaults.types;
@@ -175,8 +175,10 @@ export class GameDataManager {
 	}
 
 	private async writeSettings(settings: GamesSettings): Promise<void> {
-		// the shared store drops the device-local defaultFolder itself
-		await this.shared.update({ games: settings });
+		const { shared, local } = splitNested('games', settings as unknown as Record<string, unknown>);
+		this.local.data.games = local;
+		this.local.queueSave();
+		await this.shared.update({ games: shared });
 	}
 
 	async updateSettings(patch: Partial<GamesSettings>): Promise<void> {

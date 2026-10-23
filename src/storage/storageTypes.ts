@@ -72,6 +72,9 @@ export interface SharedConfig {
 export interface LocalData {
 	schemaVersion: 2;
 	settings: Record<string, unknown>;
+	/** device-local part of the reading / games settings (colors, layouts, saved filters) */
+	reading?: Record<string, unknown>;
+	games?: Record<string, unknown>;
 	cache: Record<string, EntryCache>;
 	drafts?: DraftPersistState;
 	ui: {

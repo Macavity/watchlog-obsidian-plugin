@@ -31,6 +31,19 @@ describe('settings split', () => {
 		expect(JSON.stringify(f.plugin.data)).not.toContain('Rewatch');
 	});
 
+	it('keeps colors and palettes local', async () => {
+		const { f, local, shared } = await setup({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n' });
+		const settings = composeSettings(local.data.settings, shared.get().settings);
+		settings.seasonPalette = ['#ABCDEF'];
+		settings.ratingSystem[0]!.label = 'Meh';
+		settings.readingTypeColors = { manga: '#FEDCBA', book: '#000000' };
+		await persistSettings(settings, local, shared);
+		await local.flush();
+		const base = f.files.get('W/WatchLog.base')!;
+		for (const k of ['ABCDEF', 'Meh', 'FEDCBA', 'ratingSystem']) expect(base).not.toContain(k);
+		expect(JSON.stringify(f.plugin.data)).toContain('ABCDEF');
+	});
+
 	it('writes nothing when no shared key changed', async () => {
 		const src = 'watchlog:\n  version: 1\n  futureKey: 1\n';
 		const { f, local, shared } = await setup({ 'W/WatchLog.base': src });
