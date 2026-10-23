@@ -129,11 +129,14 @@ function encodeTail(e: Book | Manga, kind: 'book' | 'manga', out: Fm): void {
 	out.type = kind;
 }
 
-export function decodeBook(id: string, fm: Fm): Decoded<Book> {
-	const r = new FmReader(fm);
-	const ext = parseExternalId(r.str('externalId'));
-	const gbooks = ext?.source === 'gbooks' ? ext.id : '';
-	const entry: Book = {
+type ReadingCommon = Pick<Book & Manga,
+	'id' | 'title' | 'author' | 'status' | 'favorite' | 'dateFavorited' | 'rating' | 'chaptersRead' | 'totalChapters'
+	| 'coverUrl' | 'externalLink' | 'vaultPage' | 'dateStarted' | 'dateFinished' | 'releaseDate' | 'dateAdded'
+	| 'dateModified' | 'customFields' | 'groups' | 'airtime'>;
+
+/** Fields decoded identically for Book and Manga. */
+function decodeReadingCommon(id: string, r: FmReader): ReadingCommon {
+	return {
 		id,
 		title: r.str('title'),
 		author: r.str('author'),
@@ -141,15 +144,9 @@ export function decodeBook(id: string, fm: Fm): Decoded<Book> {
 		favorite: r.bool('favorite') || undefined,
 		dateFavorited: r.strOrNull('dateFavorited') ?? undefined,
 		rating: r.num('rating'),
-		progressUnit: r.str('progressUnit') === 'words' ? 'words' : 'pages',
-		pagesRead: r.num('pagesRead'),
-		totalPages: r.num('totalPages'),
-		wordsRead: r.num('wordsRead'),
-		totalWords: r.num('totalWords'),
 		chaptersRead: r.num('chaptersRead'),
 		totalChapters: r.num('totalChapters'),
 		coverUrl: r.str('coverUrl'),
-		googleBooksId: r.str('googleBooksId') || gbooks,
 		externalLink: r.strOrNull('externalLink') ?? undefined,
 		vaultPage: `${id}.md`,
 		dateStarted: r.strOrNull('dateStarted'),
@@ -161,11 +158,31 @@ export function decodeBook(id: string, fm: Fm): Decoded<Book> {
 		groups: r.list('groups'),
 		airtime: decodeAirtime(r),
 	};
+}
+
+/** Optional keys are absent, not empty, on a decoded entry. */
+function stripEmptyOptional(entry: Book | Manga): void {
 	if (!entry.favorite) delete entry.favorite;
 	if (!entry.dateFavorited) delete entry.dateFavorited;
 	if (!entry.externalLink) delete entry.externalLink;
 	if (!entry.groups?.length) delete entry.groups;
 	if (!entry.airtime) delete entry.airtime;
+}
+
+export function decodeBook(id: string, fm: Fm): Decoded<Book> {
+	const r = new FmReader(fm);
+	const ext = parseExternalId(r.str('externalId'));
+	const gbooks = ext?.source === 'gbooks' ? ext.id : '';
+	const entry: Book = {
+		...decodeReadingCommon(id, r),
+		progressUnit: r.str('progressUnit') === 'words' ? 'words' : 'pages',
+		pagesRead: r.num('pagesRead'),
+		totalPages: r.num('totalPages'),
+		wordsRead: r.num('wordsRead'),
+		totalWords: r.num('totalWords'),
+		googleBooksId: r.str('googleBooksId') || gbooks,
+	};
+	stripEmptyOptional(entry);
 	return { entry, invalidFields: r.invalidFields };
 }
 
@@ -195,35 +212,12 @@ export function decodeManga(id: string, fm: Fm): Decoded<Manga> {
 	const ext = parseExternalId(r.str('externalId'));
 	const mal = ext?.source === 'mal' && ext.kind === 'manga' ? ext.id : '';
 	const entry: Manga = {
-		id,
-		title: r.str('title'),
-		author: r.str('author'),
-		status: status(r),
-		favorite: r.bool('favorite') || undefined,
-		dateFavorited: r.strOrNull('dateFavorited') ?? undefined,
-		rating: r.num('rating'),
-		chaptersRead: r.num('chaptersRead'),
-		totalChapters: r.num('totalChapters'),
+		...decodeReadingCommon(id, r),
 		volumesRead: r.num('volumesRead'),
 		totalVolumes: r.num('totalVolumes'),
-		coverUrl: r.str('coverUrl'),
 		malId: r.str('malId') || mal,
-		externalLink: r.strOrNull('externalLink') ?? undefined,
-		vaultPage: `${id}.md`,
-		dateStarted: r.strOrNull('dateStarted'),
-		dateFinished: r.strOrNull('dateFinished'),
-		releaseDate: r.strOrNull('releaseDate'),
-		dateAdded: r.str('dateAdded'),
-		dateModified: r.str('dateModified'),
-		customFields: decodeCustomFields(r),
-		groups: r.list('groups'),
-		airtime: decodeAirtime(r),
 	};
-	if (!entry.favorite) delete entry.favorite;
-	if (!entry.dateFavorited) delete entry.dateFavorited;
-	if (!entry.externalLink) delete entry.externalLink;
-	if (!entry.groups?.length) delete entry.groups;
-	if (!entry.airtime) delete entry.airtime;
+	stripEmptyOptional(entry);
 	return { entry, invalidFields: r.invalidFields };
 }
 
