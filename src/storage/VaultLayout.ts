@@ -1,8 +1,8 @@
 import { normalizePath } from 'obsidian';
 import type { EntryKind } from './storageTypes';
 
-export const BASE_FILE = 'WatchLog.base';
-export const HISTORY_FILE = 'History.md';
+const BASE_FILE = 'WatchLog.base';
+const HISTORY_FILE = 'History.md';
 export const FOLDERS = { book: 'Books', manga: 'Manga', game: 'Games', customLists: 'CustomLists' } as const;
 
 const UNSAFE = /[*"\\/<>:|?]/g;
@@ -12,7 +12,7 @@ const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 const RESERVED_FOLDERS = new Set(Object.values(FOLDERS).map((f) => f.toLowerCase()));
 
 /** A note or folder name that every OS and Obsidian accept; the legacy `UNSAFE` form plus the above. */
-export function safeFileName(name: string): string {
+function safeFileName(name: string): string {
 	const safe = name.replace(UNSAFE, '-').replace(LEADING_DOTS, (d) => '-'.repeat(d.length));
 	return WINDOWS_RESERVED.test(safe) ? `${safe}-` : safe;
 }

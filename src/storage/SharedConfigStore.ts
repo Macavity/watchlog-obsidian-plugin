@@ -18,7 +18,7 @@ export const SHARED_SETTING_KEYS: readonly string[] = [
 ];
 
 /** Same split inside the `reading:` and `games:` objects; everything else in them is device-local. */
-export const NESTED_SHARED_KEYS: Readonly<Record<'reading' | 'games', readonly string[]>> = {
+const NESTED_SHARED_KEYS: Readonly<Record<'reading' | 'games', readonly string[]>> = {
 	reading: ['defaultStatus', 'bookColumns', 'mangaColumns'],
 	games: ['defaultStatus', 'statuses', 'types', 'platforms'],
 };

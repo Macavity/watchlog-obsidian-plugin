@@ -49,7 +49,7 @@ export function runAirtimeScheduler(deps: AirtimeSchedulerDeps, notified: Set<st
 	}
 }
 
-export function isScheduledForToday(schedule: AirtimeSchedule, now: Date): boolean {
+function isScheduledForToday(schedule: AirtimeSchedule, now: Date): boolean {
 	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
 	if (schedule.recurrence === 'daily') return true;

@@ -115,7 +115,7 @@ export function imdbIdFromLink(link: string | undefined): string {
  * Cap on names stored from an API response. OMDb returns 4 actors; TMDB returns
  * the full cast (100+ on a big film). Fetched data only — user-added is uncapped.
  */
-export const MAX_FETCHED_CREDITS = 10;
+const MAX_FETCHED_CREDITS = 10;
 
 /** names shown inline before the rest collapse behind "+N more" */
 export const CREDITS_INLINE_LIMIT = 4;
@@ -559,7 +559,7 @@ export type BookProgressUnit = 'pages' | 'words';
  * Words per page, used *only* to fold words-mode books into a pages aggregate (the
  * Dashboard Books ring). No stored value is ever converted.
  */
-export const WORDS_PER_PAGE = 250;
+const WORDS_PER_PAGE = 250;
 
 export interface Book {
 	id: string;
@@ -1161,10 +1161,10 @@ export function getThemedColor(name: string, defaultColor: string, theme: string
 // Priority filtering. '' is a real, tickable filter option — not a gap.
 
 /** Filter option value for "no priority set". */
-export const NO_PRIORITY = '';
+const NO_PRIORITY = '';
 
 /** Filter label for NO_PRIORITY. */
-export const NO_PRIORITY_LABEL = 'No priority';
+const NO_PRIORITY_LABEL = 'No priority';
 
 /** Priority filter options: the configured names plus the empty one. */
 export function priorityFilterOpts(priorities: TagDefinition[]): string[] {
@@ -1308,7 +1308,7 @@ const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep
  * Month-name rendering for the Log day headers and the Upcoming schedule line, still
  * ordered by the setting: `25 Jul 2026` / `Jul 25, 2026` / `2026-07-25`.
  */
-export function formatDateWithMonthName(
+function formatDateWithMonthName(
 	dateStr: string | null | undefined,
 	fmt: DateFormatPref = activeDateFormat,
 ): string {

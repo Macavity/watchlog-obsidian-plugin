@@ -45,7 +45,7 @@ const EXAMPLES: HelpExample[] = [
  * The "?" panel next to each search box. Lists the syntax plus the fields the *current* tab
  * searches, since those differ (Games has platforms, Reading has your custom columns).
  */
-export class SearchHelpModal<T> extends Modal {
+class SearchHelpModal<T> extends Modal {
 	constructor(
 		app: App,
 		private tabLabel: string,

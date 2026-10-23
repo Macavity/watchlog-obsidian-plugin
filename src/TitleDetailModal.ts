@@ -1381,7 +1381,7 @@ export class GroupDetailModal extends Modal {
 // Standalone .wl-card matching the Cards grid look. Used by ListTab and by GroupDetailModal so
 // member tiles look identical. Posters with no cached URL are fetched eagerly here — a group modal
 // has a small, finite member count.
-export function buildTitleCardElement(
+function buildTitleCardElement(
 	plugin: WatchLogPlugin,
 	title: WatchLogTitle,
 	handlers: { onOpenDetail: () => void; onEdit: () => void },
