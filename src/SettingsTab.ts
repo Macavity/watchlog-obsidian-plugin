@@ -4,7 +4,7 @@ import { cardSizeToMinWidth } from './VirtualGrid';
 import type WatchLogPlugin from './main';
 import type { TagDefinition, ReadingStatus, GamesSettings, DateFormatPref, CardStyleTab, CardTextStyle } from './types';
 import { SELECTABLE_READING_STATUSES, READING_STATUSES, LAST_USED_TYPE_SENTINEL, formatDateDisplay, needsStudioFetch, getApiGroupForType, isCreditsNone, CREDITS_NONE } from './types';
-import { readingStatusColor } from './ReadingTab';
+import { readingStatusColor } from './readingColors';
 import { SteamSyncModal } from './SteamSyncModal';
 import type { SteamFailureReason } from './ApiService';
 
