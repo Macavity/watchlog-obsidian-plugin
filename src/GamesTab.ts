@@ -15,12 +15,11 @@ import { LazyCardObserver } from './LazyCardObserver';
 import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderGroupCollage } from './CollageUtil';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
-import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton } from './ui/TabToolbar';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown } from './ui/TabToolbar';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { rawgResizedCover } from './ApiService';
 import { resolveGameCover, type GameCover } from './coverRefresh';
 import { toggleFilterPanel, FilterSection } from './FilterPanel';
-import { toggleSortPopover } from './SortPopover';
 import { ConfirmModal } from './ConfirmModal';
 import { GameDetailModal, GameGroupDetailModal, gameGroupProgress } from './GameDetailModal';
 import { AddGameModal } from './AddGameModal';
@@ -78,10 +77,10 @@ export class GamesTab {
 	private filterWishlistOnly = false;
 	// hides standalone games, shows only groups
 	private filterGroupsOnly = false;
-	private filterSort = 'dateAdded';
-	private filterSortDir: 'asc' | 'desc' = 'desc';
-	private filterSecondSort = 'none';
-	private filterSecondSortDir: 'asc' | 'desc' = 'asc';
+	filterSort = 'dateAdded';
+	filterSortDir: 'asc' | 'desc' = 'desc';
+	filterSecondSort = 'none';
+	filterSecondSortDir: 'asc' | 'desc' = 'asc';
 
 	private savedFilterActive = false;
 	private savedFilterBtnEl: HTMLButtonElement | null = null;
@@ -1149,33 +1148,19 @@ export class GamesTab {
 	}
 
 	private renderSortingDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Sorting ▼' });
-
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			toggleSortPopover({
-				wrap,
-				anchor: btn,
-				registerCleanup: (fn) => this.activeCleanups.push(fn),
-				options: [
-					'Title', 'Date added', 'Progress', 'Playtime', 'Rating', 'Priority',
-					'Started', 'Status', 'Date finished', 'Release date',
-				],
-				labelToKey: (label) => this.sortLabelToKey(label),
-				defaultDirs: GamesTab.SORT_DEFAULT_DIR,
-				primary: { key: this.filterSort, dir: this.filterSortDir },
-				secondary: { key: this.filterSecondSort, dir: this.filterSecondSortDir },
-				onChange: (primary, secondary) => {
-					this.filterSort          = primary.key;
-					this.filterSortDir       = primary.dir;
-					this.filterSecondSort    = secondary.key;
-					this.filterSecondSortDir = secondary.dir;
-					this.saveFiltersToSettings();
-					// sorting only reorders content
-					this.renderContent();
-				},
-			});
+		renderSortingDropdown(parent, this, {
+			registerCleanup: (fn) => this.activeCleanups.push(fn),
+			options: [
+				'Title', 'Date added', 'Progress', 'Playtime', 'Rating', 'Priority',
+				'Started', 'Status', 'Date finished', 'Release date',
+			],
+			labelToKey: (label) => this.sortLabelToKey(label),
+			defaultDirs: GamesTab.SORT_DEFAULT_DIR,
+			onSorted: () => {
+				this.saveFiltersToSettings();
+				// sorting only reorders content
+				this.renderContent();
+			},
 		});
 	}
 

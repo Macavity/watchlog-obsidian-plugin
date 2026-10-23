@@ -1,5 +1,6 @@
 import { Modal, setIcon, type App } from 'obsidian';
 import type { ShelfSelect } from '../RowsView';
+import { toggleSortPopover, type SortState } from '../SortPopover';
 
 export interface SearchBoxOptions {
 	value: string;
@@ -218,3 +219,61 @@ export function renderAddButton(parent: HTMLElement, onClick: () => void): HTMLB
 export function refreshShelfSelects(refreshers: Array<() => void>): void {
 	for (const refresh of refreshers) refresh();
 }
+
+/** The sort fields a tab keeps (primary + optional secondary key with direction). */
+export interface SortFields {
+	filterSort: string;
+	filterSortDir: 'asc' | 'desc';
+	filterSecondSort: string;
+	filterSecondSortDir: 'asc' | 'desc';
+}
+
+export interface SortingDropdownOptions {
+	/** Display labels, in menu order. */
+	options: string[];
+	labelToKey: (label: string) => string;
+	defaultDirs: Record<string, 'asc' | 'desc'>;
+	/** Hands the tab a teardown for an open popover (its `activeCleanups`). */
+	registerCleanup: (fn: () => void) => void;
+	/** After the fields changed: persist and re-render. */
+	onSorted: () => void;
+}
+
+/** Reads the fields into the popover's state shape. */
+export function sortStateOf(f: SortFields): { primary: SortState; secondary: SortState } {
+	return {
+		primary: { key: f.filterSort, dir: f.filterSortDir },
+		secondary: { key: f.filterSecondSort, dir: f.filterSecondSortDir },
+	};
+}
+
+/** Writes a popover state back into the fields. */
+export function applySortState(f: SortFields, primary: SortState, secondary: SortState): void {
+	f.filterSort = primary.key;
+	f.filterSortDir = primary.dir;
+	f.filterSecondSort = secondary.key;
+	f.filterSecondSortDir = secondary.dir;
+}
+
+/** The "Sorting ▼" button; clicking toggles the shared sort popover under it. */
+export function renderSortingDropdown(parent: HTMLElement, fields: SortFields, opts: SortingDropdownOptions): void {
+	const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
+	const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Sorting ▼' });
+	btn.addEventListener('click', (e) => {
+		e.stopPropagation();
+		toggleSortPopover({
+			wrap,
+			anchor: btn,
+			registerCleanup: opts.registerCleanup,
+			options: opts.options,
+			labelToKey: opts.labelToKey,
+			defaultDirs: opts.defaultDirs,
+			...sortStateOf(fields),
+			onChange: (primary, secondary) => {
+				applySortState(fields, primary, secondary);
+				opts.onSorted();
+			},
+		});
+	});
+}
+

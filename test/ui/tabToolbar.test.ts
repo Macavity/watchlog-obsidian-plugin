@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
 	buildShelfSelect,
+	applySortState,
 	renderAddButton,
+	sortStateOf,
 	renderSelectionButtons,
 	renderToolbarCore,
 	syncSelectionClasses,
@@ -181,5 +183,33 @@ describe('selection class helpers', () => {
 		expect(toggleCardSelected(asEl(container), set, 'a', '.x')).toBe(false);
 		expect(set.has('a')).toBe(false);
 		expect(selected(card)).toBe(false);
+	});
+});
+
+describe('sort fields', () => {
+	const fields = () => ({
+		filterSort: 'dateAdded',
+		filterSortDir: 'desc' as const,
+		filterSecondSort: 'none',
+		filterSecondSortDir: 'asc' as const,
+	});
+
+	it('sortStateOf reads primary and secondary', () => {
+		expect(sortStateOf(fields())).toEqual({
+			primary: { key: 'dateAdded', dir: 'desc' },
+			secondary: { key: 'none', dir: 'asc' },
+		});
+	});
+
+	it('applySortState writes all four fields incl. directions', () => {
+		const f = fields();
+		applySortState(f, { key: 'rating', dir: 'asc' }, { key: 'title', dir: 'desc' });
+		expect(f).toEqual({
+			filterSort: 'rating',
+			filterSortDir: 'asc',
+			filterSecondSort: 'title',
+			filterSecondSortDir: 'desc',
+		});
+		expect(sortStateOf(f).secondary).toEqual({ key: 'title', dir: 'desc' });
 	});
 });

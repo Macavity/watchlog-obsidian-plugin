@@ -11,7 +11,7 @@ import { inferHistoryAction, inferHistorySource } from './HistoryManager';
 import { AddTitleModal } from './AddTitleModal';
 import { AddFromUrlModal } from './AddFromUrlModal';
 import { AddTitleChoiceModal } from './AddTitleChoiceModal';
-import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton } from './ui/TabToolbar';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown } from './ui/TabToolbar';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { EditTitleModal } from './EditTitleModal';
 import { ConfirmModal } from './ConfirmModal';
@@ -27,7 +27,6 @@ import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard'
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { RowsCustomizeModal } from './RowsCustomizeModal';
 import { toggleFilterPanel, FilterSection } from './FilterPanel';
-import { toggleSortPopover } from './SortPopover';
 
 
 type DisplayItem =
@@ -1311,33 +1310,19 @@ export class ListTab {
 	}
 
 	private renderSortingDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Sorting ▼' });
-
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			toggleSortPopover({
-				wrap,
-				anchor: btn,
-				registerCleanup: (fn) => this.activeCleanups.push(fn),
-				options: [
-					'Title', 'Date added', 'Progress', 'Rating', 'Priority',
-					'Started', 'Status', 'Date watched', 'Time left', 'Time watched',
-				],
-				labelToKey: (label) => this.sortLabelToKey(label),
-				defaultDirs: ListTab.SORT_DEFAULT_DIR,
-				primary: { key: this.filterSort, dir: this.filterSortDir },
-				secondary: { key: this.filterSecondSort, dir: this.filterSecondSortDir },
-				onChange: (primary, secondary) => {
-					this.filterSort          = primary.key;
-					this.filterSortDir       = primary.dir;
-					this.filterSecondSort    = secondary.key;
-					this.filterSecondSortDir = secondary.dir;
-					this.saveFiltersToSettings();
-					// sorting only reorders content
-					this.rerenderActiveView();
-				},
-			});
+		renderSortingDropdown(parent, this, {
+			registerCleanup: (fn) => this.activeCleanups.push(fn),
+			options: [
+				'Title', 'Date added', 'Progress', 'Rating', 'Priority',
+				'Started', 'Status', 'Date watched', 'Time left', 'Time watched',
+			],
+			labelToKey: (label) => this.sortLabelToKey(label),
+			defaultDirs: ListTab.SORT_DEFAULT_DIR,
+			onSorted: () => {
+				this.saveFiltersToSettings();
+				// sorting only reorders content
+				this.rerenderActiveView();
+			},
 		});
 	}
 
