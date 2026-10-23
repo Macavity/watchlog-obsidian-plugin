@@ -1,4 +1,4 @@
-import { Modal, Notice, TFile, setIcon } from 'obsidian';
+import { Notice, TFile, setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { GameDataManager } from './GameDataManager';
 import {
@@ -15,6 +15,7 @@ import { LazyCardObserver } from './LazyCardObserver';
 import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderGroupCollage } from './CollageUtil';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
+import { renderSearchBox, openRenameGroupPrompt } from './ui/TabToolbar';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { rawgResizedCover } from './ApiService';
 import { resolveGameCover, type GameCover } from './coverRefresh';
@@ -921,38 +922,12 @@ export class GamesTab {
 	}
 
 	private renderSearch(parent: HTMLElement): void {
-		// compact inline search inside the toolbar row (the Watchlist classes)
-		const searchWrap = parent.createDiv({ cls: 'wl-reading-search-wrap' });
-		const input = searchWrap.createEl('input', {
-			cls: 'wl-reading-search-input',
-			attr: { type: 'text', placeholder: 'Search title, developer, platform…' },
-		});
-		input.value = this.searchQuery;
-		renderSearchHelpButton(searchWrap, this.plugin.app, 'Games', () => this.searchFields());
-		// clear button — only while there is text
-		const clearBtn = searchWrap.createEl('button', {
-			cls: 'wl-search-clear',
-			attr: { type: 'button', 'aria-label': 'Clear search' },
-		});
-		setIcon(clearBtn, 'x');
-		const syncClear = () => clearBtn.toggleClass('is-visible', input.value.length > 0);
-		syncClear();
-		let searchDebounce = 0;
-		input.addEventListener('input', () => {
-			this.searchQuery = input.value;
-			syncClear();
-			window.clearTimeout(searchDebounce);
-			searchDebounce = window.setTimeout(() => {
-				this.renderContent();
-			}, 250);
-		});
-		clearBtn.addEventListener('click', () => {
-			window.clearTimeout(searchDebounce);
-			input.value = '';
-			this.searchQuery = '';
-			syncClear();
-			input.focus();
-			this.renderContent();
+		renderSearchBox(parent, {
+			value: this.searchQuery,
+			placeholder: 'Search title, developer, platform…',
+			help: (host) => renderSearchHelpButton(host, this.plugin.app, 'Games', () => this.searchFields()),
+			onChange: (q) => { this.searchQuery = q; },
+			onCommit: () => this.renderContent(),
 		});
 	}
 
@@ -1606,35 +1581,9 @@ export class GamesTab {
 	}
 
 	private openRenameGroupPrompt(group: GameGroup): void {
-		const modal = new Modal(this.plugin.app);
-		modal.titleEl.setText('Rename group');
-		const input = modal.contentEl.createEl('input', {
-			cls: 'wl-input',
-			attr: { type: 'text', value: group.name, placeholder: 'Group name' },
+		openRenameGroupPrompt(this.plugin.app, group.name, (name) => {
+			void this.gameData.updateGroup({ ...group, name });
 		});
-		const btnRow = modal.contentEl.createDiv({ cls: 'wl-modal-btn-row' });
-		const submit = (): void => {
-			const newName = input.value.trim();
-			if (newName && newName !== group.name) {
-				void this.gameData.updateGroup({ ...group, name: newName });
-			}
-			modal.close();
-		};
-		btnRow
-			.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' })
-			.addEventListener('click', submit);
-		btnRow
-			.createEl('button', { cls: 'wl-btn', text: 'Cancel' })
-			.addEventListener('click', () => modal.close());
-		input.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter') submit();
-			else if (e.key === 'Escape') modal.close();
-		});
-		modal.open();
-		window.setTimeout(() => {
-			input.focus();
-			input.select();
-		}, 0);
 	}
 
 	private openDetailModal(game: Game): void {

@@ -1,4 +1,4 @@
-import { Modal, setIcon } from 'obsidian';
+import { setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, TagDefinition, SavedFilterPreset, Season } from './types';
@@ -11,6 +11,7 @@ import { inferHistoryAction, inferHistorySource } from './HistoryManager';
 import { AddTitleModal } from './AddTitleModal';
 import { AddFromUrlModal } from './AddFromUrlModal';
 import { AddTitleChoiceModal } from './AddTitleChoiceModal';
+import { renderSearchBox, openRenameGroupPrompt } from './ui/TabToolbar';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { EditTitleModal } from './EditTitleModal';
 import { ConfirmModal } from './ConfirmModal';
@@ -966,37 +967,9 @@ export class ListTab {
 	}
 
 	private openRenameGroupPrompt(group: WatchLogGroup): void {
-		const modal = new Modal(this.plugin.app);
-		modal.titleEl.setText('Rename group');
-		const input = modal.contentEl.createEl('input', {
-			cls: 'wl-input',
-			attr: { type: 'text', value: group.name, placeholder: 'Group name' },
+		openRenameGroupPrompt(this.plugin.app, group.name, (name) => {
+			void this.dataManager.updateGroup({ ...group, name }).then(() => this.render());
 		});
-		const btnRow = modal.contentEl.createDiv({ cls: 'wl-modal-btn-row' });
-		const submit = (): void => {
-			const newName = input.value.trim();
-			if (newName && newName !== group.name) {
-				void this.dataManager
-					.updateGroup({ ...group, name: newName })
-					.then(() => this.render());
-			}
-			modal.close();
-		};
-		btnRow
-			.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' })
-			.addEventListener('click', submit);
-		btnRow
-			.createEl('button', { cls: 'wl-btn', text: 'Cancel' })
-			.addEventListener('click', () => modal.close());
-		input.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter') submit();
-			else if (e.key === 'Escape') modal.close();
-		});
-		modal.open();
-		window.setTimeout(() => {
-			input.focus();
-			input.select();
-		}, 0);
 	}
 
 	private openEditModalForTitle(titleId: string): void {
@@ -1610,38 +1583,12 @@ export class ListTab {
 	// Search & controls
 
 	private renderSearch(parent: HTMLElement): void {
-		// compact inline search, reusing Reading's classes
-		const searchWrap = parent.createDiv({ cls: 'wl-reading-search-wrap' });
-		const input = searchWrap.createEl('input', {
-			cls: 'wl-reading-search-input',
-			attr: { type: 'text', placeholder: 'Search titles, cast, studio…' },
-		});
-		input.value = this.searchQuery;
-		renderSearchHelpButton(searchWrap, this.plugin.app, 'Watchlist', () => this.searchFields());
-		// clear button — only while there is text
-		const clearBtn = searchWrap.createEl('button', {
-			cls: 'wl-search-clear',
-			attr: { type: 'button', 'aria-label': 'Clear search' },
-		});
-		setIcon(clearBtn, 'x');
-		const syncClear = () => clearBtn.toggleClass('is-visible', input.value.length > 0);
-		syncClear();
-		let searchDebounce = 0;
-		input.addEventListener('input', () => {
-			this.searchQuery = input.value;
-			syncClear();
-			window.clearTimeout(searchDebounce);
-			searchDebounce = window.setTimeout(() => {
-				this.rerenderActiveView();
-			}, 250);
-		});
-		clearBtn.addEventListener('click', () => {
-			window.clearTimeout(searchDebounce);
-			input.value = '';
-			this.searchQuery = '';
-			syncClear();
-			input.focus();
-			this.rerenderActiveView();
+		renderSearchBox(parent, {
+			value: this.searchQuery,
+			placeholder: 'Search titles, cast, studio…',
+			help: (host) => renderSearchHelpButton(host, this.plugin.app, 'Watchlist', () => this.searchFields()),
+			onChange: (q) => { this.searchQuery = q; },
+			onCommit: () => this.rerenderActiveView(),
 		});
 	}
 
