@@ -3,7 +3,11 @@ import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { MaybeTitle, AnimeSearchResult, MediaSearchResult } from './types';
 import { formatDateDisplay, getApiGroupForType } from './types';
-import { createDatePicker } from './DatePicker';
+import {
+	renderMediaFields,
+	resetForm,
+	type MediaFields,
+} from './ui/FormCells';
 import { apiErrorMessage, SEARCH_PAGE_SIZE, SEARCH_RESULT_LIMIT } from './ApiService';
 
 type SearchResult = AnimeSearchResult | MediaSearchResult;
@@ -26,14 +30,10 @@ export class MaybeAddModal extends Modal {
 	private searchGeneration = 0;
 	private searchError = '';
 
-	private fieldTitle = '';
-	private fieldEpisodes = 0;
-	private fieldDuration = 0;
-	private fieldReleaseDate = '';
-	private fieldLink = '';
 
 	private resultsEl: HTMLElement | null = null;
 	private pagerEl: HTMLElement | null = null;
+	private media: MediaFields = { title: '', episodes: 0, duration: 0, releaseDate: '', link: '' };
 	private formEl: HTMLElement | null = null;
 	private searchDebounce: number | null = null;
 
@@ -212,83 +212,49 @@ export class MaybeAddModal extends Modal {
 			if (!isAnimeResult(result) && result.mediaType === 'tv') {
 				const full = activeApi === 'TMDB' ? await api.getTmdbTvDetails(result.imdbId) : await api.getOmdbTvDetails(result.imdbId);
 				if (gen !== this.searchGeneration) return;
-				if (full) { this.fieldTitle = full.title; this.fieldEpisodes = full.episodes; this.fieldDuration = full.episodeDuration; this.fieldReleaseDate = full.releaseDate; this.fieldLink = full.url; }
+				if (full) { this.media.title = full.title; this.media.episodes = full.episodes; this.media.duration = full.episodeDuration; this.media.releaseDate = full.releaseDate; this.media.link = full.url; }
 			} else if (!isAnimeResult(result) && result.mediaType === 'movie') {
 				const full = activeApi === 'TMDB' ? await api.getTmdbMovieDetails(result.imdbId) : await api.getOmdbMovieDetails(result.imdbId);
 				if (gen !== this.searchGeneration) return;
-				if (full) { this.fieldTitle = full.title; this.fieldEpisodes = full.episodes; this.fieldDuration = full.episodeDuration; this.fieldReleaseDate = full.releaseDate; this.fieldLink = full.url; }
+				if (full) { this.media.title = full.title; this.media.episodes = full.episodes; this.media.duration = full.episodeDuration; this.media.releaseDate = full.releaseDate; this.media.link = full.url; }
 			} else {
 				const anime = result as AnimeSearchResult;
-				this.fieldTitle = anime.title; this.fieldEpisodes = anime.episodes; this.fieldDuration = anime.duration;
-				this.fieldReleaseDate = anime.releaseDate; this.fieldLink = anime.url;
+				this.media.title = anime.title; this.media.episodes = anime.episodes; this.media.duration = anime.duration;
+				this.media.releaseDate = anime.releaseDate; this.media.link = anime.url;
 			}
 		} catch {
 			if (gen !== this.searchGeneration) return;
-			this.fieldTitle = result.title;
-			this.fieldEpisodes = result.episodes;
-			this.fieldDuration = isAnimeResult(result) ? result.duration : result.episodeDuration;
-			this.fieldReleaseDate = result.releaseDate; this.fieldLink = result.url;
+			this.media.title = result.title;
+			this.media.episodes = result.episodes;
+			this.media.duration = isAnimeResult(result) ? result.duration : result.episodeDuration;
+			this.media.releaseDate = result.releaseDate; this.media.link = result.url;
 		}
 		if (gen !== this.searchGeneration) return;
 		this.renderForm();
 	}
 
 	private renderForm(): void {
-		if (!this.formEl) return;
-		this.formEl.empty();
-		const makeRow = (label: string): HTMLElement => {
-			const row = this.formEl!.createDiv({ cls: 'wl-modal-row' });
-			row.createSpan({ cls: 'wl-modal-label', text: label });
-			return row;
-		};
+		const form = resetForm(this.formEl);
+		if (!form) return;
+		renderMediaFields(form, this.media, false);
 
-		const titleRow = makeRow('Title');
-		const titleInput = titleRow.createEl('input', { cls: 'wl-modal-input', attr: { type: 'text', placeholder: 'Title name' } });
-		titleInput.value = this.fieldTitle;
-		titleInput.addEventListener('input', () => { this.fieldTitle = titleInput.value; });
-
-		const epsRow = makeRow('Episodes');
-		const epsInput = epsRow.createEl('input', { cls: 'wl-modal-input wl-modal-input-sm', attr: { type: 'number', min: '0', placeholder: '0' } });
-		epsInput.value = String(this.fieldEpisodes);
-		epsInput.addEventListener('input', () => { this.fieldEpisodes = parseInt(epsInput.value, 10) || 0; });
-
-		const durRow = makeRow('Ep. duration (min)');
-		const durInput = durRow.createEl('input', { cls: 'wl-modal-input wl-modal-input-sm', attr: { type: 'number', min: '0', placeholder: '24' } });
-		durInput.value = String(this.fieldDuration);
-		durInput.addEventListener('input', () => { this.fieldDuration = parseInt(durInput.value, 10) || 0; });
-
-		const relRow = makeRow('Release date');
-		const relStack = relRow.createDiv({ cls: 'wl-modal-input-stack' });
-		createDatePicker({
-			parent: relStack,
-			inputCls: 'wl-modal-input',
-			value: this.fieldReleaseDate || null,
-			lenient: true,
-			onChange: (iso) => { this.fieldReleaseDate = iso ?? ''; },
-		});
-
-		const linkRow = makeRow('External link');
-		const linkInput = linkRow.createEl('input', { cls: 'wl-modal-input', attr: { type: 'url', placeholder: 'https://example.com' } });
-		linkInput.value = this.fieldLink;
-		linkInput.addEventListener('input', () => { this.fieldLink = linkInput.value; });
-
-		const btnRow = this.formEl.createDiv({ cls: 'wl-modal-btn-row' });
+		const btnRow = form.createDiv({ cls: 'wl-modal-btn-row' });
 		const addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add to maybe' });
 		addBtn.addEventListener('click', () => void this.addMaybeTitle());
 	}
 
 	private async addMaybeTitle(): Promise<void> {
-		const titleName = this.fieldTitle.trim();
+		const titleName = this.media.title.trim();
 		if (!titleName) { new Notice('Please enter a title name.'); return; }
 
 		const entry: MaybeTitle = {
 			id: this.dataManager.generateMaybeId(titleName),
 			title: titleName,
 			type: this.selectedType,
-			releaseDate: this.fieldReleaseDate || null,
-			externalLink: this.fieldLink,
-			totalEpisodes: this.fieldEpisodes,
-			episodeDuration: this.fieldDuration,
+			releaseDate: this.media.releaseDate || null,
+			externalLink: this.media.link,
+			totalEpisodes: this.media.episodes,
+			episodeDuration: this.media.duration,
 			dateAdded: new Date().toISOString(),
 		};
 		await this.dataManager.addMaybeTitle(entry);
