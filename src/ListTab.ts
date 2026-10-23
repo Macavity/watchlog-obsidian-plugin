@@ -11,7 +11,7 @@ import { inferHistoryAction, inferHistorySource } from './HistoryManager';
 import { AddTitleModal } from './AddTitleModal';
 import { AddFromUrlModal } from './AddFromUrlModal';
 import { AddTitleChoiceModal } from './AddTitleChoiceModal';
-import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown, renderViewDropdown } from './ui/TabToolbar';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown, renderViewDropdown, type SortFields } from './ui/TabToolbar';
 import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
 import { renderGroupCard } from './ui/GroupCard';
 import { PRIORITY_ORDER, pickRandom, compareUnsetLast, comparePriority, isRecentlyReleased } from './ui/TabHelpers';
@@ -52,10 +52,9 @@ export class ListTab {
 	filterPriorityExclude: Set<string> = new Set();
 	filterRatingExclude: Set<string> = new Set();
 	filterGroupExclude: Set<string> = new Set();
-	filterSort = 'dateAdded';
-	filterSortDir: 'asc' | 'desc' = 'desc';
-	filterSecondSort = 'none';
-	filterSecondSortDir: 'asc' | 'desc' = 'asc';
+	private readonly sort: SortFields = {
+		filterSort: 'dateAdded', filterSortDir: 'desc', filterSecondSort: 'none', filterSecondSortDir: 'asc',
+	};
 	searchQuery = '';
 	expandedId: string | null = null;
 	collapsedSeasons: Set<number> = new Set();
@@ -141,11 +140,11 @@ export class ListTab {
 				plugin.settings.priorities,
 			);
 			const ms = ListTab.migrateSortKey(saved.sort ?? 'dateAdded-newest');
-			this.filterSort     = ms.key;
-			this.filterSortDir  = saved.sortDir ?? ms.dir;
+			this.sort.filterSort     = ms.key;
+			this.sort.filterSortDir  = saved.sortDir ?? ms.dir;
 			const ms2 = ListTab.migrateSortKey(saved.secondSort ?? 'none');
-			this.filterSecondSort    = ms2.key;
-			this.filterSecondSortDir = saved.secondSortDir ?? ms2.dir;
+			this.sort.filterSecondSort    = ms2.key;
+			this.sort.filterSecondSortDir = saved.secondSortDir ?? ms2.dir;
 			this.filterRatingEmptyOnly      = saved.ratingEmptyOnly      ?? false;
 			this.filterRecentlyArrivedOnly  = saved.recentlyArrivedOnly  ?? false;
 			this.filterGroupsOnly           = saved.groupsOnly           ?? false;
@@ -190,10 +189,10 @@ export class ListTab {
 			groupExclude:    Array.from(this.filterGroupExclude),
 			ratingExclude:   Array.from(this.filterRatingExclude),
 			priorityExclude: Array.from(this.filterPriorityExclude),
-			sort:          this.filterSort,
-			sortDir:       this.filterSortDir,
-			secondSort:    this.filterSecondSort,
-			secondSortDir: this.filterSecondSortDir,
+			sort:          this.sort.filterSort,
+			sortDir:       this.sort.filterSortDir,
+			secondSort:    this.sort.filterSecondSort,
+			secondSortDir: this.sort.filterSecondSortDir,
 			ratingEmptyOnly:       this.filterRatingEmptyOnly,
 			recentlyArrivedOnly:   this.filterRecentlyArrivedOnly,
 			groupsOnly:            this.filterGroupsOnly,
@@ -1193,7 +1192,7 @@ export class ListTab {
 	}
 
 	private renderSortingDropdown(parent: HTMLElement): void {
-		renderSortingDropdown(parent, this, {
+		renderSortingDropdown(parent, this.sort, {
 			registerCleanup: (fn) => this.activeCleanups.push(fn),
 			options: [
 				'Title', 'Date added', 'Progress', 'Rating', 'Priority',
@@ -1820,10 +1819,10 @@ export class ListTab {
 	}
 
 	private compareDisplayItems(a: DisplayItem, b: DisplayItem): number {
-		const primaryKey = ListTab.sortBaseAndDirToKey(this.filterSort, this.filterSortDir);
+		const primaryKey = ListTab.sortBaseAndDirToKey(this.sort.filterSort, this.sort.filterSortDir);
 		const primary = this.compareDisplayItemsByKey(primaryKey, a, b);
-		if (primary !== 0 || this.filterSecondSort === 'none') return primary;
-		const secondKey = ListTab.sortBaseAndDirToKey(this.filterSecondSort, this.filterSecondSortDir);
+		if (primary !== 0 || this.sort.filterSecondSort === 'none') return primary;
+		const secondKey = ListTab.sortBaseAndDirToKey(this.sort.filterSecondSort, this.sort.filterSecondSortDir);
 		return this.compareDisplayItemsByKey(secondKey, a, b);
 	}
 
@@ -2705,10 +2704,10 @@ export class ListTab {
 	 * grids, which sort within each section.
 	 */
 	private sortTitlesByCurrentSort(titles: WatchLogTitle[]): WatchLogTitle[] {
-		const primaryKey = ListTab.sortBaseAndDirToKey(this.filterSort, this.filterSortDir);
-		const secondKey = this.filterSecondSort === 'none'
+		const primaryKey = ListTab.sortBaseAndDirToKey(this.sort.filterSort, this.sort.filterSortDir);
+		const secondKey = this.sort.filterSecondSort === 'none'
 			? 'none'
-			: ListTab.sortBaseAndDirToKey(this.filterSecondSort, this.filterSecondSortDir);
+			: ListTab.sortBaseAndDirToKey(this.sort.filterSecondSort, this.sort.filterSecondSortDir);
 		return [...titles].sort((a, b) => {
 			const primary = this.compareTitlesByKey(primaryKey, a, b);
 			if (primary !== 0 || secondKey === 'none') return primary;

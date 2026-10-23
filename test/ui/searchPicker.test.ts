@@ -1,51 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createSearchPicker, type SearchPickerConfig } from '../../src/ui/SearchPicker';
-
-/** Minimal element double: only what SearchPicker touches. */
-class El {
-	children: El[] = [];
-	classes = new Set<string>();
-	listeners = new Map<string, Array<() => void>>();
-	dataset: Record<string, string> = {};
-	text = '';
-	value = '';
-	disabled = false;
-	attr: Record<string, string> = {};
-	scrolled = false;
-
-	constructor(public tag = 'div', opts: { cls?: string; text?: string; attr?: Record<string, string> } = {}) {
-		for (const c of (opts.cls ?? '').split(' ').filter(Boolean)) this.classes.add(c);
-		this.text = opts.text ?? '';
-		this.attr = opts.attr ?? {};
-	}
-	createDiv(opts?: { cls?: string; text?: string }): El { return this.createEl('div', opts); }
-	createSpan(opts?: { cls?: string; text?: string }): El { return this.createEl('span', opts); }
-	createEl(tag: string, opts?: { cls?: string; text?: string; attr?: Record<string, string> }): El {
-		const el = new El(tag, opts);
-		this.children.push(el);
-		return el;
-	}
-	addEventListener(type: string, fn: () => void): void {
-		this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn]);
-	}
-	fire(type: string): void { for (const fn of this.listeners.get(type) ?? []) fn(); }
-	empty(): void { this.children = []; }
-	addClass(c: string): void { this.classes.add(c); }
-	removeClass(c: string): void { this.classes.delete(c); }
-	scrollTo(): void { this.scrolled = true; }
-	has(c: string): boolean { return this.classes.has(c); }
-	find(c: string): El | undefined {
-		for (const child of this.children) {
-			if (child.has(c)) return child;
-			const hit = child.find(c);
-			if (hit) return hit;
-		}
-		return undefined;
-	}
-	findAll(c: string): El[] {
-		return this.children.flatMap((ch) => [...(ch.has(c) ? [ch] : []), ...ch.findAll(c)]);
-	}
-}
+import { El } from '../helpers/fakeEl';
 
 const flush = async (): Promise<void> => { await Promise.resolve(); await Promise.resolve(); };
 
@@ -211,6 +166,18 @@ describe('SearchPicker', () => {
 		await picker.search();
 		picker.reset();
 		expect(results.children).toHaveLength(0);
+	});
+
+	it('reset supersedes an in-flight search', async () => {
+		const pending: Array<(v: string[]) => void> = [];
+		const { picker, results, type } = setup({ search: () => new Promise((r) => { pending.push(r); }) });
+		type('a');
+		const inflight = picker.search();
+		picker.reset();
+		expect(results.find('wl-modal-loading')).toBeUndefined();
+		pending[0]!(['stale']);
+		await inflight;
+		expect(results.findAll('wl-result-item')).toHaveLength(0);
 	});
 
 	it('highlights the selection and invalidates it on the next search', async () => {

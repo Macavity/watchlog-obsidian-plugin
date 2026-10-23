@@ -157,6 +157,7 @@ describe('resolvePick', () => {
 		expect(await resolvePick(plugin, row, () => true, apply)).toBe(true);
 		expect(apply.mock.calls[0]![0]).toMatchObject({ title: 'Row', duration: 99, cast: ['C'] });
 		expect(await resolvePick(plugin, row, () => false, apply)).toBe(false);
+		expect(apply).toHaveBeenCalledTimes(1); // a stale failure must not touch the form either
 	});
 });
 

@@ -15,7 +15,8 @@ function showWarning(
 	text: string,
 	retry: () => void,
 ): void {
-	if (guard.warningEl) return;
+	// a form re-render drops the warning element without clearing the reference
+	if (guard.warningEl?.isConnected) return;
 	const warn = btnRow.createDiv({ cls: 'wl-duplicate-warning' });
 	guard.warningEl = warn;
 	warn.createSpan({ text });

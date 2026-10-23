@@ -138,7 +138,10 @@ export function createSearchPicker<R>(config: SearchPickerConfig<R>): SearchPick
 		}
 	}
 
+	/** Clears the panel and supersedes any search still in flight. */
 	function reset(): void {
+		generation++;
+		isSearching = false;
 		results = [];
 		noApi = '';
 		error = '';

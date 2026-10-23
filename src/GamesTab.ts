@@ -14,7 +14,7 @@ import { VirtualScroller } from './VirtualScroller';
 import { LazyCardObserver } from './LazyCardObserver';
 import { buildPosterCard, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
-import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown } from './ui/TabToolbar';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown, type SortFields } from './ui/TabToolbar';
 import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
 import { renderGroupCard } from './ui/GroupCard';
 import { PRIORITY_ORDER, pickRandom, compareUnsetLast, comparePriority, isRecentlyReleased } from './ui/TabHelpers';
@@ -68,10 +68,9 @@ export class GamesTab {
 	private filterWishlistOnly = false;
 	// hides standalone games, shows only groups
 	private filterGroupsOnly = false;
-	filterSort = 'dateAdded';
-	filterSortDir: 'asc' | 'desc' = 'desc';
-	filterSecondSort = 'none';
-	filterSecondSortDir: 'asc' | 'desc' = 'asc';
+	private readonly sort: SortFields = {
+		filterSort: 'dateAdded', filterSortDir: 'desc', filterSecondSort: 'none', filterSecondSortDir: 'asc',
+	};
 
 	private savedFilterActive = false;
 	private savedFilterBtnEl: HTMLButtonElement | null = null;
@@ -106,10 +105,10 @@ export class GamesTab {
 			);
 			this.filterPlatformExclude = new Set(saved.platformExclude ?? []);
 			this.filterGroupExclude    = new Set(saved.groupExclude    ?? []);
-			this.filterSort          = saved.sort ?? 'dateAdded';
-			this.filterSortDir       = saved.sortDir ?? 'desc';
-			this.filterSecondSort    = saved.secondSort ?? 'none';
-			this.filterSecondSortDir = saved.secondSortDir ?? 'asc';
+			this.sort.filterSort          = saved.sort ?? 'dateAdded';
+			this.sort.filterSortDir       = saved.sortDir ?? 'desc';
+			this.sort.filterSecondSort    = saved.secondSort ?? 'none';
+			this.sort.filterSecondSortDir = saved.secondSortDir ?? 'asc';
 			this.filterRatingEmptyOnly     = saved.ratingEmptyOnly     ?? false;
 			this.filterRecentlyArrivedOnly = saved.recentlyArrivedOnly ?? false;
 			this.filterFavoritesOnly       = saved.favoritesOnly       ?? false;
@@ -170,10 +169,10 @@ export class GamesTab {
 			priorityExclude: Array.from(this.filterPriorityExclude),
 			platformExclude: Array.from(this.filterPlatformExclude),
 			groupExclude:    Array.from(this.filterGroupExclude),
-			sort:          this.filterSort,
-			sortDir:       this.filterSortDir,
-			secondSort:    this.filterSecondSort,
-			secondSortDir: this.filterSecondSortDir,
+			sort:          this.sort.filterSort,
+			sortDir:       this.sort.filterSortDir,
+			secondSort:    this.sort.filterSecondSort,
+			secondSortDir: this.sort.filterSecondSortDir,
 			ratingEmptyOnly:     this.filterRatingEmptyOnly,
 			recentlyArrivedOnly: this.filterRecentlyArrivedOnly,
 			favoritesOnly:       this.filterFavoritesOnly,
@@ -383,10 +382,10 @@ export class GamesTab {
 	 */
 	private sortGames(list: Game[]): Game[] {
 		return [...list].sort((a, b) => {
-			const primary = this.compareGamesByKey(this.filterSort, this.filterSortDir, a, b);
+			const primary = this.compareGamesByKey(this.sort.filterSort, this.sort.filterSortDir, a, b);
 			if (primary !== 0) return primary;
-			if (this.filterSecondSort !== 'none') {
-				return this.compareGamesByKey(this.filterSecondSort, this.filterSecondSortDir, a, b);
+			if (this.sort.filterSecondSort !== 'none') {
+				return this.compareGamesByKey(this.sort.filterSecondSort, this.sort.filterSecondSortDir, a, b);
 			}
 			return 0;
 		});
@@ -419,10 +418,10 @@ export class GamesTab {
 			...topLevel.map((g) => ({ kind: 'game' as const, data: g })),
 		];
 		items.sort((a, b) => {
-			const primary = this.compareItemsByKey(this.filterSort, this.filterSortDir, a, b);
+			const primary = this.compareItemsByKey(this.sort.filterSort, this.sort.filterSortDir, a, b);
 			if (primary !== 0) return primary;
-			if (this.filterSecondSort !== 'none') {
-				return this.compareItemsByKey(this.filterSecondSort, this.filterSecondSortDir, a, b);
+			if (this.sort.filterSecondSort !== 'none') {
+				return this.compareItemsByKey(this.sort.filterSecondSort, this.sort.filterSecondSortDir, a, b);
 			}
 			return 0;
 		});
@@ -1045,7 +1044,7 @@ export class GamesTab {
 	}
 
 	private renderSortingDropdown(parent: HTMLElement): void {
-		renderSortingDropdown(parent, this, {
+		renderSortingDropdown(parent, this.sort, {
 			registerCleanup: (fn) => this.activeCleanups.push(fn),
 			options: [
 				'Title', 'Date added', 'Progress', 'Playtime', 'Rating', 'Priority',
