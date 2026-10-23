@@ -15,7 +15,7 @@ import { LazyCardObserver } from './LazyCardObserver';
 import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderGroupCollage } from './CollageUtil';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
-import { renderSearchBox, openRenameGroupPrompt } from './ui/TabToolbar';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton } from './ui/TabToolbar';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { rawgResizedCover } from './ApiService';
 import { resolveGameCover, type GameCover } from './coverRefresh';
@@ -213,6 +213,13 @@ export class GamesTab {
 		this.filterFavoritesOnly       = false;
 		this.filterWishlistOnly        = false;
 		this.filterGroupsOnly          = false;
+	}
+
+	/** Applies the stored preset and persists it as the active filter. */
+	private activatePreset(preset: GamesSavedFilterPreset): void {
+		this.applyPreset(preset);
+		this.savedFilterActive = true;
+		this.saveFiltersToSettings();
 	}
 
 	private applyPreset(preset: GamesSavedFilterPreset): void {
@@ -945,66 +952,42 @@ export class GamesTab {
 	private renderToolbarActions(controls: HTMLElement): void {
 		// saved filter preset (only when one is stored)
 		const preset = this.gameData.getSavedFilterPreset();
-		if (preset) {
-			const savedBtn = controls.createEl('button', {
-				cls: `wl-btn wl-btn-sm${this.savedFilterActive ? ' wl-btn-preset-active' : ''}`,
-				text: 'Saved filter',
-			});
-			this.savedFilterBtnEl = savedBtn;
-			savedBtn.addEventListener('click', () => {
-				this.applyPreset(preset);
-				this.savedFilterActive = true;
-				this.saveFiltersToSettings();
-				this.refreshToolbarActions();
-				this.renderContent();
-			});
-		} else {
-			this.savedFilterBtnEl = null;
-		}
-
-		this.renderFiltersDropdown(controls);
-
-		this.renderSortingDropdown(controls);
-
-		// action bar — selection mode with items selected
-		if (this.selectionMode && this.selectedIds.size > 0) {
-			this.renderActionBar(controls);
-		}
-
-		if (this.selectionMode) {
-			const hasAny = this.selectedIds.size > 0;
-			const selAllBtn = controls.createEl('button', { cls: 'wl-btn wl-btn-sm', text: hasAny ? 'None' : 'All' });
-			selAllBtn.title = hasAny ? 'Deselect all' : 'Select all visible';
-			selAllBtn.addEventListener('click', () => {
-				if (this.selectedIds.size > 0) {
-					this.selectedIds.clear();
-				} else {
-					for (const item of this.getDisplayItems()) {
-						this.selectedIds.add(item.data.id);
+		this.savedFilterBtnEl = renderToolbarCore(controls, {
+			preset: preset && {
+				active: this.savedFilterActive,
+				onApply: () => {
+					this.activatePreset(preset);
+					this.refreshToolbarActions();
+					this.renderContent();
+				},
+			},
+			renderFilters: (parent) => this.renderFiltersDropdown(parent),
+			renderSorting: (parent) => this.renderSortingDropdown(parent),
+			// action bar — selection mode with items selected
+			renderActionBar: this.selectionMode && this.selectedIds.size > 0
+				? (parent) => this.renderActionBar(parent)
+				: undefined,
+			selection: {
+				selectionMode: this.selectionMode,
+				hasSelection: this.selectedIds.size > 0,
+				onToggleAll: () => {
+					if (this.selectedIds.size > 0) {
+						this.selectedIds.clear();
+					} else {
+						for (const item of this.getDisplayItems()) {
+							this.selectedIds.add(item.data.id);
+						}
 					}
-				}
-				this.refreshToolbarActions();
-				this.syncCardSelectionClasses();
-			});
-		}
-
-		// in selection mode the button is the way out — red Cancel
-		const selBtn = controls.createEl('button', {
-			cls: `wl-btn wl-btn-sm${this.selectionMode ? ' wl-btn-cancel' : ''}`,
-			text: this.selectionMode ? 'Cancel' : 'Select',
-		});
-		selBtn.addEventListener('click', () => {
-			this.setSelectionMode(!this.selectionMode);
+					this.refreshToolbarActions();
+					this.syncCardSelectionClasses();
+				},
+				onToggleMode: () => this.setSelectionMode(!this.selectionMode),
+			},
 		});
 
 		// add button, far right on the toolbar row
 		const rightGroup = controls.createDiv({ cls: 'wl-header-controls-right' });
-		const addBtnWrap = rightGroup.createDiv({ cls: 'wl-add-btn-wrap' });
-		const addBtn = addBtnWrap.createEl('button', { cls: 'wl-add-btn wl-btn-success', text: '+ add' });
-		addBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			this.openAddPrompt();
-		});
+		renderAddButton(rightGroup, () => this.openAddPrompt());
 	}
 
 	private renderFiltersDropdown(parent: HTMLElement): void {
@@ -1214,33 +1197,16 @@ export class GamesTab {
 	 * the box out of the header. Ids, not DOM: the grid sections are virtualised.
 	 */
 	private shelfSelect(ids: string[]): ShelfSelect | undefined {
-		if (!this.selectionMode) return undefined;
-		return {
-			ids,
-			selected: this.selectedIds,
-			onToggle: (sectionIds, selectAll) => {
-				for (const id of sectionIds) {
-					if (selectAll) { this.selectedIds.add(id); } else { this.selectedIds.delete(id); }
-				}
-				this.syncCardSelectionClasses();
-				this.refreshToolbarActions();
-			},
-			register: (refresh) => this.shelfSelectRefreshers.push(refresh),
-		};
-	}
-
-	/** A game can sit in several sections, so every header box re-reads the set. */
-	private refreshShelfSelects(): void {
-		for (const refresh of this.shelfSelectRefreshers) refresh();
+		return buildShelfSelect(this.selectionMode, ids, this.selectedIds, this.shelfSelectRefreshers, () => {
+			this.syncCardSelectionClasses();
+			this.refreshToolbarActions();
+		});
 	}
 
 	/** Applies/removes wl-card-selected on every currently rendered card. */
 	private syncCardSelectionClasses(): void {
-		this.container.querySelectorAll<HTMLElement>('.wl-card').forEach((card) => {
-			const id = card.dataset.gameId ?? card.dataset.groupId;
-			card.classList.toggle('wl-card-selected', !!id && this.selectedIds.has(id));
-		});
-		this.refreshShelfSelects();
+		syncSelectionClasses(this.container, this.selectedIds, (card) => card.dataset.gameId ?? card.dataset.groupId);
+		refreshShelfSelects(this.shelfSelectRefreshers);
 	}
 
 	/**
@@ -1248,17 +1214,14 @@ export class GamesTab {
 	 * every instance of the id is synced.
 	 */
 	private toggleCardSelection(card: HTMLElement, id: string): void {
-		if (this.selectedIds.has(id)) {
-			this.selectedIds.delete(id);
-		} else {
-			this.selectedIds.add(id);
-		}
-		const selected = this.selectedIds.has(id);
 		const esc = CSS.escape(id);
-		this.container
-			.querySelectorAll<HTMLElement>(`.wl-card[data-game-id="${esc}"], .wl-card[data-group-id="${esc}"]`)
-			.forEach((el) => el.classList.toggle('wl-card-selected', selected));
-		this.refreshShelfSelects();
+		toggleCardSelected(
+			this.container,
+			this.selectedIds,
+			id,
+			`.wl-card[data-game-id="${esc}"], .wl-card[data-group-id="${esc}"]`,
+		);
+		refreshShelfSelects(this.shelfSelectRefreshers);
 		this.refreshToolbarActions();
 	}
 

@@ -25,6 +25,7 @@ import { MaybeAddModal } from './MaybeAddModal';
 import { ReadingScheduleModal } from './ReadingScheduleModal';
 import { GameScheduleModal } from './GameScheduleModal';
 import { UpcomingFinderModal, type UpcomingFinderItem } from './UpcomingFinderModal';
+import { renderAddButton } from './ui/TabToolbar';
 
 /**
  * A normalized Upcoming card subject — a watchlist title, a reading item or a game — so the
@@ -494,10 +495,7 @@ export class AirtimeTab {
 		}
 		const controls = headerEl.createDiv({ cls: 'wl-header-controls' });
 		const rightGroup = controls.createDiv({ cls: 'wl-header-controls-right' });
-		const addBtnWrap = rightGroup.createDiv({ cls: 'wl-add-btn-wrap' });
-		const addBtn = addBtnWrap.createEl('button', { cls: 'wl-add-btn wl-btn-success', text: '+ add' });
-		addBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
+		renderAddButton(rightGroup, () => {
 			new MaybeAddModal(this.plugin.app, this.plugin, this.dataManager, () => this.render()).open();
 		});
 

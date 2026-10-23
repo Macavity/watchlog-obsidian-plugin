@@ -11,7 +11,7 @@ import { inferHistoryAction, inferHistorySource } from './HistoryManager';
 import { AddTitleModal } from './AddTitleModal';
 import { AddFromUrlModal } from './AddFromUrlModal';
 import { AddTitleChoiceModal } from './AddTitleChoiceModal';
-import { renderSearchBox, openRenameGroupPrompt } from './ui/TabToolbar';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton } from './ui/TabToolbar';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { EditTitleModal } from './EditTitleModal';
 import { ConfirmModal } from './ConfirmModal';
@@ -220,6 +220,13 @@ export class ListTab {
 		this.filterRecentlyArrivedOnly  = false;
 		this.filterGroupsOnly           = false;
 		this.filterFavoritesOnly        = false;
+	}
+
+	/** Applies the stored preset and persists it as the active filter. */
+	private activatePreset(preset: SavedFilterPreset): void {
+		this.applyPreset(preset);
+		this.savedFilterActive = true;
+		this.saveFiltersToSettings();
 	}
 
 	private applyPreset(preset: SavedFilterPreset): void {
@@ -1056,34 +1063,19 @@ export class ListTab {
 	 * the box out of the header. Ids, not DOM: the grid sections are virtualised.
 	 */
 	private shelfSelect(ids: string[]): ShelfSelect | undefined {
-		if (!this.selectionMode) return undefined;
-		return {
-			ids,
-			selected: this.selectedItems,
-			onToggle: (sectionIds, selectAll) => {
-				for (const id of sectionIds) {
-					if (selectAll) { this.selectedItems.add(id); } else { this.selectedItems.delete(id); }
-				}
-				this.syncCardSelectionClasses();
-				this.refreshToolbarActions();
-			},
-			register: (refresh) => this.shelfSelectRefreshers.push(refresh),
-		};
-	}
-
-	/** A title can sit in several sections, so every header box re-reads the set. */
-	private refreshShelfSelects(): void {
-		for (const refresh of this.shelfSelectRefreshers) refresh();
+		return buildShelfSelect(this.selectionMode, ids, this.selectedItems, this.shelfSelectRefreshers, () => {
+			this.syncCardSelectionClasses();
+			this.refreshToolbarActions();
+		});
 	}
 
 	/** Sync wl-card-selected across the whole tab (Cards grid, shelves, By-type grids). */
 	private syncCardSelectionClasses(): void {
-		this.container.querySelectorAll<HTMLElement>('.wl-card').forEach((card) => {
+		syncSelectionClasses(this.container, this.selectedItems, (card) => {
 			const groupId = card.dataset.groupId;
-			const id = card.dataset.titleId ?? (groupId !== undefined ? groupKey(groupId) : undefined);
-			card.classList.toggle('wl-card-selected', !!id && this.selectedItems.has(id));
+			return card.dataset.titleId ?? (groupId !== undefined ? groupKey(groupId) : undefined);
 		});
-		this.refreshShelfSelects();
+		refreshShelfSelects(this.shelfSelectRefreshers);
 	}
 
 	/**
@@ -1091,19 +1083,11 @@ export class ListTab {
 	 * view, so every instance of the id is synced.
 	 */
 	private toggleCardSelection(card: HTMLElement, id: string): void {
-		if (this.selectedItems.has(id)) {
-			this.selectedItems.delete(id);
-		} else {
-			this.selectedItems.add(id);
-		}
-		const selected = this.selectedItems.has(id);
 		const selector = id.startsWith(GROUP_KEY_PREFIX)
 			? `.wl-card[data-group-id="${CSS.escape(id.slice(GROUP_KEY_PREFIX.length))}"]`
 			: `.wl-card[data-title-id="${CSS.escape(id)}"]`;
-		this.container
-			.querySelectorAll<HTMLElement>(selector)
-			.forEach((el) => el.classList.toggle('wl-card-selected', selected));
-		this.refreshShelfSelects();
+		toggleCardSelected(this.container, this.selectedItems, id, selector);
+		refreshShelfSelects(this.shelfSelectRefreshers);
 		this.refreshToolbarActions();
 	}
 
@@ -1126,61 +1110,42 @@ export class ListTab {
 	private renderToolbarActions(controls: HTMLElement): void {
 		// saved filter preset (only when one is stored)
 		const preset = this.dataManager.getSavedFilterPreset();
-		if (preset) {
-			const savedBtn = controls.createEl('button', {
-				cls: `wl-btn wl-btn-sm${this.savedFilterActive ? ' wl-btn-preset-active' : ''}`,
-				text: 'Saved filter',
-			});
-			this.savedFilterBtnEl = savedBtn;
-			savedBtn.addEventListener('click', () => {
-				this.applyPreset(preset);
-				this.savedFilterActive = true;
-				this.saveFiltersToSettings();
-				// rebuild toolbar + content, not the whole tab
-				this.refreshToolbarActions();
-				this.rerenderActiveView();
-			});
-		} else {
-			this.savedFilterBtnEl = null;
-		}
-
-		this.renderFiltersDropdown(controls);
-
-		this.renderSortingDropdown(controls);
-
-		// action bar — selection mode with items selected
-		if (this.selectionMode && this.selectedItems.size > 0) {
-			this.renderActionBar(controls);
-		}
-
-		if (this.selectionMode) {
-			const hasAny = this.selectedItems.size > 0;
-			const selAllBtn = controls.createEl('button', { cls: 'wl-btn wl-btn-sm', text: hasAny ? 'None' : 'All' });
-			selAllBtn.title = hasAny ? 'Deselect all' : 'Select all visible';
-			selAllBtn.addEventListener('click', () => {
-				if (this.selectedItems.size > 0) {
-					this.selectedItems.clear();
-				} else {
-					for (const item of this.getDisplayItems()) {
-						this.selectedItems.add(itemKey(item));
+		this.savedFilterBtnEl = renderToolbarCore(controls, {
+			preset: preset && {
+				active: this.savedFilterActive,
+				onApply: () => {
+					this.activatePreset(preset);
+					// rebuild toolbar + content, not the whole tab
+					this.refreshToolbarActions();
+					this.rerenderActiveView();
+				},
+			},
+			renderFilters: (parent) => this.renderFiltersDropdown(parent),
+			renderSorting: (parent) => this.renderSortingDropdown(parent),
+			// action bar — selection mode with items selected
+			renderActionBar: this.selectionMode && this.selectedItems.size > 0
+				? (parent) => this.renderActionBar(parent)
+				: undefined,
+			selection: {
+				selectionMode: this.selectionMode,
+				hasSelection: this.selectedItems.size > 0,
+				onToggleAll: () => {
+					if (this.selectedItems.size > 0) {
+						this.selectedItems.clear();
+					} else {
+						for (const item of this.getDisplayItems()) {
+							this.selectedItems.add(itemKey(item));
+						}
 					}
-				}
-				this.refreshToolbarActions();
-				if (this.currentView === 'rows') {
-					this.syncCardSelectionClasses();
-				} else {
-					this.rerenderTable();
-				}
-			});
-		}
-
-		// in selection mode the button is the way out — red Cancel
-		const selBtn = controls.createEl('button', {
-			cls: `wl-btn wl-btn-sm${this.selectionMode ? ' wl-btn-cancel' : ''}`,
-			text: this.selectionMode ? 'Cancel' : 'Select',
-		});
-		selBtn.addEventListener('click', () => {
-			this.setSelectionMode(!this.selectionMode);
+					this.refreshToolbarActions();
+					if (this.currentView === 'rows') {
+						this.syncCardSelectionClasses();
+					} else {
+						this.rerenderTable();
+					}
+				},
+				onToggleMode: () => this.setSelectionMode(!this.selectionMode),
+			},
 		});
 
 		const rightGroup = controls.createDiv({ cls: 'wl-header-controls-right' });
@@ -1188,12 +1153,7 @@ export class ListTab {
 		this.renderViewDropdown(rightGroup);
 
 		// add button, far right — opens the chooser modal
-		const addBtnWrap = rightGroup.createDiv({ cls: 'wl-add-btn-wrap' });
-		const addBtn = addBtnWrap.createEl('button', { cls: 'wl-add-btn wl-btn-success', text: '+ add' });
-		addBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			this.openAddTitleChooser();
-		});
+		renderAddButton(rightGroup, () => this.openAddTitleChooser());
 	}
 
 	private openAddTitleChooser(): void {
