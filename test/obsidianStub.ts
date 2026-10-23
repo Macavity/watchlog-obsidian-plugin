@@ -40,4 +40,7 @@ export class Notice {
 	}
 }
 
+/** Bare modal base so modules that subclass it can be imported in tests. */
+export class Modal {}
+
 export const Platform = { isMobile: false, isDesktop: true };
