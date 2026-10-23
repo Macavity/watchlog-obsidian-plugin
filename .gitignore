@@ -22,10 +22,10 @@ reading.json
 # Backup files
 *.bak
 
-# AI assistant / dev-only files
-.claude/
-CLAUDE.md
-AGENTS.md
+# AI assistant working files (CLAUDE.md and .claude/skills/ are tracked)
+.claude/plans/
+.claude/specs/
+.claude/settings.local.json
 DEVLOG.md
 
 # Runtime data
