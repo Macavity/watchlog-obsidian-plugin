@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ReadingDataManager } from '../src/ReadingDataManager';
 import { GameDataManager } from '../src/GameDataManager';
-import { setupDataManager, makeTitle, tick } from './helpers/setupDataManager';
+import { setupDataManager, makeTitle } from './helpers/setupDataManager';
+import { tick } from './helpers/common';
 
 describe('DataManager on vault storage', () => {
 	it('adds a title as a note and keeps it out of data.json', async () => {

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Notice } from 'obsidian';
 import legacyJson from './fixtures/data-v1.json';
-import { setupDataManager, tick } from './helpers/setupDataManager';
+import { setupDataManager } from './helpers/setupDataManager';
+import { tick } from './helpers/common';
 import { setupMigration } from './helpers/setupMigration';
 import type { ApiOutcome } from '../src/ApiService';
 import type { Season } from '../src/types';
