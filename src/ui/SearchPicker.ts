@@ -1,4 +1,5 @@
 import { apiErrorMessage } from '../ApiService';
+import { makeRow, nameSelect } from './FormCells';
 
 export interface SearchPickerConfig<R> {
 	/** Placeholder of the query input. */
@@ -23,17 +24,19 @@ export interface SearchPickerConfig<R> {
 	grid?: boolean;
 	/** Results per page; without it all results render and there is no pager. */
 	pageSize?: number;
+	/** Adds a "Type" select above the search row; the picker resets itself after onChange. */
+	typeSelect?: { names: string[]; selected: string; onChange: (value: string) => void };
 	initialQuery?: string;
 	/** Default 600. */
 	debounceMs?: number;
 }
 
 export interface SearchPicker {
-	/** Appends the search row, results panel and pager to parent. */
+	/** Appends the optional type select, search row, results panel and pager to parent. */
 	mount(parent: HTMLElement): void;
 	/** Runs a search with the current query (no-op when empty). */
 	search(): Promise<void>;
-	/** Clears results and error/no-API state, e.g. after a type change. */
+	/** Clears results and error/no-API state; the type select calls it on change. */
 	reset(): void;
 	/** Cancels the pending debounce; call from onClose. */
 	destroy(): void;
@@ -94,6 +97,13 @@ export function createSearchPicker<R>(config: SearchPickerConfig<R>): SearchPick
 	}
 
 	function mount(parent: HTMLElement): void {
+		const type = config.typeSelect;
+		if (type) {
+			nameSelect(makeRow(parent, 'Type'), type.names, type.selected, (v) => {
+				type.onChange(v);
+				reset();
+			});
+		}
 		mountSearchRow(parent);
 		resultsEl = parent.createDiv({
 			cls: config.grid ? 'wl-modal-results wl-results-grid' : 'wl-modal-results',
@@ -126,6 +136,13 @@ export function createSearchPicker<R>(config: SearchPickerConfig<R>): SearchPick
 				renderResults();
 			}
 		}
+	}
+
+	function reset(): void {
+		results = [];
+		noApi = '';
+		error = '';
+		renderResults();
 	}
 
 	function renderMessage(host: HTMLElement, icon: string, text: string, extraCls = ''): void {
@@ -188,12 +205,7 @@ export function createSearchPicker<R>(config: SearchPickerConfig<R>): SearchPick
 	return {
 		mount,
 		search,
-		reset(): void {
-			results = [];
-			noApi = '';
-			error = '';
-			renderResults();
-		},
+		reset,
 		destroy(): void {
 			if (debounce) window.clearTimeout(debounce);
 		},

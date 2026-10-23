@@ -1,17 +1,22 @@
-import { App, Modal, Notice } from 'obsidian';
+import { App, Notice } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
-import type {
-	WatchLogTitle,
-	WatchLogGroup,
-	AnimeSearchResult,
-	MediaSearchResult,
-	Season,
-} from './types';
+import type { WatchLogTitle, WatchLogGroup, Season } from './types';
 import { getApiGroupForType, todayIso } from './types';
 import { renderSearchResultRow } from './SearchThumbnail';
-import { apiErrorMessage, SEARCH_PAGE_SIZE, SEARCH_RESULT_LIMIT } from './ApiService';
-import { LibraryIndex, animeResultIdKeys, mediaResultIdKeys } from './LibraryIndex';
+import {
+	episodesLabel,
+	fillMediaFields,
+	resolvePick,
+	resultIdKeys,
+	searchTitles,
+	titlePickerBase,
+	type TitlePick,
+	type TitleSearchResult,
+} from './titleSearch';
+import { createSearchPicker, type SearchPicker } from './ui/SearchPicker';
+import { SearchFormModal } from './ui/SearchFormModal';
+import { LibraryIndex } from './LibraryIndex';
 import { createDatePicker } from './DatePicker';
 import { renderStarRating } from './StarRating';
 import { blockDuplicate, createDuplicateGuard } from './ui/DuplicateGuard';
@@ -26,28 +31,16 @@ import {
 	type MediaFields,
 } from './ui/FormCells';
 
-type SearchResult = AnimeSearchResult | MediaSearchResult;
+type SearchResult = TitleSearchResult;
 
-function isAnimeResult(r: SearchResult): r is AnimeSearchResult {
-	return 'malId' in r;
-}
-
-export class AddTitleModal extends Modal {
+export class AddTitleModal extends SearchFormModal {
 	private plugin: WatchLogPlugin;
 	private dataManager: DataManager;
 	// gets the new entry — callers that don't care just ignore it
 	private onAdded: (entry: WatchLogTitle) => void;
 
 	private selectedType = 'Anime';
-	private searchQuery = '';
-	private searchYear = '';
-	private searchResults: SearchResult[] = [];
-	private resultPage = 0;
-	private isSearching = false;
-	private searchGeneration = 0;
-	private autoSearch = false;
-	private noApiMessage = '';
-	private searchError = '';
+	private initialQuery = '';
 
 	private media: MediaFields = { title: '', episodes: 0, duration: 0, releaseDate: '', link: '' };
 	private fieldSeasons: Season[] = [];
@@ -69,10 +62,6 @@ export class AddTitleModal extends Modal {
 
 	private group: GroupPickerState = { selectedGroupId: '', newGroupName: '' };
 
-	private resultsEl: HTMLElement | null = null;
-	private pagerEl: HTMLElement | null = null;
-	private formEl: HTMLElement | null = null;
-	private searchDebounce: number | null = null;
 
 	constructor(
 		app: App,
@@ -93,7 +82,7 @@ export class AddTitleModal extends Modal {
 			cast?: string[];
 		},
 	) {
-		super(app);
+		super(app, 'Add title', ['wl-add-modal']);
 		this.plugin = plugin;
 		this.dataManager = dataManager;
 		this.onAdded = onAdded;
@@ -104,10 +93,7 @@ export class AddTitleModal extends Modal {
 			if (prefill.title) {
 				this.media.title = prefill.title;
 			}
-			if (prefill.searchQuery) {
-				this.searchQuery = prefill.searchQuery;
-				this.autoSearch = true;
-			}
+			if (prefill.searchQuery) this.initialQuery = prefill.searchQuery;
 			this.media.episodes = prefill.episodes;
 			this.media.duration = prefill.duration;
 			this.media.releaseDate = prefill.releaseDate;
@@ -117,287 +103,60 @@ export class AddTitleModal extends Modal {
 			if (prefill.director !== undefined) this.fieldDirector = prefill.director;
 			if (prefill.cast !== undefined) this.fieldCast = prefill.cast;
 		}
+		this.picker = this.createPicker();
 	}
 
-	onOpen(): void {
-		this.titleEl.setText('Add title');
-		this.contentEl.addClass('wl-add-modal');
-		this.buildUI();
-		if (this.autoSearch) {
-			void this.performSearch();
-		}
+	private createPicker(): SearchPicker {
+		return createSearchPicker<SearchResult>({
+			...titlePickerBase(this.plugin, this.selectedType, (v) => {
+				this.selectedType = v;
+				this.renderForm();
+			}),
+			grid: true,
+			initialQuery: this.initialQuery,
+			search: async (query, year) => (await searchTitles(this.plugin, this.selectedType, query, year)) ?? [],
+			noApiMessage: () => this.noApiMessage(),
+			renderResult: (host, result, select) => this.renderResult(host, result, select),
+			onSelect: (result, isCurrent) => this.selectResult(result, isCurrent),
+		});
 	}
 
-	onClose(): void {
-		this.contentEl.empty();
-		if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
+	private noApiMessage(): string | null {
+		if (getApiGroupForType(this.selectedType, this.plugin.settings.typeApiMapping) !== '') return null;
+		return `No API configured for type "${this.selectedType}". Go to Settings → API to set one up.`;
 	}
 
-	private buildUI(): void {
-		const content = this.contentEl;
-		content.empty();
-
-		const typeRow = content.createDiv({ cls: 'wl-modal-row' });
-		typeRow.createSpan({ cls: 'wl-modal-label', text: 'Type' });
-		const typeSelect = typeRow.createEl('select', { cls: 'wl-select' });
-		for (const t of this.plugin.settings.types) {
-			const opt = typeSelect.createEl('option', { text: t.name, value: t.name });
-			if (t.name === this.selectedType) opt.selected = true;
-		}
-		typeSelect.addEventListener('change', () => {
-			this.selectedType = typeSelect.value;
-			this.searchResults = [];
-			this.noApiMessage = '';
-			this.searchError = '';
-			this.renderResults();
-			this.renderForm();
-		});
-
-		const searchRow = content.createDiv({ cls: 'wl-modal-row wl-search-row' });
-		searchRow.createSpan({ cls: 'wl-modal-label', text: 'Search' });
-		const searchFields = searchRow.createDiv({ cls: 'wl-search-fields' });
-		const searchInput = searchFields.createEl('input', {
-			cls: 'wl-modal-input wl-search-query',
-			attr: { type: 'text', placeholder: 'Search for a title...' },
-		});
-		searchInput.value = this.searchQuery;
-		searchInput.addEventListener('input', () => {
-			this.searchQuery = searchInput.value;
-			if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
-			this.searchDebounce = window.setTimeout(() => void this.performSearch(), 600);
-		});
-
-		const yearInput = searchFields.createEl('input', {
-			cls: 'wl-modal-input wl-search-year',
-			attr: { type: 'text', inputmode: 'numeric', maxlength: '4', placeholder: 'Year' },
-		});
-		yearInput.value = this.searchYear;
-		yearInput.addEventListener('input', () => {
-			// digits only; the APIs want a bare YYYY
-			yearInput.value = yearInput.value.replace(/\D/g, '');
-			this.searchYear = yearInput.value;
-			if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
-			this.searchDebounce = window.setTimeout(() => void this.performSearch(), 600);
-		});
-
-		const searchBtn = searchFields.createEl('button', { cls: 'wl-btn', text: 'Search' });
-		searchBtn.addEventListener('click', () => void this.performSearch());
-
-		this.resultsEl = content.createDiv({ cls: 'wl-modal-results wl-results-grid' });
-		this.pagerEl = content.createDiv({ cls: 'wl-result-pager' });
-
-		this.formEl = content.createDiv({ cls: 'wl-modal-form' });
-		this.renderForm();
-	}
-
-	private async performSearch(): Promise<void> {
-		if (!this.searchQuery.trim()) return;
-		const gen = ++this.searchGeneration;
-		this.isSearching = true;
-		this.resultPage = 0;
-		this.renderResults();
-
-		try {
-			const api = this.plugin.apiService;
-			const activeApi = this.plugin.settings.activeApi ?? 'OMDb';
-			const apiGroup = getApiGroupForType(this.selectedType, this.plugin.settings.typeApiMapping);
-			const isMovie = this.selectedType === 'Movie';
-
-			let results: SearchResult[] = [];
-			let noApi = '';
-			if (apiGroup === '') {
-				noApi = `No API configured for type "${this.selectedType}". Go to Settings → API to set one up.`;
-			} else if (apiGroup === 'anime') {
-				const animeSource = this.plugin.settings.animeApiSource ?? 'jikan';
-				results = animeSource === 'anilist'
-					? await api.searchAniList(this.searchQuery, this.searchYear)
-					: await api.searchAnime(this.searchQuery, this.searchYear, SEARCH_RESULT_LIMIT);
-			} else if (activeApi === 'TMDB') {
-				results = await api.searchTmdb(this.searchQuery, isMovie ? 'movie' : 'series', this.searchYear);
-			} else {
-				results = await api.searchOmdb(this.searchQuery, isMovie ? 'movie' : 'series', this.searchYear);
-			}
-			if (gen !== this.searchGeneration) return; // stale
-			this.noApiMessage = noApi;
-			this.searchError = '';
-			this.searchResults = results;
-		} catch (err) {
-			if (gen !== this.searchGeneration) return;
-			// in the panel, not a Notice — a blank result list is what made a rejected key
-			// look like a title that does not exist
-			this.searchError = apiErrorMessage(err);
-			this.searchResults = [];
-		} finally {
-			if (gen === this.searchGeneration) {
-				this.isSearching = false;
-				this.renderResults();
-			}
-		}
-	}
-
-	private renderResults(): void {
-		if (!this.resultsEl) return;
-		this.resultsEl.empty();
-		this.renderPager();
-
-		if (this.isSearching) {
-			this.resultsEl.createDiv({ cls: 'wl-modal-loading', text: 'Searching...' });
-			return;
-		}
-
-		if (this.noApiMessage) {
-			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api' });
-			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: 'ℹ' });
-			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.noApiMessage });
-			return;
-		}
-
-		if (this.searchError) {
-			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api wl-modal-api-error' });
-			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: '⚠' });
-			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.searchError });
-			return;
-		}
-
-		if (this.searchResults.length === 0) return;
-
+	private renderResult(host: HTMLElement, result: SearchResult, select: (itemEl: HTMLElement) => void): HTMLElement {
 		if (!this.libIndex) this.libIndex = LibraryIndex.build(this.plugin, ['watchlist']);
-		const libIndex = this.libIndex;
-		const activeApi = this.plugin.settings.activeApi ?? 'OMDb';
-
-		const start = this.resultPage * SEARCH_PAGE_SIZE;
-		this.searchResults.slice(start, start + SEARCH_PAGE_SIZE).forEach((result, i) => {
-			const epText = isAnimeResult(result)
-				? `${result.episodes} eps`
-				: result.episodes > 0 ? `${result.episodes} eps` : result.mediaType;
-			const idKeys = isAnimeResult(result)
-				? animeResultIdKeys(result)
-				: mediaResultIdKeys(result, activeApi);
-			const item = renderSearchResultRow(this.resultsEl!, {
-				thumbUrl: result.posterUrl,
-				fallbackIcon: '🎬',
-				title: result.title,
-				meta: `${epText} · ${result.releaseDate}`,
-				inLibrary: libIndex.lookup(idKeys, result.title),
-				onClick: (itemEl) => void this.selectResult(result, itemEl),
-			});
-			item.dataset['idx'] = String(start + i);
+		const idKeys = resultIdKeys(result, this.plugin.settings.activeApi ?? 'OMDb');
+		return renderSearchResultRow(host, {
+			thumbUrl: result.posterUrl,
+			fallbackIcon: '🎬',
+			title: result.title,
+			meta: `${episodesLabel(result)} · ${result.releaseDate}`,
+			inLibrary: this.libIndex.lookup(idKeys, result.title),
+			onClick: select,
 		});
 	}
 
-	private renderPager(): void {
-		if (!this.pagerEl) return;
-		this.pagerEl.empty();
-		const total = Math.ceil(this.searchResults.length / SEARCH_PAGE_SIZE);
-		if (this.isSearching || total <= 1) return;
-
-		const prev = this.pagerEl.createEl('button', { cls: 'wl-btn wl-result-pager-btn', text: '‹' });
-		prev.disabled = this.resultPage === 0;
-		prev.addEventListener('click', () => this.goToPage(this.resultPage - 1));
-
-		this.pagerEl.createSpan({
-			cls: 'wl-result-pager-info',
-			text: `Page ${this.resultPage + 1} of ${total}`,
-		});
-
-		const next = this.pagerEl.createEl('button', { cls: 'wl-btn wl-result-pager-btn', text: '›' });
-		next.disabled = this.resultPage >= total - 1;
-		next.addEventListener('click', () => this.goToPage(this.resultPage + 1));
+	private async selectResult(result: SearchResult, isCurrent: () => boolean): Promise<void> {
+		if (await resolvePick(this.plugin, result, isCurrent, (pick) => this.applyPick(pick))) this.renderForm();
 	}
 
-	private goToPage(page: number): void {
-		const total = Math.ceil(this.searchResults.length / SEARCH_PAGE_SIZE);
-		this.resultPage = Math.max(0, Math.min(page, total - 1));
-		this.renderResults();
-		this.resultsEl?.scrollTo({ top: 0 });
-	}
-
-	private async selectResult(result: SearchResult, itemEl: HTMLElement): Promise<void> {
-		if (this.resultsEl) {
-			for (const child of Array.from(this.resultsEl.children)) {
-				child.removeClass('is-selected');
-			}
+	private applyPick(pick: TitlePick): void {
+		fillMediaFields(this.media, pick);
+		this.fieldSeasons = pick.seasons;
+		this.fieldTrailerUrl = pick.trailerUrl;
+		this.fieldDirector = pick.director;
+		this.fieldCast = pick.cast;
+		this.fieldStudio = pick.studio;
+		if (pick.animeIds) {
+			this.fieldMalId = pick.animeIds.malId;
+			this.fieldAnilistId = pick.animeIds.anilistId;
 		}
-		itemEl.addClass('is-selected');
-
-		const gen = ++this.searchGeneration;
-		const api = this.plugin.apiService;
-		const activeApi = this.plugin.settings.activeApi ?? 'OMDb';
-		try {
-			if (!isAnimeResult(result) && result.mediaType === 'tv') {
-				const full = activeApi === 'TMDB'
-					? await api.getTmdbTvDetails(result.imdbId)
-					: await api.getOmdbTvDetails(result.imdbId);
-				if (gen !== this.searchGeneration) return;
-				if (full) {
-					this.media.title = full.title;
-					this.media.episodes = full.episodes;
-					this.media.duration = full.episodeDuration;
-					this.media.releaseDate = full.releaseDate;
-					this.media.link = full.url;
-					this.fieldSeasons = full.seasons;
-					this.fieldTrailerUrl = full.trailerUrl ?? '';
-					this.fieldDirector = full.director ?? [];
-					this.fieldCast = full.cast ?? [];
-					this.fieldStudio = full.studio ?? [];
-				}
-			} else if (!isAnimeResult(result) && result.mediaType === 'movie') {
-				const full = activeApi === 'TMDB'
-					? await api.getTmdbMovieDetails(result.imdbId)
-					: await api.getOmdbMovieDetails(result.imdbId);
-				if (gen !== this.searchGeneration) return;
-				if (full) {
-					this.media.title = full.title;
-					this.media.episodes = full.episodes;
-					this.media.duration = full.episodeDuration;
-					this.media.releaseDate = full.releaseDate;
-					this.media.link = full.url;
-					this.fieldSeasons = full.seasons;
-					this.fieldTrailerUrl = full.trailerUrl ?? '';
-					this.fieldDirector = full.director ?? [];
-					this.fieldCast = full.cast ?? [];
-					this.fieldStudio = full.studio ?? [];
-				}
-			} else {
-				const anime = result as AnimeSearchResult;
-				this.media.title = anime.title;
-				this.media.episodes = anime.episodes;
-				this.media.duration = anime.duration;
-				this.media.releaseDate = anime.releaseDate;
-				this.media.link = anime.url;
-				this.fieldSeasons = anime.seasons;
-				this.fieldTrailerUrl = anime.trailerUrl ?? '';
-				// anime sources don't carry credits — clear any stale movie/TV selection.
-				// studio is backfilled from Jikan/AniList on first modal open.
-				this.fieldDirector = [];
-				this.fieldCast = [];
-				this.fieldStudio = [];
-				if (anime.anilistId && anime.anilistId > 0) {
-					this.fieldAnilistId = anime.anilistId;
-					this.fieldMalId = null;
-				} else {
-					this.fieldMalId = anime.malId;
-					this.fieldAnilistId = null;
-				}
-			}
-		} catch {
-			this.media.title = result.title;
-			this.media.episodes = isAnimeResult(result) ? result.episodes : result.episodes;
-			this.media.duration = isAnimeResult(result) ? result.duration : result.episodeDuration;
-			this.media.releaseDate = result.releaseDate;
-			this.media.link = result.url;
-			this.fieldSeasons = result.seasons;
-			// anime search results already carry a trailer; movie/TV list rows do not
-			this.fieldTrailerUrl = result.trailerUrl ?? '';
-			this.fieldDirector = !isAnimeResult(result) ? (result.director ?? []) : [];
-			this.fieldCast = !isAnimeResult(result) ? (result.cast ?? []) : [];
-			this.fieldStudio = !isAnimeResult(result) ? (result.studio ?? []) : [];
-		}
-
-		this.renderForm();
 	}
 
-	private renderForm(): void {
+	protected renderForm(): void {
 		const form = resetForm(this.formEl);
 		if (!form) return;
 		const makeRow = (label: string): HTMLElement => makeFormRow(form, label);
