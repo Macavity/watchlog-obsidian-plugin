@@ -1,4 +1,5 @@
 import { App, Modal, Notice } from 'obsidian';
+import { escapeCsvField, parseCSV, parseCsvDate } from './csv/csvCore';
 import { safeTypeName } from './storage/VaultLayout';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
@@ -25,14 +26,6 @@ const CSV_COLUMNS = [
 	'externalLink', 'notes', 'studio',
 ] as const;
 
-function escapeCsvField(value: string | number | null | undefined): string {
-	const s = String(value ?? '');
-	if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-		return `"${s.replace(/"/g, '""')}"`;
-	}
-	return s;
-}
-
 function titlesToCsv(titles: WatchLogTitle[]): string {
 	const header = CSV_COLUMNS.join(',');
 	const rows = titles.map((t) =>
@@ -45,110 +38,6 @@ function titlesToCsv(titles: WatchLogTitle[]): string {
 		).join(','),
 	);
 	return [header, ...rows].join('\n');
-}
-
-/** Full CSV parser: quoted fields with embedded newlines, escaped quotes, comma delimiter. */
-function parseCSV(text: string): string[][] {
-	const rows: string[][] = [];
-	let row: string[] = [];
-	let cur = '';
-	let inQuotes = false;
-	// normalize CRLF to LF
-	const t = text.replace(/\r\n?/g, '\n');
-	for (let i = 0; i < t.length; i++) {
-		const ch = t[i];
-		if (inQuotes) {
-			if (ch === '"') {
-				if (t[i + 1] === '"') { cur += '"'; i++; }
-				else { inQuotes = false; }
-			} else {
-				cur += ch;
-			}
-		} else {
-			if (ch === '"') {
-				inQuotes = true;
-			} else if (ch === ',') {
-				row.push(cur); cur = '';
-			} else if (ch === '\n') {
-				row.push(cur); cur = '';
-				rows.push(row); row = [];
-			} else {
-				cur += ch;
-			}
-		}
-	}
-	// final field/row
-	if (cur.length > 0 || row.length > 0) {
-		row.push(cur);
-		rows.push(row);
-	}
-	// drop trailing fully-empty rows
-	while (rows.length > 0 && rows[rows.length - 1]!.every((c) => c === '')) rows.pop();
-	return rows;
-}
-
-// Date parsing
-
-const MONTH_NAMES: Record<string, number> = {
-	jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-	jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
-};
-
-/** Parses a date in any common format to YYYY-MM-DD, or null when unparseable. */
-function parseCsvDate(raw: string): string | null {
-	const s = raw.trim();
-	if (!s) return null;
-	try {
-		// YYYY-MM-DD (already storage format)
-		if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-		// D/M/YYYY, DD/MM/YYYY, M/D/YYYY, MM/DD/YYYY
-		const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-		if (slash) {
-			const a = parseInt(slash[1]!, 10), b = parseInt(slash[2]!, 10), y = parseInt(slash[3]!, 10);
-			let dd: number, mm: number;
-			if (a > 12)      { dd = a; mm = b; }  // Must be DD/MM
-			else if (b > 12) { mm = a; dd = b; }  // Must be MM/DD
-			else             { dd = a; mm = b; }  // Ambiguous → assume DD/MM
-			if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
-			return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
-		}
-
-		// "27 Jun 2025"
-		const dmy = s.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})$/);
-		if (dmy) {
-			const mm = MONTH_NAMES[dmy[2]!.toLowerCase().slice(0, 3)];
-			const dd = parseInt(dmy[1]!, 10), y = parseInt(dmy[3]!, 10);
-			if (mm) return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
-		}
-
-		// "Jun 27, 2025" / "Jun 27 2025"
-		const mdy = s.match(/^([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{4})$/);
-		if (mdy) {
-			const mm = MONTH_NAMES[mdy[1]!.toLowerCase().slice(0, 3)];
-			const dd = parseInt(mdy[2]!, 10), y = parseInt(mdy[3]!, 10);
-			if (mm) return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
-		}
-
-		// DD.MM.YYYY or DD-MM-YYYY
-		const dotDash = s.match(/^(\d{1,2})[.-](\d{1,2})[.-](\d{4})$/);
-		if (dotDash) {
-			const dd = parseInt(dotDash[1]!, 10), mm = parseInt(dotDash[2]!, 10), y = parseInt(dotDash[3]!, 10);
-			if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31)
-				return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
-		}
-
-		// fallback: native Date.parse
-		const parsed = new Date(s);
-		if (!isNaN(parsed.getTime())) {
-			const dd = parsed.getDate(), mm = parsed.getMonth() + 1, y = parsed.getFullYear();
-			return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
-		}
-
-		return null;
-	} catch {
-		return null;
-	}
 }
 
 // Field mapping definitions
