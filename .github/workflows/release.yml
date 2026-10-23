@@ -1,0 +1,63 @@
+name: Release
+
+# Builds main.js from the tagged commit and attaches it, manifest.json and styles.css to a draft
+# GitHub release. Publish the draft after adding the notes from CHANGELOG.md.
+# Tag = manifest version without a "v" prefix (Obsidian requires an exact match).
+on:
+    push:
+        tags:
+            - '*'
+    # Recovery path when a tag push does not trigger the workflow: run from the Actions tab.
+    workflow_dispatch:
+
+permissions:
+    contents: write
+    id-token: write
+    attestations: write
+
+jobs:
+    release:
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+
+        steps:
+            - uses: actions/checkout@v5
+            - uses: pnpm/action-setup@v4
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: 22
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm build
+
+            - name: Read version from manifest
+              id: version
+              run: echo "version=$(jq -r .version manifest.json)" >> "$GITHUB_OUTPUT"
+
+            - name: Tag must match manifest version
+              if: github.event_name == 'push'
+              env:
+                  VERSION: ${{ steps.version.outputs.version }}
+              run: |
+                  if [ "$GITHUB_REF_NAME" != "$VERSION" ]; then
+                    echo "::error::Tag '$GITHUB_REF_NAME' does not match manifest version '$VERSION'. Tag without 'v' and bump via 'pnpm version'."
+                    exit 1
+                  fi
+
+            - name: Attest build provenance
+              uses: actions/attest-build-provenance@v4
+              with:
+                  subject-path: |
+                      main.js
+                      manifest.json
+                      styles.css
+
+            - name: Create draft release
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  VERSION: ${{ steps.version.outputs.version }}
+              run: |
+                  gh release create "$VERSION" \
+                    --title "$VERSION" \
+                    --draft \
+                    main.js manifest.json styles.css
