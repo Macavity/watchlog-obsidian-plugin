@@ -39,14 +39,22 @@ hand, on any device, and the plugin picks it up.
 | API keys, Steam id, cached API data, colors, layout, saved filters | `data.json` of the plugin | no, per device |
 
 Set up a second device by syncing the vault and installing the plugin. It finds the base file,
-reads the notes and is ready; only API keys have to be entered again.
+reads the notes and is ready; only API keys have to be entered again. Let the first sync finish
+before you enable the plugin there: a device that starts on a half-synced vault treats itself as
+the first one and creates notes the sync is about to deliver.
+
+`History.md` is one shared file that every device appends to. Obsidian Sync merges that; Syncthing
+or Git may leave a conflict copy when two devices log at the same moment. Nothing else is lost
+then, the log just needs a manual merge.
 
 ### Coming from the original WatchLog
 
 Install WatchLog Sync next to the original and start Obsidian once. If this plugin has no data of
 its own yet, it reads the original's `data.json`, writes a `data.v1-backup.json` beside it and
 converts everything into notes. Existing notes are never overwritten, and a second device with the
-same old data adds nothing twice. Afterwards you can disable the original plugin.
+same old data adds nothing twice: entries that exist only in that device's old data are reported
+as skipped and stay in `data.v1-backup.json`. Afterwards disable the original plugin; the plugin
+warns while both are enabled.
 
 The same conversion runs for a JSON backup restored via **Settings → General**.
 
@@ -80,7 +88,8 @@ any note also queues it up in the Drafts tab.
 
 - **Settings → Customize** — themes, card sizes and text placement, and your own types, statuses,
   priorities, genres and platforms with colors.
-- **Settings → General** — date format, half-star ratings, JSON backup & restore.
+- **Settings → General** — date format, half-star ratings, JSON backup & restore. On mobile the
+  backup is written into `<root>/backups/` and leaves the API keys out, since that folder syncs.
 - Types and statuses are shared via the base file, colors are per device: the same vocabulary everywhere, your own look on each.
 - The ⋮ menu on any card has Edit, Refresh cover, Open note and Delete.
 

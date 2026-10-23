@@ -1,4 +1,4 @@
-import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, TFile, parseYaml, setIcon, stringifyYaml } from 'obsidian';
+import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, parseYaml, setIcon, stringifyYaml } from 'obsidian';
 import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, setActiveDateFormat } from './types';
 import { cardSizeToMinWidth } from './VirtualGrid';
 import type { CardStyleTab, WatchLogData } from './types';
@@ -22,7 +22,7 @@ import { EntryIndex } from './storage/EntryIndex';
 import { HistoryStore } from './storage/HistoryStore';
 import { hasWatchlogKey } from './storage/baseFile';
 import { legacyRoot, migrateV1 } from './storage/migrateV1';
-import { loadOwnOrOriginal } from './storage/legacyPlugin';
+import { loadOwnOrOriginal, ORIGINAL_PLUGIN_ID } from './storage/legacyPlugin';
 import type { BackupManagers } from './backup';
 import { composeSettings, persistSettings } from './settingsSplit';
 import { runAirtimeScheduler } from './airtimeScheduler';
@@ -107,6 +107,7 @@ export default class WatchLogPlugin extends Plugin {
 			// a schema-2 data.json taken over from the original plugin: persist the copy as our own
 			this.local.queueSave();
 		}
+		this.warnIfOriginalEnabled();
 		// local + defaults only; shared keys are re-composed once the base is loaded (startVaultStorage)
 		await this.loadSettings();
 		// the card-size CSS var must be live before any view or modal renders a grid
@@ -289,6 +290,14 @@ export default class WatchLogPlugin extends Plugin {
 		this.typeNamesKey = key;
 		if (!changed || !this.indexReady) return;
 		void this.index.rebuild().then(() => activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed')));
+	}
+
+	/** Both plugins manage the same folders; the original would keep writing from its own data.json. */
+	private warnIfOriginalEnabled(): void {
+		const plugins = (this.app as unknown as { plugins?: { enabledPlugins?: Set<string> } }).plugins;
+		if (plugins?.enabledPlugins?.has(ORIGINAL_PLUGIN_ID)) {
+			new Notice('The original Watchlog plugin is still enabled. Disable it, otherwise both plugins write the same notes.', 0);
+		}
 	}
 
 	/** Moves a schema-1 data.json into notes, base and History.md; on failure it is retried next start. */

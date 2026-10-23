@@ -14,7 +14,8 @@ export class ApiCheckQueue {
 		return new Promise<T>((resolve, reject) => {
 			this.pending.push(() => {
 				this.running++;
-				task().then(resolve, reject).finally(() => {
+				// a task that throws before returning its promise must still release its slot
+				Promise.resolve().then(task).then(resolve, reject).finally(() => {
 					this.running--;
 					this.pump();
 				});

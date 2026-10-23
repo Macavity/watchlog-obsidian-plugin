@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { setupBackup } from './helpers/setupBackup';
 import { inferHistoryAction } from '../src/HistoryManager';
-import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup } from '../src/backup';
+import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup, withoutSecrets } from '../src/backup';
 import legacy from './fixtures/data-v1.json';
 
 const BASE = 'watchlog:\n  version: 1\n  statuses:\n    - name: Rewatch\n      color: "#123456"\n';
@@ -81,5 +81,20 @@ describe('history actions', () => {
 	it('shows group creation as its own action', () => {
 		const e = { id: '1', timestamp: '2026-01-01T00:00:00Z', message: 'Group "X" was created' };
 		expect(inferHistoryAction(e)).toBe('group');
+	});
+
+	it('drops secrets for a copy written into the vault and ignores prototype keys on restore', async () => {
+		const a = await setupBackup({});
+		a.local.data.settings = { tmdbApiKey: 'SECRET', igdbClientSecret: 'S2', steamId: '42', dateFormat: 'dmy' };
+		const copy = withoutSecrets(buildBackup(a));
+		expect(copy.local).toEqual({ dateFormat: 'dmy' });
+		expect(JSON.stringify(copy)).not.toContain('SECRET');
+
+		const b = await setupBackup({});
+		const parsed = parseBackup(JSON.stringify(buildBackup(a)).replace('"dateFormat"', '"__proto__":{"polluted":1},"dateFormat"'));
+		if ('error' in parsed) throw new Error(parsed.error);
+		await restoreBackup(b, parsed.backup);
+		expect(Object.getPrototypeOf(b.local.data.settings)).toBe(Object.prototype);
+		expect((b.local.data.settings as { polluted?: unknown }).polluted).toBeUndefined();
 	});
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { VaultLayout } from '../../src/storage/VaultLayout';
+import { VaultLayout, safeTypeName, typeNameError } from '../../src/storage/VaultLayout';
 const l = new VaultLayout('Journal/WatchLog', () => ['Movie', 'TV Show']);
 describe('VaultLayout', () => {
   it('classifies entries', () => {
@@ -22,5 +22,21 @@ describe('VaultLayout', () => {
     expect(VaultLayout.findRoot([{ path: 'b/WatchLog.base', hasWatchlogKey: true }, { path: 'a/X.base', hasWatchlogKey: false },
       { path: 'a/WatchLog.base', hasWatchlogKey: true }])).toBe('a');
     expect(VaultLayout.findRoot([])).toBeNull();
+  });
+});
+
+describe('safe names', () => {
+  it('hides no notes behind dot-files or Windows device names', () => {
+    expect(l.notePath('title', '...And Justice for All', 'Movie')).toBe('Journal/WatchLog/Movie/---And Justice for All.md');
+    expect(l.notePath('game', 'Nul')).toBe('Journal/WatchLog/Games/Nul-.md');
+    expect(l.notePath('title', 'Normal', 'Movie')).toBe('Journal/WatchLog/Movie/Normal.md');
+  });
+  it('keeps type names usable as folders', () => {
+    expect(safeTypeName('Sci-Fi/Fantasy')).toBe('Sci-Fi-Fantasy');
+    expect(safeTypeName('Books')).toBe('Books (type)');
+    expect(safeTypeName(' Anime ')).toBe('Anime');
+    expect(typeNameError('Anime')).toBeNull();
+    expect(typeNameError('Sci-Fi/Fantasy')).toMatch(/Sci-Fi-Fantasy/);
+    expect(typeNameError('games')).toMatch(/reserved/);
   });
 });

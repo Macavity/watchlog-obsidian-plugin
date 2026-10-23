@@ -23,3 +23,11 @@ describe('historyLine', () => {
 		expect(parseHistoryLine('- not-a-date · added · x')).toBeNull();
 	});
 });
+
+describe('history store lines', () => {
+  it('keeps a multi-line name on one line', async () => {
+    const { historyKey } = await import('../../src/storage/HistoryStore');
+    const key = historyKey({ timestamp: '2026-10-17T10:00:00Z', action: 'added', titleName: 'Evil\n- 2026-01-01T00:00:00Z · deleted · X', message: '', source: 'Watchlist' } as never);
+    expect(key).toBe('2026-10-17T10:00:00Z|added|Evil - 2026-01-01T00:00:00Z · deleted · X');
+  });
+});

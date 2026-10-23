@@ -6,7 +6,7 @@ import { formatHistoryDate } from './HistoryManager';
 import { pruneManualCredits, normalizeManualCredits, isReleaseDateFuture, todayIso, GAME_AUTO_STATUS } from './types';
 import type { CreditsField } from './types';
 import type { AnyEntry, EntryIndex } from './storage/EntryIndex';
-import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
+import { getBaseline, sameStoredState, setBaseline, getNotesBaseline, setNotesBaseline } from './storage/baseline';
 import type { ApiOutcome } from './ApiService';
 import { ApiCheckQueue } from './apiCheckQueue';
 import type { LocalStore } from './storage/LocalStore';
@@ -583,6 +583,7 @@ export class DataManager {
 		if (slot && (this.dirty.has(src.id) || this.pendingMdTitleIds.has(src.id))) return slot.view;
 		const view = structuredClone(src);
 		view.notes = this.notes.get(src.id) ?? '';
+		setNotesBaseline(view, view.notes);
 		// nothing cached yet: '' (not undefined) lets the lazy poster fetch pick it up
 		if (view.posterUrl === undefined) view.posterUrl = '';
 		this.views.set(src.id, { src, view });
@@ -638,6 +639,7 @@ export class DataManager {
 		title.id = id;
 		delete title.maybe;
 		if (!title.notes) title.notes = this.notes.get(id) ?? '';
+		setNotesBaseline(title, this.notes.get(id) ?? '');
 		this.views.set(id, { src: maybe.entry, view: title });
 		setBaseline(title, maybe.entry);
 		await this.writeTitle(title);
@@ -1696,12 +1698,16 @@ export class DataManager {
 			if (slot) slot.view = t;
 		}
 
+		// the body follows the same rule as the frontmatter: a copy only writes what it changed itself,
+		// so a stale copy cannot undo an edit that arrived from another device meanwhile
 		const notes = t.notes;
-		if (typeof notes === 'string' && notes !== (this.notes.get(t.id) ?? '')) {
+		const current = this.notes.get(t.id) ?? '';
+		if (typeof notes === 'string' && notes !== (getNotesBaseline(t) ?? current) && notes !== current) {
 			// set first: the modify event of this write then sees no change
 			this.notes.set(t.id, notes);
 			await this.app.vault.process(file, (content) => replaceNotesSection(content, notes));
 		}
+		if (typeof notes === 'string') setNotesBaseline(t, this.notes.get(t.id) ?? '');
 	}
 
 	/** Stored state a copy was made from; falls back to the current slot or index entry. */
@@ -1802,7 +1808,10 @@ export class DataManager {
 		if (next === prev) return;
 		this.notes.set(c.id, next);
 		const slot = this.views.get(c.id);
-		if (slot && slot.view.notes === prev) slot.view.notes = next;
+		if (slot && slot.view.notes === prev) {
+			slot.view.notes = next;
+			setNotesBaseline(slot.view, next);
+		}
 		this.notifyListeners();
 	}
 

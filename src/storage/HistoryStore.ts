@@ -13,7 +13,8 @@ function toLine(e: HistoryEntry, link: boolean): HistoryLine {
 	const line: HistoryLine = {
 		timestamp: e.timestamp,
 		action: group ? 'group-created' : (e.action ?? 'added'),
-		target: group ? (group[1] ?? '') : isLink ? e.titleId! : (e.titleName || '(unknown)'),
+		// one entry is one line: a name with line breaks must not forge further entries
+		target: (group ? (group[1] ?? '') : isLink ? e.titleId! : (e.titleName || '(unknown)')).replace(/\s+/g, ' ').trim() || '(unknown)',
 		isLink,
 	};
 	// the group message is derived from the target on load

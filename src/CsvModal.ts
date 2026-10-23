@@ -1,4 +1,5 @@
 import { App, Modal, Notice } from 'obsidian';
+import { safeTypeName } from './storage/VaultLayout';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle } from './types';
@@ -682,8 +683,8 @@ export class CsvModal extends Modal {
 			if (tv && Object.prototype.hasOwnProperty.call(this.typeValueMap, tv)) {
 				const resolved = this.typeValueMap[tv] ?? '';
 				if (resolved === CREATE_NEW_TYPE) {
-					// keep the original value, mark for creation
-					r.entry.type = tv;
+					// keep the original value (made folder-safe), mark for creation
+					r.entry.type = safeTypeName(tv);
 				} else {
 					r.entry.type = resolved || undefined;
 				}
@@ -832,8 +833,9 @@ export class CsvModal extends Modal {
 			}
 		}
 		for (const [orig, resolved] of Object.entries(this.typeValueMap)) {
-			if (resolved === CREATE_NEW_TYPE && !existingTypeNames.has(orig.toLowerCase())) {
-				typesToCreate.add(orig);
+			const name = safeTypeName(orig);
+			if (resolved === CREATE_NEW_TYPE && !existingTypeNames.has(name.toLowerCase())) {
+				typesToCreate.add(name);
 			}
 		}
 

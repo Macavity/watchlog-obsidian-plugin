@@ -139,4 +139,21 @@ describe('background fills are no user writes', () => {
 		expect(reading.f.files.get('W/Books/Dune.md')).toContain('coverUrl: https://img/c.jpg');
 		expect(rcb).not.toHaveBeenCalled();
 	});
+
+	it('a stale copy does not undo a note body edited on another device', async () => {
+		const { dm, f } = await setupDataManager({ 'W/TV Show/Dark.md': DARK + '\n## Notes\n\nold\n' });
+		await tick();
+		const modal = { ...dm.getTitle('TV Show/Dark')! };
+		expect(modal.notes).toBe('old');
+		f.externalWrite('W/TV Show/Dark.md', DARK + '\n## Notes\n\nremote\n');
+		await tick();
+		await dm.updateTitle({ ...modal, review: 'x' });
+		await tick();
+		expect(f.files.get('W/TV Show/Dark.md')).toContain('remote');
+		expect(f.files.get('W/TV Show/Dark.md')).not.toMatch(/\nold\n/);
+		// an edit made in the copy itself still wins
+		await dm.updateTitle({ ...dm.getTitle('TV Show/Dark')!, notes: 'mine' });
+		await tick();
+		expect(f.files.get('W/TV Show/Dark.md')).toContain('mine');
+	});
 });

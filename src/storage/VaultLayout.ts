@@ -6,6 +6,30 @@ export const HISTORY_FILE = 'History.md';
 export const FOLDERS = { book: 'Books', manga: 'Manga', game: 'Games', customLists: 'CustomLists' } as const;
 
 const UNSAFE = /[*"\\/<>:|?]/g;
+/** Obsidian ignores dot-files; Windows refuses these device names. */
+const LEADING_DOTS = /^\.+/;
+const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+const RESERVED_FOLDERS = new Set(Object.values(FOLDERS).map((f) => f.toLowerCase()));
+
+/** A note or folder name that every OS and Obsidian accept; the legacy `UNSAFE` form plus the above. */
+export function safeFileName(name: string): string {
+	const safe = name.replace(UNSAFE, '-').replace(LEADING_DOTS, (d) => '-'.repeat(d.length));
+	return WINDOWS_RESERVED.test(safe) ? `${safe}-` : safe;
+}
+
+/** Type names double as folder names below the root, so they must be safe and must not collide with the fixed folders. */
+export function safeTypeName(name: string): string {
+	const safe = safeFileName(name.trim());
+	return RESERVED_FOLDERS.has(safe.toLowerCase()) ? `${safe} (type)` : safe;
+}
+
+/** Why a type name cannot be used as entered, or null when it can. */
+export function typeNameError(name: string): string | null {
+	const safe = safeTypeName(name);
+	if (safe === name.trim()) return null;
+	if (RESERVED_FOLDERS.has(name.trim().toLowerCase())) return `"${name.trim()}" is a reserved folder name.`;
+	return `"${name.trim()}" cannot be used as a folder name; try "${safe}".`;
+}
 
 /** Folder structure below the vault root; entry id = note path relative to root, without `.md`. */
 export class VaultLayout {
@@ -34,8 +58,8 @@ export class VaultLayout {
 	notePath(kind: EntryKind, title: string, type?: string): string {
 		// Titles keep the legacy untrimmed form; other kinds trim and fall back like their managers.
 		const safe = kind === 'title'
-			? title.replace(UNSAFE, '-')
-			: title.replace(UNSAFE, '-').trim() || kind;
+			? safeFileName(title)
+			: safeFileName(title).trim() || kind;
 		return normalizePath(`${this.folderFor(kind, type)}/${safe}.md`);
 	}
 

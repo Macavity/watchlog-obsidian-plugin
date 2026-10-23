@@ -1,4 +1,5 @@
 import { App, Notice, Platform, PluginSettingTab, Setting, SliderComponent, normalizePath, setIcon } from 'obsidian';
+import { typeNameError } from './storage/VaultLayout';
 import { cardSizeToMinWidth } from './VirtualGrid';
 import type WatchLogPlugin from './main';
 import type { TagDefinition, ReadingStatus, GamesSettings, DateFormatPref, CardStyleTab, CardTextStyle } from './types';
@@ -36,6 +37,8 @@ interface TagListSectionConfig {
 	/** entries that keep the colour picker but can't be renamed or removed */
 	isLocked?: (name: string) => boolean;
 	add?: (name: string, color: string) => Promise<void>;
+	/** returns a message when the name is unusable (shown instead of adding or renaming) */
+	validateName?: (name: string) => string | null;
 	remove?: (name: string) => Promise<void>;
 	/** present ⇒ the name becomes an editable input; must cascade the rename */
 	rename?: (from: string, to: string) => Promise<void>;
@@ -112,7 +115,7 @@ import { CustomListManager, DefaultColumnsModal } from './CustomListsTab';
 import { ConfirmModal } from './ConfirmModal';
 import { refreshAllCovers } from './coverRefresh';
 import { apiErrorMessage, apiErrorShort } from './ApiService';
-import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup } from './backup';
+import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup, withoutSecrets } from './backup';
 
 type SettingsSection = 'general' | 'api' | 'customize' | 'watchlist' | 'drafts' | 'custom-lists' | 'reading' | 'widgets' | 'quick-info';
 
@@ -582,14 +585,15 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const filename = `watchlog-backup-${dateStr}.json`;
 
 		// notes, shared settings, log and the device-local settings including API keys (E7): keep the file private
-		const json = JSON.stringify(buildBackup(this.plugin.backupManagers()), null, 2);
+		const backup = buildBackup(this.plugin.backupManagers());
 
 		// on mobile a browser download lands in an inaccessible sandbox — write into the vault
-		// instead; desktop keeps the download path
+		// instead, without the API keys (the folder syncs); desktop keeps the download path
 		if (Platform.isMobile) {
-			await this.exportBackupToVault(filename, json);
+			await this.exportBackupToVault(filename, JSON.stringify(withoutSecrets(backup), null, 2));
 			return;
 		}
+		const json = JSON.stringify(backup, null, 2);
 
 		const blob = new Blob([json], { type: 'application/json' });
 		const url = URL.createObjectURL(blob);
@@ -627,7 +631,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		}
 
 		await adapter.write(path, json);
-		new Notice(`Backup saved to ${path}`);
+		new Notice(`Backup saved to ${path} (without API keys; enter them again after a restore).`);
 	}
 
 	private openRestoreDialog(): void {
@@ -2097,6 +2101,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 						new Notice(`"${name}" already exists.`);
 						return;
 					}
+					const problem = cfg.validateName?.(name);
+					if (problem) { new Notice(problem); return; }
 					await cfg.add!(name, colorInput.value);
 					nameInput.value = '';
 					colorInput.value = '#888780';
@@ -2157,6 +2163,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 					nameInput.value = original;
 					return;
 				}
+				const problem = cfg.validateName?.(next);
+				if (problem) { new Notice(problem); nameInput.value = original; return; }
 				committed = true;
 				void (async () => {
 					await cfg.rename!(original, next);
@@ -2209,6 +2217,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			// statuses are colour-only; locked built-in types keep their picker but lose delete
 			isLocked: (name) =>
 				isStatuses || (isTypes && WatchLogSettingsTab.LOCKED_TYPES.includes(name)),
+			...(isTypes ? { validateName: typeNameError } : {}),
 			...(isStatuses ? {} : {
 				add: async (name, color) => {
 					this.plugin.settings[key].push({ name, color });

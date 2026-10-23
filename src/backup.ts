@@ -59,6 +59,17 @@ export function buildBackup(m: BackupManagers): BackupFile {
 	};
 }
 
+/** keys a JSON file must never plant on a plain object */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const SECRET_KEY = /api.?key|secret|client.?id|steam.?id|token/i;
+
+/** The same backup without API keys and ids: for a copy that is written into the (synced) vault. */
+export function withoutSecrets(b: BackupFile): BackupFile {
+	const local: Record<string, unknown> = {};
+	for (const [k, v] of Object.entries(b.local)) if (!SECRET_KEY.test(k)) local[k] = v;
+	return { ...b, local };
+}
+
 /** Validates the whole file before anything is written. */
 export function parseBackup(text: string): { backup: BackupFile } | LegacyBackup | { error: string } {
 	let parsed: unknown;
@@ -112,7 +123,8 @@ export async function restoreBackup(m: BackupManagers, b: BackupFile): Promise<v
 	// secrets go to data.json only, never through the base; shared keys in `local` are ignored
 	const { local } = m.storage;
 	for (const [k, v] of Object.entries(b.local)) {
-		if (!SHARED_SETTING_KEYS.includes(k)) local.data.settings[k] = v;
+		if (SHARED_SETTING_KEYS.includes(k) || UNSAFE_KEYS.has(k)) continue;
+		local.data.settings[k] = v;
 	}
 	local.queueSave();
 	for (const t of b.entries.titles) {
