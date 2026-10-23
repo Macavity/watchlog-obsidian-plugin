@@ -296,7 +296,7 @@ export default class WatchLogPlugin extends Plugin {
 	private warnIfOriginalEnabled(): void {
 		const plugins = (this.app as unknown as { plugins?: { enabledPlugins?: Set<string> } }).plugins;
 		if (plugins?.enabledPlugins?.has(ORIGINAL_PLUGIN_ID)) {
-			new Notice('The original Watchlog plugin is still enabled. Disable it, otherwise both plugins write the same notes.', 0);
+			new Notice('The original WatchLog plugin is still enabled. Disable it, otherwise both plugins write the same notes.', 0);
 		}
 	}
 
