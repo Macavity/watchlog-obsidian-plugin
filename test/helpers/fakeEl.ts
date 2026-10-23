@@ -2,6 +2,11 @@
  * The HTMLElement surface the src/ui helpers call at runtime (through the `obsidian` alias and
  * duck typing), so every member below is reachable even when no test references it directly.
  */
+export interface FakeEvent {
+	key: string;
+	stopPropagation: () => void;
+}
+
 export interface FakeDom {
 	children: El[];
 	classes: Set<string>;
@@ -10,12 +15,15 @@ export interface FakeDom {
 	value: string;
 	disabled: boolean;
 	selected: boolean;
+	title: string;
 	readonly isConnected: boolean;
 	createDiv(opts?: { cls?: string; text?: string }): El;
 	createSpan(opts?: { cls?: string; text?: string }): El;
 	createEl(tag: string, opts?: { cls?: string; text?: string; attr?: Record<string, string>; value?: string }): El;
-	addEventListener(type: string, fn: () => void): void;
-	fire(type: string): void;
+	addEventListener(type: string, fn: (e: FakeEvent) => void): void;
+	fire(type: string, init?: Partial<FakeEvent>): void;
+	hide(): void;
+	focus(): void;
 	setText(text: string): void;
 	remove(): void;
 	empty(): void;
@@ -31,7 +39,9 @@ export class El implements FakeDom {
 	selected = false;
 	children: El[] = [];
 	classes = new Set<string>();
-	listeners = new Map<string, Array<() => void>>();
+	listeners = new Map<string, Array<(e: FakeEvent) => void>>();
+	title = '';
+	hidden = false;
 	dataset: Record<string, string> = {};
 	text = '';
 	value = '';
@@ -69,10 +79,15 @@ export class El implements FakeDom {
 		const classes = selector.split('.').filter(Boolean);
 		return this.findAll(classes[0]!).find((e) => classes.every((c) => e.has(c))) ?? null;
 	}
-	addEventListener(type: string, fn: () => void): void {
+	addEventListener(type: string, fn: (e: FakeEvent) => void): void {
 		this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn]);
 	}
-	fire(type: string): void { for (const fn of this.listeners.get(type) ?? []) fn(); }
+	fire(type: string, init: Partial<FakeEvent> = {}): void {
+		const e: FakeEvent = { key: '', stopPropagation: () => {}, ...init };
+		for (const fn of this.listeners.get(type) ?? []) fn(e);
+	}
+	hide(): void { this.hidden = true; }
+	focus(): void {}
 	empty(): void { for (const c of this.children) c.parent = null; this.children = []; }
 	addClass(...cs: string[]): void { for (const c of cs) this.classes.add(c); }
 	removeClass(c: string): void { this.classes.delete(c); }

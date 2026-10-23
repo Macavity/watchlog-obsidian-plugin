@@ -96,10 +96,19 @@ function renderInlineGroupInput(bar: HTMLElement, opts: MoveToGroupOptions): voi
 	const cancelBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✕' });
 	cancelBtn.title = 'Cancel';
 
+	// Enter twice (or Enter + ✓) while onCreate awaits the store would build two identical groups
+	let creating = false;
 	const doCreate = async () => {
 		const name = nameInput.value.trim();
-		if (!name) return;
-		await opts.onCreate(name);
+		if (!name || creating) return;
+		creating = true;
+		confirmBtn.disabled = true;
+		try {
+			await opts.onCreate(name);
+		} finally {
+			creating = false;
+			confirmBtn.disabled = false;
+		}
 	};
 	confirmBtn.addEventListener('click', (e) => { e.stopPropagation(); void doCreate(); });
 	// cancel only needs the toolbar back
