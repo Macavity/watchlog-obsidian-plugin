@@ -1,8 +1,71 @@
 import { App, Modal } from 'obsidian';
 import type { Book, Manga, AirtimeSchedule, AirtimeRecurrence } from './types';
-import { createDatePicker } from './DatePicker';
+import {
+	type ScheduleFormState,
+	isScheduleValid,
+	renderCounterRow,
+	renderSaveRow,
+	renderScheduleForm,
+} from './ui/ScheduleForm';
 
 type ReadingRecurringKind = Exclude<AirtimeRecurrence, 'once'>;
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Book releases once, manga usually serializes — both overridable. */
+function defaultMode(kind: 'book' | 'manga'): 'single' | 'recurring' {
+	return kind === 'book' ? 'single' : 'recurring';
+}
+
+/**
+ * mode: an explicit initialMode wins (the tick confirm's "Switch to Recurring chapters"); otherwise
+ * an existing schedule decides — auto-imported entries arrive as 'once'. Without one, default by kind.
+ */
+function initialMode(
+	kind: 'book' | 'manga',
+	s: AirtimeSchedule | null,
+	explicit?: 'single' | 'recurring',
+): 'single' | 'recurring' {
+	return explicit ?? (s ? (s.recurrence === 'once' ? 'single' : 'recurring') : defaultMode(kind));
+}
+
+function validIsoDate(value: string | null | undefined): string {
+	return value && ISO_DATE.test(value) ? value : '';
+}
+
+/** Weekly default: serials usually keep their premiere weekday, so derive it from the release date before falling back to Saturday. */
+function defaultWeekday(releaseDate: string): number {
+	return releaseDate ? new Date(releaseDate + 'T00:00:00').getDay() : 6;
+}
+
+function initialRecurrence(s: AirtimeSchedule | null): string {
+	return s && s.recurrence !== 'once' ? s.recurrence : 'weekly';
+}
+
+function initialDayOfWeek(s: AirtimeSchedule | null, releaseDate: string): number {
+	return s?.dayOfWeek ?? defaultWeekday(releaseDate);
+}
+
+function initialDayOfMonth(s: AirtimeSchedule | null): number {
+	return s?.dayOfMonth ?? 1;
+}
+
+function initialForm(
+	item: Book | Manga,
+	kind: 'book' | 'manga',
+	s: AirtimeSchedule | null,
+	explicitMode?: 'single' | 'recurring',
+): ScheduleFormState {
+	const releaseDate = s?.releaseDate ?? validIsoDate(item.releaseDate);
+	return {
+		mode: initialMode(kind, s, explicitMode),
+		recurrence: initialRecurrence(s),
+		releaseDate,
+		releaseTime: '',
+		dayOfWeek: initialDayOfWeek(s, releaseDate),
+		dayOfMonth: initialDayOfMonth(s),
+	};
+}
 
 /**
  * Schedule modal for Reading titles (Books & Manga). Mirrors AirtimeScheduleModal — Single release /
@@ -17,12 +80,9 @@ type ReadingRecurringKind = Exclude<AirtimeRecurrence, 'once'>;
 export class ReadingScheduleModal extends Modal {
 	private kind: 'book' | 'manga';
 	// UI state — Save assembles a fresh AirtimeSchedule from the fields the active mode actually shows
-	// (buildSchedule), so a value left over from another mode can never leak in
-	private mode: 'single' | 'recurring';
-	private recurrence: ReadingRecurringKind;
-	private releaseDate: string; // YYYY-MM-DD ('' = unset) — same format the Reading auto-import writes
-	private dayOfWeek: number;
-	private dayOfMonth: number;
+	// (buildSchedule), so a value left over from another mode can never leak in.
+	// releaseDate is YYYY-MM-DD ('' = unset) — same format the Reading auto-import writes
+	private form: ScheduleFormState;
 	private currentVolume: number | null;
 	private currentChapter: number | null;
 	private totalVolumes: number | null;
@@ -57,22 +117,7 @@ export class ReadingScheduleModal extends Modal {
 		super(app);
 		this.kind = kind;
 		this.onSave = onSave;
-		const s = existingSchedule;
-		// mode: an explicit initialMode wins (the tick confirm's "Switch to Recurring chapters"); otherwise
-		// an existing schedule decides — auto-imported entries arrive as 'once'. Without one, default by
-		// kind: books release once, manga usually serialize — both overridable.
-		this.mode = initialMode ?? (s
-			? (s.recurrence === 'once' ? 'single' : 'recurring')
-			: (kind === 'book' ? 'single' : 'recurring'));
-		this.recurrence = s && s.recurrence !== 'once' ? s.recurrence : 'weekly';
-		this.releaseDate =
-			s?.releaseDate ??
-			(item.releaseDate && /^\d{4}-\d{2}-\d{2}$/.test(item.releaseDate) ? item.releaseDate : '');
-		// weekly default: serials usually keep their premiere weekday, so derive it from the release date
-		// before falling back to Saturday
-		this.dayOfWeek = s?.dayOfWeek ??
-			(this.releaseDate ? new Date(this.releaseDate + 'T00:00:00').getDay() : 6);
-		this.dayOfMonth = s?.dayOfMonth ?? 1;
+		this.form = initialForm(item, kind, existingSchedule, initialMode);
 		this.currentVolume = currentVolume;
 		this.currentChapter = currentChapter;
 		// pre-fill totals from the item's tracked counts when not yet set
@@ -94,7 +139,7 @@ export class ReadingScheduleModal extends Modal {
 
 	/** Single release needs a date; recurring is always saveable (its inputs can't hold an invalid value). */
 	private isValid(): boolean {
-		return this.mode !== 'single' || this.releaseDate !== '';
+		return isScheduleValid(this.form);
 	}
 
 	private updateSaveState(): void {
@@ -106,151 +151,67 @@ export class ReadingScheduleModal extends Modal {
 	 * releaseTime.
 	 */
 	private buildSchedule(): AirtimeSchedule {
-		if (this.mode === 'single') {
-			return { recurrence: 'once', releaseDate: this.releaseDate };
+		const f = this.form;
+		if (f.mode === 'single') {
+			return { recurrence: 'once', releaseDate: f.releaseDate };
 		}
+		const recurrence = f.recurrence as ReadingRecurringKind;
 		return {
-			recurrence: this.recurrence,
-			...(this.recurrence === 'weekly' ? { dayOfWeek: this.dayOfWeek } : {}),
-			...(this.recurrence === 'monthly' ? { dayOfMonth: this.dayOfMonth } : {}),
+			recurrence,
+			...(recurrence === 'weekly' ? { dayOfWeek: f.dayOfWeek } : {}),
+			...(recurrence === 'monthly' ? { dayOfMonth: f.dayOfMonth } : {}),
 		};
+	}
+
+	/** Progress: Manga → Volume [2] of [12] · Chapter [12] of [120]. Books track only chapters. */
+	private renderCounters(parent: HTMLElement): void {
+		const groups = [];
+		if (this.kind === 'manga') {
+			groups.push({
+				label: 'Volume',
+				current: { aria: 'Current volume', value: this.currentVolume, onInput: (v: number | null) => { this.currentVolume = v; } },
+				total: { aria: 'Total volumes', value: this.totalVolumes, onInput: (v: number | null) => { this.totalVolumes = v; } },
+			});
+		}
+		groups.push({
+			label: 'Chapter',
+			current: { aria: 'Next chapter', value: this.currentChapter, onInput: (v: number | null) => { this.currentChapter = v; } },
+			total: { aria: 'Total chapters', value: this.totalChapters, onInput: (v: number | null) => { this.totalChapters = v; } },
+		});
+		renderCounterRow(parent, groups);
+	}
+
+	private hintFor(mode: 'single' | 'recurring'): string {
+		if (mode === 'single') return "Saving also updates this title's release date.";
+		return this.kind === 'manga'
+			? "Saving also updates this title's total chapters and volumes."
+			: "Saving also updates this title's total chapters.";
 	}
 
 	private renderForm(): void {
 		const content = this.contentEl;
 		content.empty();
 
-		const makeRow = (parent: HTMLElement, label: string): HTMLElement => {
-			const row = parent.createDiv({ cls: 'wl-modal-row' });
-			row.createSpan({ cls: 'wl-modal-label', text: label });
-			return row;
-		};
-
-		// mode toggle
-		const modeRow = content.createDiv({ cls: 'wl-schedule-mode-row' });
-		const makeModeBtn = (label: string, value: 'single' | 'recurring'): void => {
-			const btn = modeRow.createEl('button', {
-				cls: `wl-btn wl-btn-sm wl-schedule-mode-btn${this.mode === value ? ' is-active' : ''}`,
-				text: label,
-			});
-			btn.addEventListener('click', () => {
-				if (this.mode === value) return;
-				this.mode = value;
-				this.renderForm();
-			});
-		};
-		makeModeBtn('Single release', 'single');
-		makeModeBtn('Recurring chapters', 'recurring');
-
-		if (this.mode === 'single') {
-			// single release: just a date
-			const dateRow = makeRow(content, 'Release date');
-			createDatePicker({
-				parent: dateRow,
-				inputCls: 'wl-modal-input wl-date-input',
-				value: this.releaseDate || null,
-				lenient: true,
-				onChange: (iso) => {
-					// the picker only ever commits YYYY-MM-DD or null — no silent-failure path
-					this.releaseDate = iso ?? '';
-					this.updateSaveState();
-				},
-			});
-		} else {
-			// recurring: cadence + its one extra field
-			const recRow = makeRow(content, 'Releases');
-			const recSelect = recRow.createEl('select', { cls: 'wl-select' });
-			const recOptions: Array<[ReadingRecurringKind, string]> = [
-				['daily', 'Daily'],
-				['weekly', 'Weekly'],
-				['monthly', 'Monthly'],
-			];
-			for (const [val, label] of recOptions) {
-				const opt = recSelect.createEl('option', { text: label, value: val });
-				if (val === this.recurrence) opt.selected = true;
-			}
-
-			const extraEl = content.createDiv();
-			const renderExtra = (): void => {
-				extraEl.empty();
-				if (this.recurrence === 'weekly') {
-					const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-					const r = makeRow(extraEl, 'Day of week');
-					const daySelect = r.createEl('select', { cls: 'wl-select' });
-					DAYS.forEach((d, i) => {
-						const opt = daySelect.createEl('option', { text: d, value: String(i) });
-						if (i === this.dayOfWeek) opt.selected = true;
-					});
-					daySelect.addEventListener('change', () => {
-						this.dayOfWeek = parseInt(daySelect.value, 10);
-					});
-				}
-				if (this.recurrence === 'monthly') {
-					const r = makeRow(extraEl, 'Day of month');
-					const inp = r.createEl('input', {
-						cls: 'wl-modal-input wl-modal-input-sm',
-						attr: { type: 'number', min: '1', max: '31', placeholder: '1' },
-					});
-					inp.value = String(this.dayOfMonth);
-					inp.addEventListener('input', () => {
-						const v = parseInt(inp.value, 10);
-						this.dayOfMonth = isNaN(v) ? 1 : Math.min(31, Math.max(1, v));
-					});
-				}
-			};
-			recSelect.addEventListener('change', () => {
-				this.recurrence = recSelect.value as ReadingRecurringKind;
-				renderExtra();
-			});
-			renderExtra();
-
-			// progress: Manga → Volume [2] of [12] · Chapter [12] of [120]. Books track only chapters, so the
-			// volume half is omitted.
-			const progRow = content.createDiv({ cls: 'wl-modal-row wl-schedule-progress-row' });
-			const makeNum = (
-				value: number | null,
-				aria: string,
-				onInput: (v: number | null) => void,
-			): void => {
-				const inp = progRow.createEl('input', {
-					cls: 'wl-modal-input wl-schedule-num',
-					attr: { type: 'number', min: '0', placeholder: '—', 'aria-label': aria },
-				});
-				if (value !== null) inp.value = String(value);
-				inp.addEventListener('input', () => onInput(parseInt(inp.value, 10) || null));
-			};
-			if (this.kind === 'manga') {
-				progRow.createSpan({ cls: 'wl-modal-label', text: 'Volume' });
-				makeNum(this.currentVolume, 'Current volume', (v) => { this.currentVolume = v; });
-				progRow.createSpan({ cls: 'wl-schedule-progress-sep', text: 'of' });
-				makeNum(this.totalVolumes, 'Total volumes', (v) => { this.totalVolumes = v; });
-				progRow.createSpan({ cls: 'wl-schedule-progress-sep wl-schedule-progress-dot', text: '·' });
-			}
-			progRow.createSpan({ cls: 'wl-modal-label', text: 'Chapter' });
-			makeNum(this.currentChapter, 'Next chapter', (v) => { this.currentChapter = v; });
-			progRow.createSpan({ cls: 'wl-schedule-progress-sep', text: 'of' });
-			makeNum(this.totalChapters, 'Total chapters', (v) => { this.totalChapters = v; });
-		}
-
-		// the save side-effects, stated instead of silent
-		content.createDiv({
-			cls: 'wl-modal-info wl-schedule-hint',
-			text: this.mode === 'single'
-				? "Saving also updates this title's release date."
-				: this.kind === 'manga'
-					? "Saving also updates this title's total chapters and volumes."
-					: "Saving also updates this title's total chapters.",
+		renderScheduleForm(content, this.form, {
+			withTime: false,
+			withRecurring: true,
+			recurrenceLabel: 'Releases',
+			recurrenceOptions: [
+				{ value: 'daily', label: 'Daily' },
+				{ value: 'weekly', label: 'Weekly' },
+				{ value: 'monthly', label: 'Monthly' },
+			],
+			modeLabels: ['Single release', 'Recurring chapters'],
+			hint: (mode) => this.hintFor(mode),
+			renderCounters: (parent) => this.renderCounters(parent),
+			onChange: () => this.updateSaveState(),
+			onModeChange: () => this.renderForm(),
 		});
 
-		// cancel / save
-		const btnRow = content.createDiv({ cls: 'wl-modal-btn-row' });
-		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-mr', text: 'Cancel' });
-		cancelBtn.addEventListener('click', () => this.close());
-
-		this.saveBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' });
-		this.saveBtn.addEventListener('click', () => {
-			if (!this.isValid()) return;
-			void (async () => {
+		this.saveBtn = renderSaveRow(content, {
+			isValid: () => this.isValid(),
+			onCancel: () => this.close(),
+			onSave: async () => {
 				await this.onSave(
 					this.buildSchedule(),
 					this.currentVolume,
@@ -259,7 +220,7 @@ export class ReadingScheduleModal extends Modal {
 					this.totalChapters,
 				);
 				this.close();
-			})();
+			},
 		});
 		this.updateSaveState();
 	}
