@@ -16,11 +16,11 @@ export interface ScheduleFormState {
 export interface ScheduleFormOptions {
 	withTime: boolean;
 	withRecurring: boolean;
-	/** Label of the recurrence select row (e.g. "Airs"). */
-	recurrenceLabel: string;
-	recurrenceOptions: Array<{ value: string; label: string }>;
-	/** Labels of the Single / Recurring toggle buttons. */
-	modeLabels: [string, string];
+	/** Label of the recurrence select row (e.g. "Airs"); required with withRecurring. */
+	recurrenceLabel?: string;
+	recurrenceOptions?: Array<{ value: string; label: string }>;
+	/** Labels of the Single / Recurring toggle buttons; required with withRecurring. */
+	modeLabels?: [string, string];
 	hint: (mode: ScheduleMode) => string;
 	/** Text next to the time input (e.g. a JST conversion); only used with withTime. */
 	timeNote?: (time: string) => string;
@@ -71,8 +71,9 @@ function renderModeToggle(parent: HTMLElement, state: ScheduleFormState, options
 			options.onModeChange();
 		});
 	};
-	makeModeBtn(options.modeLabels[0], 'single');
-	makeModeBtn(options.modeLabels[1], 'recurring');
+	const [singleLabel, recurringLabel] = options.modeLabels ?? ['Single release', 'Recurring'];
+	makeModeBtn(singleLabel, 'single');
+	makeModeBtn(recurringLabel, 'recurring');
 }
 
 function renderDateRow(parent: HTMLElement, state: ScheduleFormState, options: ScheduleFormOptions): void {
@@ -140,9 +141,9 @@ function renderMonthdayRow(parent: HTMLElement, state: ScheduleFormState, option
 
 /** Cadence select + its one extra field (+ time). */
 function renderRecurringFields(parent: HTMLElement, state: ScheduleFormState, options: ScheduleFormOptions): void {
-	const recRow = makeRow(parent, options.recurrenceLabel);
+	const recRow = makeRow(parent, options.recurrenceLabel ?? '');
 	const recSelect = recRow.createEl('select', { cls: 'wl-select' });
-	for (const { value, label } of options.recurrenceOptions) {
+	for (const { value, label } of options.recurrenceOptions ?? []) {
 		const opt = recSelect.createEl('option', { text: label, value });
 		if (value === state.recurrence) opt.selected = true;
 	}
