@@ -51,7 +51,7 @@ async function pickVault() {
 
 try {
 	const v = await pickVault();
-	execFileSync("npm", ["run", "build"], { cwd: REPO, stdio: "inherit" });
+	execFileSync("pnpm", ["build"], { cwd: REPO, stdio: "inherit" });
 	const target = join(v.path, ".obsidian", "plugins", PLUGIN_ID);
 	mkdirSync(target, { recursive: true });
 	for (const f of FILES) copyFileSync(join(REPO, f), join(target, f));
