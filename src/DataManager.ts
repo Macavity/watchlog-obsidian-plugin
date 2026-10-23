@@ -157,10 +157,6 @@ export class DataManager {
 		this.layout = stores.layout;
 	}
 
-	getLayout(): VaultLayout {
-		return this.layout();
-	}
-
 	/** After index.build(): reads note bodies and follows index/vault changes. */
 	async init(): Promise<void> {
 		await Promise.all(this.index.titles().map((t) => this.readNotes(t.id)));
@@ -502,11 +498,6 @@ export class DataManager {
 		await this.shared.update(settings);
 	}
 
-	/** Centralized debounced save for cross-cutting paths (settings, drafts, lists). */
-	queueSave(): void {
-		this.local.queueSave();
-	}
-
 	flushQueuedSaveSync(): void {
 		void this.local.flush();
 	}
@@ -652,20 +643,6 @@ export class DataManager {
 		}
 	}
 
-	/** Batch-update via mutator. Single notify; notes updated. */
-	async batchUpdate(ids: string[], mutator: (t: WatchLogTitle) => void): Promise<void> {
-		let updated = 0;
-		for (const id of ids) {
-			const t = this.getTitle(id);
-			if (!t) continue;
-			mutator(t);
-			t.dateModified = new Date().toISOString();
-			await this.writeTitle(t);
-			updated++;
-		}
-		if (updated > 0) this.notifyListeners();
-	}
-
 	/** Remove multiple titles in one batch: single notify, notes trashed in chunks of 10. */
 	async removeTitlesBatch(ids: string[]): Promise<void> {
 		const CHUNK_SIZE = 10;
@@ -685,9 +662,6 @@ export class DataManager {
 		today.setHours(0, 0, 0, 0);
 		return release > today;
 	}
-
-	/** Upcoming is derived from "To be released" + releaseDate (see getAirtimeEntries): nothing to add. */
-	async autoAddToUpcoming(_title: WatchLogTitle): Promise<void> {}
 
 	/**
 	 * Reconciles the auto "To be released" status with a release-date edit; Upcoming follows from it.
@@ -1314,17 +1288,6 @@ export class DataManager {
 		return Math.max(0, title.totalEpisodes - this.getTotalSkippedCount(title));
 	}
 
-	/** True when absoluteEpNum falls in any season's skippedEpisodes list. */
-	isEpisodeSkipped(title: WatchLogTitle, absoluteEpNum: number): boolean {
-		for (const season of title.seasons) {
-			const rel = absoluteEpNum - season.offset;
-			if (rel >= 1 && rel <= season.episodes && (season.skippedEpisodes ?? []).includes(rel)) {
-				return true;
-			}
-		}
-		return false;
-	}
-
 	/**
 	 * In-memory toggle of an episode's watched state plus auto-complete. Schedules a debounced save
 	 * and does NOT notify — the caller owns targeted DOM updates. Returns the mutated title.
@@ -1837,16 +1800,6 @@ export class DataManager {
 		return this.getTitles()
 			.sort((a, b) => b.dateAdded.localeCompare(a.dateAdded))
 			.slice(0, count);
-	}
-
-	getStatsByType(type: string): { watched: number; total: number } {
-		const EXCLUDED = ['Dropped', 'To be released'];
-		const all = this.getTitles();
-		const titles = (type === 'All' ? all : all.filter((t) => t.type === type))
-			.filter((t) => !EXCLUDED.includes(t.status));
-		const total = titles.length;
-		const watched = titles.filter((t) => t.status === 'Completed').length;
-		return { watched, total };
 	}
 
 	getCompletedCount(): number {

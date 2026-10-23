@@ -117,13 +117,6 @@ export class ReadingDataManager {
 		this.notifyListeners();
 	}
 
-	/** Re-reads settings and drops cached copies (backup restore, external reload). */
-	async load(): Promise<void> {
-		this.readShared();
-		this.views.clear();
-		this.notifyListeners();
-	}
-
 	// Settings + columns (shared config)
 
 	/** Composes the local (data.json) and shared (base) reading settings into memory; never writes. */
@@ -398,11 +391,6 @@ export class ReadingDataManager {
 		);
 	}
 
-	async addBookSilent(book: Book): Promise<void> {
-		this.applyReleaseStatus(book);
-		await this.createNote('book', book);
-	}
-
 	async updateBook(updated: Book): Promise<void> {
 		await this.updateItem('book', updated, 'Book');
 	}
@@ -460,11 +448,6 @@ export class ReadingDataManager {
 			`${manga.title} (Manga) was added`,
 			{ source: 'Reading', action: 'added', titleName: manga.title, titleId: manga.id },
 		);
-	}
-
-	async addMangaSilent(manga: Manga): Promise<void> {
-		this.applyReleaseStatus(manga);
-		await this.createNote('manga', manga);
 	}
 
 	async updateManga(updated: Manga): Promise<void> {
@@ -910,9 +893,5 @@ export class ReadingDataManager {
 			const sep = current.endsWith('\n') ? '' : '\n';
 			return `${current}${sep}\n## Quotes\n\n${callout}\n`;
 		});
-	}
-
-	async deleteReadingNote(_kind: ReadingKind, item: Item): Promise<void> {
-		await this.deleteNote(item.id);
 	}
 }
