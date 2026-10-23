@@ -17,6 +17,7 @@ import { TITLE_CACHE_KEYS, decodeTitle, encodeTitle, isMovie, seasonsPending, sp
 import { externalIdFromLink } from './storage/externalId';
 import { decodeBook, decodeManga, encodeAirtime } from './storage/readingCodec';
 import { decodeGame } from './storage/gameCodec';
+import { extractNotes, replaceNotesSection } from './storage/noteBody';
 
 export interface DataStores {
 	index: EntryIndex;
@@ -61,45 +62,12 @@ function scheduleOf(a: EntryAirtime, releaseDate: string | null): AirtimeSchedul
 	return s;
 }
 
-const NOTES_RE = /(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/;
-
 /** Minimum gap between two API refreshes of a title's airing pointer, unless forced. */
 /** Retry deadline per outcome of a background API check; a missing key waits until a key changes. */
 const API_CHECK_TTL_MS = { ok: 6 * 3_600_000, transient: 3_600_000, notfound: 7 * 24 * 3_600_000 };
 type ApiCheckKind = 'airing' | 'seasons';
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
-
-/** `## Notes` body of a note; null when the section is absent. */
-function extractNotes(content: string): string | null {
-	const match = content.match(NOTES_RE);
-	if (!match) return null;
-	// strip the template's leading blank line and trailing whitespace, keep internal breaks
-	return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
-}
-
-/**
- * Replaces the `## Notes` body, preserving the heading, every other section, the frontmatter and
- * any prose outside it. Appends the heading when missing (never duplicated). The boundary matches
- * extractNotes, so read-then-write round-trips cleanly.
- */
-function replaceNotesSection(existing: string, notesBody: string): string {
-	const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
-	if (!headingMatch || headingMatch.index === undefined) {
-		const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
-		return `${existing}${sep}\n## Notes\n\n${notesBody}\n`;
-	}
-	const bodyStart = headingMatch.index + headingMatch[0].length;
-	const after = existing.slice(bodyStart);
-	const nextHeading = after.match(/\n(?:## |# )/);
-	const bodyEnd =
-		nextHeading && nextHeading.index !== undefined
-			? bodyStart + nextHeading.index
-			: existing.length;
-	const before = existing.slice(0, bodyStart);
-	const rest = existing.slice(bodyEnd);
-	return `${before}\n${notesBody}\n${rest}`;
-}
 
 /**
  * Watchlist titles, backed by one note per title. Reads come from the EntryIndex (frontmatter) plus

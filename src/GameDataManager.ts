@@ -7,6 +7,7 @@ import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
 import { splitNested, type SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { decodeGame, encodeGame } from './storage/gameCodec';
+import { extractNotes, replaceNotesSection } from './storage/noteBody';
 import {
 	Game,
 	GameGroup,
@@ -22,7 +23,6 @@ import {
 	todayIso,
 } from './types';
 
-const NOTES_RE = /(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/;
 const GAMES_FOLDER_PREFIX = 'Games/';
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
@@ -32,29 +32,6 @@ function slugify(input: string): string {
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, '-')
 		.replace(/^-|-$/g, '');
-}
-
-/** `## Notes` body of a note; null when the section is absent. */
-function extractNotes(content: string): string | null {
-	const match = content.match(NOTES_RE);
-	if (!match) return null;
-	// strip the template's leading blank line and trailing whitespace, keep internal breaks
-	return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
-}
-
-/** Replaces the `## Notes` body, keeping the heading, other sections and frontmatter; appends when missing. */
-function replaceNotesSection(existing: string, notesBody: string): string {
-	const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
-	if (!headingMatch || headingMatch.index === undefined) {
-		const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
-		return `${existing}${sep}\n## Notes\n\n${notesBody}\n`;
-	}
-	const bodyStart = headingMatch.index + headingMatch[0].length;
-	const after = existing.slice(bodyStart);
-	const nextHeading = after.match(/\n(?:## |# )/);
-	const bodyEnd =
-		nextHeading && nextHeading.index !== undefined ? bodyStart + nextHeading.index : existing.length;
-	return `${existing.slice(0, bodyStart)}\n${notesBody}\n${existing.slice(bodyEnd)}`;
 }
 
 /**
