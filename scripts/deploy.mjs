@@ -1,4 +1,4 @@
-// Builds the plugin and copies the output into a vault's .obsidian/plugins/watchlog (copies, not a symlink, so Obsidian Sync picks the files up).
+// Builds the plugin and copies the output into a vault's .obsidian/plugins/watchlog-sync (copies, not a symlink, so Obsidian Sync picks the files up).
 // Usage:
 //   node scripts/deploy.mjs [vault-name]   -> a vault registered in Obsidian; without a name, pick from a list
 import { execFileSync } from "node:child_process";
@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
-const PLUGIN_ID = "watchlog";
+const PLUGIN_ID = "watchlog-sync";
 const FILES = ["manifest.json", "main.js", "styles.css"];
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const wanted = process.argv[2];

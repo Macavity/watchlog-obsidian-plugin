@@ -1,7 +1,7 @@
 {
-	"name": "watchlog-plugin",
-	"version": "3.1.2",
-	"description": "Track your anime, movies, books, manga, TV shows and Games; with episode tracking, progress stats, upcoming release alerts, and embeddable widgets.",
+	"name": "watchlog-sync-plugin",
+	"version": "4.0.0",
+	"description": "Track anime, movies, TV shows, books, manga and games as notes in your vault, synced across devices. Fork of WatchLog by BogdanS.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {

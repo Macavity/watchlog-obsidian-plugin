@@ -1,6 +1,24 @@
 # Changelog
 
-All notable changes to WatchLog are documented here.
+All notable changes to WatchLog Sync are documented here. Versions up to 3.1.2 are the upstream
+[WatchLog](https://github.com/Shynkro/watchlog-obsidian-plugin) by BogdanS.
+
+## [4.0.0] - unreleased
+
+Fork as **WatchLog Sync** (plugin id `watchlog-sync`).
+
+##### Changed
+
+* Tracked data lives in the vault: one note per entry, `History.md` for the log, `WatchLog.base` for the shared settings. `data.json` only keeps API keys, cache and per-device UI settings.
+* Multiple devices work on the same vault through any sync tool; notes are the source of truth and external edits are picked up.
+* Colors, palettes, layouts and saved filters are per device; types, statuses, priorities and custom columns are shared.
+
+##### Added
+
+* Automatic migration from `data.json` (schema 1) and from the original plugin's folder when this plugin starts empty. A `data.v1-backup.json` is written first.
+* Backup restore converts old backups into notes.
+* `npm run deploy` copies a build into a registered vault.
+* Test suite (vitest).
 ## [3.1.2] - 2026-08-11
 
 * Mobile add modal fix: stack year + search under the query

@@ -22,6 +22,7 @@ import { EntryIndex } from './storage/EntryIndex';
 import { HistoryStore } from './storage/HistoryStore';
 import { hasWatchlogKey } from './storage/baseFile';
 import { legacyRoot, migrateV1 } from './storage/migrateV1';
+import { loadOwnOrOriginal } from './storage/legacyPlugin';
 import type { BackupManagers } from './backup';
 import { composeSettings, persistSettings } from './settingsSplit';
 import { runAirtimeScheduler } from './airtimeScheduler';
@@ -33,11 +34,20 @@ export default class WatchLogPlugin extends Plugin {
 	settings: WatchLogPluginSettings = DEFAULT_SETTINGS;
 	// schema-1 data.json awaiting migration; LocalStore never writes data.json meanwhile
 	private legacyData: WatchLogData | null = null;
+	// folder of the original plugin when its data.json was adopted; backups go next to it
+	private legacySourceDir: string | null = null;
 	private indexReady = false;
 	private typeNamesKey: string | null = null;
 	private layout = new VaultLayout(DEFAULT_ROOT, () => this.settings.types.map((t) => t.name));
 	private local = new LocalStore({
-		loadData: () => this.loadData(),
+		loadData: async () => {
+			const loaded = await loadOwnOrOriginal(() => this.loadData(), {
+				configDir: this.app.vault.configDir,
+				adapter: this.app.vault.adapter,
+			});
+			this.legacySourceDir = loaded.dir ?? null;
+			return loaded.raw;
+		},
 		saveData: (d) => this.saveData(d),
 	});
 	private yaml = { parse: parseYaml, stringify: stringifyYaml };
@@ -93,6 +103,9 @@ export default class WatchLogPlugin extends Plugin {
 			this.legacyData = loaded.legacy;
 		} else if (loaded.schema === 'newer') {
 			new Notice('Watchlog: data.json was written by a newer plugin version. Device settings are not saved until you update.', 0);
+		} else if (this.legacySourceDir !== null) {
+			// a schema-2 data.json taken over from the original plugin: persist the copy as our own
+			this.local.queueSave();
 		}
 		// local + defaults only; shared keys are re-composed once the base is loaded (startVaultStorage)
 		await this.loadSettings();
@@ -282,7 +295,7 @@ export default class WatchLogPlugin extends Plugin {
 	private async migrate(legacy: WatchLogData): Promise<void> {
 		const report = await migrateV1({
 			app: this.app,
-			plugin: this,
+			plugin: { manifest: { dir: this.legacySourceDir ?? this.manifest.dir } },
 			local: this.local,
 			legacy,
 			shared: this.shared,

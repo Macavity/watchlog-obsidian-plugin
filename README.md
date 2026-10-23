@@ -1,8 +1,15 @@
-# WatchLog
+# WatchLog Sync
 
-Track anime, movies, TV shows, books, manga and games in one place — inside your vault.
+Track anime, movies, TV shows, books, manga and games in one place — as notes in your vault, on
+every device.
 
-WatchLog adds a sidebar panel with eight tabs:
+This is a fork of [WatchLog](https://github.com/Shynkro/watchlog-obsidian-plugin) by BogdanS. The
+original keeps all tracked data in the plugin's `data.json`, which does not travel between devices
+(see [upstream issue #24](https://github.com/Shynkro/watchlog-obsidian-plugin/issues/24)). This fork
+moves the data into the vault so that Obsidian Sync, Syncthing, Git, Remotely Save and friends sync
+it like any other note. UI and features are otherwise the same.
+
+WatchLog Sync adds a sidebar panel with eight tabs:
 
 - **Dashboard** — progress rings, time watched/remaining, library stats across all four libraries.
 - **Watchlist** — titles and groups with per-episode tracking, seasons, skipped episodes, community ratings (IMDb / MAL / AniList / TMDB), studios, cast and directors.
@@ -13,9 +20,35 @@ WatchLog adds a sidebar panel with eight tabs:
 - **Drafts** — scans your vault for a tag (default `#watchlog`) and turns those lines into entries.
 - **Log** — a unified activity timeline of everything you add, finish, rate or delete.
 
-Everything is stored in your vault: each entry gets a Markdown note with YAML frontmatter, and inline
-code-block widgets (`wl-todo`, `wl-stat`, `wl-upcoming`, `wl-nowwatching`, `wl-now-next`) render live
-progress anywhere in your notes. Desktop and mobile.
+Inline code-block widgets (`wl-todo`, `wl-stat`, `wl-upcoming`, `wl-nowwatching`, `wl-now-next`)
+render live progress anywhere in your notes. Desktop and mobile.
+
+---
+
+### Where your data lives
+
+Everything you track is a Markdown note with YAML frontmatter, under one root folder (default
+`WatchLog/`, one subfolder per type). The notes are the source of truth: edit the frontmatter by
+hand, on any device, and the plugin picks it up.
+
+| What | Where | Synced |
+|---|---|---|
+| Entries (titles, books, manga, games), progress, ratings, groups | notes in the root folder | yes |
+| Activity log | `History.md` in the root folder | yes |
+| Shared settings: types, statuses, priorities, custom columns, API mapping | `WatchLog.base` in the root folder (`watchlog:` block) | yes |
+| API keys, Steam id, cached API data, colors, layout, saved filters | `data.json` of the plugin | no, per device |
+
+Set up a second device by syncing the vault and installing the plugin. It finds the base file,
+reads the notes and is ready; only API keys have to be entered again.
+
+### Coming from the original WatchLog
+
+Install WatchLog Sync next to the original and start Obsidian once. If this plugin has no data of
+its own yet, it reads the original's `data.json`, writes a `data.v1-backup.json` beside it and
+converts everything into notes. Existing notes are never overwritten, and a second device with the
+same old data adds nothing twice. Afterwards you can disable the original plugin.
+
+The same conversion runs for a JSON backup restored via **Settings → General**.
 
 ---
 
@@ -24,7 +57,7 @@ progress anywhere in your notes. Desktop and mobile.
 This is the only real setup step. Everything works manually without a key, but APIs are what fill in
 posters, covers, episode counts, release dates and ratings for you.
 
-Go to **Settings → WatchLog → API**. Each library is a card:
+Go to **Settings → WatchLog Sync → API**. Each library is a card:
 
 - **Movies & TV shows** — pick OMDb *or* TMDB, paste the key.
 - **Anime** — pick Jikan or AniList. No key needed either way.
@@ -48,6 +81,7 @@ any note also queues it up in the Drafts tab.
 - **Settings → Customize** — themes, card sizes and text placement, and your own types, statuses,
   priorities, genres and platforms with colors.
 - **Settings → General** — date format, half-star ratings, JSON backup & restore.
+- Types and statuses are shared via the base file, colors are per device: the same vocabulary everywhere, your own look on each.
 - The ⋮ menu on any card has Edit, Refresh cover, Open note and Delete.
 
 ---
@@ -100,16 +134,15 @@ film collections). Steam needs your profile's **Game details** privacy set to Pu
 
 ---
 
-## Support me
+## Support the original author
 
-If WatchLog is useful to you, you can support development here:
+WatchLog Sync builds on the work of BogdanS. If the plugin is useful to you, consider supporting the
+original:
 
 <a href="https://buymeacoffee.com/bogdanyo17i" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48"></a>
-
-There is also a **Buy me a coffee** button in **Settings → WatchLog → General**.
 
 ---
 
 ## License
 
-[MIT](LICENSE) © Shynkro (BogdanS)
+[MIT](LICENSE) © Shynkro (BogdanS), fork © Alexander Pape

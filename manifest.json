@@ -1,10 +1,10 @@
 {
-	"id": "watchlog",
-	"name": "WatchLog",
-	"version": "3.1.2",
+	"id": "watchlog-sync",
+	"name": "WatchLog Sync",
+	"version": "4.0.0",
 	"minAppVersion": "1.11.0",
-	"description": "Track your anime, movies, books, manga, TV shows and Games; with episode tracking, progress stats, upcoming release alerts, and embeddable widgets.",
-	"author": "BogdanS",
-	"authorUrl": "",
+	"description": "Track anime, movies, TV shows, books, manga and games as notes in your vault, synced across devices. Fork of WatchLog by BogdanS.",
+	"author": "Alexander Pape",
+	"authorUrl": "https://github.com/Macavity",
 	"isDesktopOnly": false
 }
