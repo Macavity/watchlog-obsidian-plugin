@@ -1268,31 +1268,33 @@ export class DataManager {
 		const title = this.getTitle(id);
 		if (!title || this.blockedBySeasonRefill(title)) return null;
 
-		if (watched) {
-			if (!title.watchedEpisodes.includes(episodeNumber)) {
-				title.watchedEpisodes.push(episodeNumber);
-				title.watchedEpisodes.sort((a, b) => a - b);
-			}
-			const now = new Date().toISOString();
-			if (title.totalEpisodes > 1) {
-				void this.historyManager?.log(
-					`${title.title} (${title.type}) episode ${episodeNumber} was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
-				);
-			} else {
-				void this.historyManager?.log(
-					`${title.title} (${title.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
-				);
-			}
-		} else {
-			title.watchedEpisodes = title.watchedEpisodes.filter((e) => e !== episodeNumber);
-		}
+		this.toggleEpisode(title, episodeNumber, watched);
+		if (watched) this.logEpisodeWatched(title, episodeNumber);
 
 		title.dateModified = new Date().toISOString();
 		this.applyAutoCompleteRules(title);
 		this.scheduleEpisodeSave(id);
 		return title;
+	}
+
+	private logEpisodeWatched(title: WatchLogTitle, episodeNumber: number): void {
+		const when = formatHistoryDate(new Date().toISOString());
+		const text = title.totalEpisodes > 1
+			? `${title.title} (${title.type}) episode ${episodeNumber} was marked as watched on ${when}`
+			: `${title.title} (${title.type}) was marked as watched on ${when}`;
+		void this.historyManager?.log(text, {
+			source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id,
+		});
+	}
+
+	/** Adds (sorted, deduplicated) or removes one episode in the watched list. */
+	private toggleEpisode(title: WatchLogTitle, episodeNumber: number, watched: boolean): void {
+		if (!watched) {
+			title.watchedEpisodes = title.watchedEpisodes.filter((e) => e !== episodeNumber);
+		} else if (!title.watchedEpisodes.includes(episodeNumber)) {
+			title.watchedEpisodes.push(episodeNumber);
+			title.watchedEpisodes.sort((a, b) => a - b);
+		}
 	}
 
 	/** Shared auto-complete / un-complete rules. Mutates title in place. */
@@ -1337,41 +1339,10 @@ export class DataManager {
 		const title = this.getTitle(id);
 		if (!title || this.blockedBySeasonRefill(title)) return;
 
-		if (watched) {
-			if (!title.watchedEpisodes.includes(episodeNumber)) {
-				title.watchedEpisodes.push(episodeNumber);
-				title.watchedEpisodes.sort((a, b) => a - b);
-			}
-			const now = new Date().toISOString();
-			if (title.totalEpisodes > 1) {
-				void this.historyManager?.log(
-					`${title.title} (${title.type}) episode ${episodeNumber} was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
-				);
-			} else {
-				void this.historyManager?.log(
-					`${title.title} (${title.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
-				);
-			}
-		} else {
-			title.watchedEpisodes = title.watchedEpisodes.filter((e) => e !== episodeNumber);
-		}
+		this.toggleEpisode(title, episodeNumber, watched);
+		if (watched) this.logEpisodeWatched(title, episodeNumber);
 
-		const effectiveTotal = this.getEffectiveTotal(title);
-		if (
-			this.plugin.settings.autoCompleteOnLastEpisode &&
-			effectiveTotal > 0 &&
-			title.watchedEpisodes.length >= effectiveTotal
-		) {
-			title.status = 'Completed';
-			if (this.plugin.settings.setFinishDateAutomatically && !title.dateFinished) {
-				title.dateFinished = todayIso();
-			}
-		} else if (title.status === 'Completed' && title.watchedEpisodes.length < effectiveTotal) {
-			title.status = 'Watching';
-			title.dateFinished = null;
-		}
+		this.applyAutoCompleteRules(title);
 
 		await this.updateTitle(title);
 	}
@@ -1412,20 +1383,7 @@ export class DataManager {
 			}
 		}
 
-		const effectiveTotal = this.getEffectiveTotal(title);
-		if (
-			this.plugin.settings.autoCompleteOnLastEpisode &&
-			effectiveTotal > 0 &&
-			title.watchedEpisodes.length >= effectiveTotal
-		) {
-			title.status = 'Completed';
-			if (this.plugin.settings.setFinishDateAutomatically && !title.dateFinished) {
-				title.dateFinished = todayIso();
-			}
-		} else if (title.status === 'Completed' && title.watchedEpisodes.length < effectiveTotal) {
-			title.status = 'Watching';
-			title.dateFinished = null;
-		}
+		this.applyAutoCompleteRules(title);
 
 		await this.updateTitle(title);
 	}
