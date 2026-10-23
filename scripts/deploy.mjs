@@ -23,7 +23,7 @@ function listVaults() {
 
 /** Interactive choice from a numbered list; throws when not on a TTY or aborted. */
 async function askVault(vaults) {
-	if (!process.stdin.isTTY) throw new Error("Pass a vault name: npm run deploy -- <name>");
+	if (!process.stdin.isTTY) throw new Error("Pass a vault name: pnpm run deploy -- <name>");
 	console.log("Registered vaults:");
 	vaults.forEach((v, i) => console.log(`  ${String(i + 1).padStart(2)}  ${v.name}\t${v.path}`));
 	const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -51,7 +51,7 @@ async function pickVault() {
 
 try {
 	const v = await pickVault();
-	execFileSync("npm", ["run", "build"], { cwd: REPO, stdio: "inherit" });
+	execFileSync("pnpm", ["build"], { cwd: REPO, stdio: "inherit" });
 	const target = join(v.path, ".obsidian", "plugins", PLUGIN_ID);
 	mkdirSync(target, { recursive: true });
 	for (const f of FILES) copyFileSync(join(REPO, f), join(target, f));
