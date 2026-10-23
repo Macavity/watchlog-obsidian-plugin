@@ -82,7 +82,7 @@ Then run `pnpm install` and `pnpm why <pkg>` to verify the patched version is re
 
 > X release assets are missing a GitHub artifact attestation.
 
-**Fix**: a tag-triggered release workflow that runs `actions/attest-build-provenance` against the release files. This repo already has one at `.github/workflows/release.yml` (draft release, tag must equal the manifest version). Cut releases by pushing a tag, never by uploading files by hand; see [release-process.md](release-process.md).
+**Fix**: a tag-triggered release workflow that runs `actions/attest-build-provenance` against the release files. This repo already has one at `.github/workflows/release.yml` (tag must equal the manifest version, notes from CHANGELOG.md). Cut releases by pushing a tag, never by uploading files by hand; see [release-process.md](release-process.md).
 
 ### Build verification failed (non-reproducible build)
 

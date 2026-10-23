@@ -1,13 +1,14 @@
 name: Release
 
-# Builds main.js from the tagged commit and attaches it, manifest.json and styles.css to a draft
-# GitHub release. Publish the draft after adding the notes from CHANGELOG.md.
+# Builds main.js from the tagged commit, attests it and publishes a GitHub release with main.js,
+# manifest.json and styles.css. Release notes are the matching section of CHANGELOG.md.
 # Tag = manifest version without a "v" prefix (Obsidian requires an exact match).
 on:
     push:
         tags:
             - '*'
-    # Recovery path when a tag push does not trigger the workflow: run from the Actions tab.
+    # Recovery path when a tag push does not trigger the workflow: run from the Actions tab,
+    # selecting the tag as the ref. Branch refs are rejected.
     workflow_dispatch:
 
 permissions:
@@ -22,27 +23,30 @@ jobs:
 
         steps:
             - uses: actions/checkout@v5
-            - uses: pnpm/action-setup@v4
+              with:
+                  persist-credentials: false
+
+            - name: Tag must match manifest version
+              id: version
+              run: |
+                  if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+                    echo "::error::Run this workflow from a tag ref, not from branch '$GITHUB_REF_NAME'."
+                    exit 1
+                  fi
+                  version="$(jq -r .version manifest.json)"
+                  if [ "$GITHUB_REF_NAME" != "$version" ]; then
+                    echo "::error::Tag '$GITHUB_REF_NAME' does not match manifest version '$version'. Tag without 'v' and bump via 'pnpm version'."
+                    exit 1
+                  fi
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+
+            - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
             - uses: actions/setup-node@v5
               with:
                   node-version: 22
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
             - run: pnpm build
-
-            - name: Read version from manifest
-              id: version
-              run: echo "version=$(jq -r .version manifest.json)" >> "$GITHUB_OUTPUT"
-
-            - name: Tag must match manifest version
-              if: github.event_name == 'push'
-              env:
-                  VERSION: ${{ steps.version.outputs.version }}
-              run: |
-                  if [ "$GITHUB_REF_NAME" != "$VERSION" ]; then
-                    echo "::error::Tag '$GITHUB_REF_NAME' does not match manifest version '$VERSION'. Tag without 'v' and bump via 'pnpm version'."
-                    exit 1
-                  fi
 
             - name: Attest build provenance
               uses: actions/attest-build-provenance@v4
@@ -52,12 +56,31 @@ jobs:
                       manifest.json
                       styles.css
 
-            - name: Create draft release
+            - name: Release notes from CHANGELOG.md
+              env:
+                  VERSION: ${{ steps.version.outputs.version }}
+              run: |
+                  # Section "## [<version>] ..." up to the next "## " heading, without the heading itself.
+                  awk -v v="$VERSION" '
+                    /^## \[/ { in_section = index($0, "## [" v "]") == 1; next }
+                    in_section { print }
+                  ' CHANGELOG.md | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' > release-notes.md
+                  if [ ! -s release-notes.md ]; then
+                    echo "::warning::No CHANGELOG.md section for $VERSION; using GitHub-generated notes."
+                  fi
+
+            - name: Create release
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   VERSION: ${{ steps.version.outputs.version }}
               run: |
+                  if [ -s release-notes.md ]; then
+                    notes=(--notes-file release-notes.md)
+                  else
+                    notes=(--generate-notes)
+                  fi
                   gh release create "$VERSION" \
                     --title "$VERSION" \
-                    --draft \
+                    --target "$GITHUB_SHA" \
+                    "${notes[@]}" \
                     main.js manifest.json styles.css

@@ -17,7 +17,7 @@ Fork as **WatchLog Sync** (plugin id `watchlog-sync`).
 
 * Automatic migration from `data.json` (schema 1) and from the original plugin's folder when this plugin starts empty. A `data.v1-backup.json` is written first.
 * Backup restore converts old backups into notes.
-* `npm run deploy` copies a build into a registered vault.
+* `pnpm run deploy` copies a build into a registered vault.
 * Test suite (vitest).
 ## [3.1.2] - 2026-08-11
 

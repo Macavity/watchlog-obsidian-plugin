@@ -24,7 +24,8 @@ pnpm version <patch|minor|major>      # bumps manifest.json + versions.json, com
 ## Releases
 
 Tag equals the manifest version, no `v` prefix. The release workflow builds `main.js`, attests it
-and opens a **draft** release with `main.js`, `manifest.json`, `styles.css`.
+and publishes the release with `main.js`, `manifest.json`, `styles.css`. Release notes are the
+`## [<version>]` section of `CHANGELOG.md`, so write that section first.
 
 ```
 pnpm version patch        # or minor / major
@@ -32,8 +33,8 @@ git push origin main      # commits first
 git push origin 4.0.1     # tag separately, a few seconds later (a combined push can drop the trigger)
 ```
 
-Then paste the matching `CHANGELOG.md` section into the draft and publish. Details and recovery
-steps: `.claude/skills/obsidian-plugin/references/release-process.md`.
+Recovery steps when the workflow did not fire:
+`.claude/skills/obsidian-plugin/references/release-process.md`.
 
 Obsidian plugin rules (vault API, UI text, styling, scorecard) live in the `obsidian-plugin` skill
 under `.claude/skills/`.
@@ -72,5 +73,5 @@ refuses to write while on schema 1 or a newer schema.
 
 - UI strings are sentence case (`obsidianmd/ui/sentence-case`, warn level but CI fails on warnings).
   Proper nouns go into the `ignoreWords` list in `eslint.config.mts`, not into disabled lines.
-- Design notes and the execution plan for the vault-storage rewrite are in `.claude/specs/` and
-  `.claude/plans/` (German). The plan is authoritative where it and the spec differ.
+- `.claude/specs/` and `.claude/plans/` are local working files (gitignored, German); they are not
+  present on a fresh clone.
