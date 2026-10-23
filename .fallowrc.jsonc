@@ -3,7 +3,7 @@
 	// `pnpm fallow:audit` gates changed files (new-only), `pnpm fallow:report` is the
 	// whole-repo picture. Pinned to fallow 3.35.0 in package.json; when bumping, repeat
 	// the duplication probe (copy a file, audit must fail with "exceeds threshold").
-	"$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+	"$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/v3.35.0/schema.json",
 
 	"entry": ["src/main.ts"],
 
@@ -19,7 +19,7 @@
 	"usedClassMembers": [
 		{ "extends": "FuzzySuggestModal", "members": ["getItems", "getItemText", "onChooseItem"] },
 		{ "extends": "PluginSettingTab", "members": ["display", "hide"] },
-		{ "extends": "ItemView", "members": ["*"] },
+		{ "extends": "ItemView", "members": ["getViewType", "getDisplayText", "getIcon", "onOpen", "onClose"] },
 		{ "extends": "Modal", "members": ["onOpen", "onClose"] }
 	],
 

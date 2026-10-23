@@ -39,4 +39,6 @@ jobs:
             - run: pnpm build
             - name: Code health (fallow)
               if: github.event_name == 'pull_request'
-              run: pnpm exec fallow audit --no-cache --base origin/${{ github.base_ref }}
+              env:
+                  BASE_REF: ${{ github.base_ref }}
+              run: pnpm fallow:audit --base "origin/$BASE_REF"
