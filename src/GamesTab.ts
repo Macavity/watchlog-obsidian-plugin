@@ -12,11 +12,11 @@ import { RowsCustomizeModal } from './RowsCustomizeModal';
 import { VirtualGrid, computeGridMetrics, setRowsCardWidth, type GridMetrics } from './VirtualGrid';
 import { VirtualScroller } from './VirtualScroller';
 import { LazyCardObserver } from './LazyCardObserver';
-import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard';
-import { renderGroupCollage } from './CollageUtil';
+import { buildPosterCard, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown } from './ui/TabToolbar';
 import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
+import { renderGroupCard } from './ui/GroupCard';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { rawgResizedCover } from './ApiService';
 import { resolveGameCover, type GameCover } from './coverRefresh';
@@ -1349,61 +1349,28 @@ export class GamesTab {
 	private renderGroupCard(parent: HTMLElement, group: GameGroup, members: Game[], cardHeight?: number): void {
 		const settings = this.gameData.getSettings();
 		const primaryType = members[0]?.type ?? '';
-		const typeColor = settings.types.find((t) => t.name === primaryType)?.color ?? '#888780';
-
-		// under mode wraps the collage in a cell with name + count below (see buildPosterCard)
-		const cell = this.plugin.isCardTextUnder('games')
-			? parent.createDiv({ cls: 'wl-card-cell' })
-			: null;
-		const card = (cell ?? parent).createDiv({ cls: 'wl-card wl-card-group' });
-		card.dataset.groupId = group.id;
-		if (this.selectedIds.has(group.id)) card.addClass('wl-card-selected');
-		if (cardHeight !== undefined) (cell ?? card).style.height = `${cardHeight}px`;
-
-		const letter = (group.name.trim().charAt(0) || '?').toUpperCase();
-		renderGroupCollage(card, members, (g) => rawgResizedCover(g.coverUrl), { letter, color: typeColor });
-
-		const textHost = cell
-			? cell.createDiv({ cls: 'wl-card-under-info' })
-			: card.createDiv({ cls: 'wl-card-overlay' });
-		textHost.createSpan({
-			cls: cell ? 'wl-card-under-title' : 'wl-card-title',
-			text: group.name,
-		});
-		const subtitle = textHost.createDiv({ cls: 'wl-card-meta-row' })
-			.createSpan({ cls: 'wl-card-type-badge' });
-		subtitle.style.backgroundColor = typeColor;
-		subtitle.textContent = `${members.length} game${members.length !== 1 ? 's' : ''}`;
-
-		const menuBtn = card.createEl('button', {
-			cls: 'wl-card-menu-btn',
-			text: '⋮',
-		});
-		menuBtn.setAttr('aria-label', 'Group actions');
-		menuBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			openCardMenu(card, menuBtn, [
-				{ label: 'Edit name', onClick: () => this.openRenameGroupPrompt(group) },
-				{
-					label: 'Delete group',
-					onClick: () => {
-						new ConfirmModal(
-							this.plugin.app,
-							`Delete group "${group.name}"? All games inside will be returned to the main list.`,
-							() => { void this.gameData.removeGroup(group.id); },
-						).open();
-					},
-				},
-			], { container: this.container, cleanups: this.activeCleanups });
-		});
-
-		// under mode: the whole cell opens the group
-		(cell ?? card).addEventListener('click', () => {
-			if (this.selectionMode) {
-				this.toggleCardSelection(card, group.id);
-				return;
-			}
-			new GameGroupDetailModal(this.plugin.app, this.plugin, this.gameData, group, members).open();
+		renderGroupCard(parent, {
+			app: this.plugin.app,
+			group,
+			members,
+			getCover: (g) => rawgResizedCover(g.coverUrl),
+			typeColor: settings.types.find((t) => t.name === primaryType)?.color ?? '#888780',
+			textUnder: this.plugin.isCardTextUnder('games'),
+			selected: this.selectedIds.has(group.id),
+			cardHeight,
+			unit: 'game',
+			container: this.container,
+			cleanups: this.activeCleanups,
+			onRename: () => this.openRenameGroupPrompt(group),
+			deleteMessage: `Delete group "${group.name}"? All games inside will be returned to the main list.`,
+			onDelete: () => { void this.gameData.removeGroup(group.id); },
+			onActivate: (card) => {
+				if (this.selectionMode) {
+					this.toggleCardSelection(card, group.id);
+					return;
+				}
+				new GameGroupDetailModal(this.plugin.app, this.plugin, this.gameData, group, members).open();
+			},
 		});
 	}
 

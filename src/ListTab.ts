@@ -13,18 +13,18 @@ import { AddFromUrlModal } from './AddFromUrlModal';
 import { AddTitleChoiceModal } from './AddTitleChoiceModal';
 import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown, renderViewDropdown } from './ui/TabToolbar';
 import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
+import { renderGroupCard } from './ui/GroupCard';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { EditTitleModal } from './EditTitleModal';
 import { ConfirmModal } from './ConfirmModal';
 import { TitleDetailModal, GroupDetailModal, renderCreditsRows, renderCreditsRefreshButton } from './TitleDetailModal';
 import { AddCreditModal } from './AddCreditModal';
-import { renderGroupCollage } from './CollageUtil';
 import { appendMarkWatchedButton, isSingleEpisodeTitle } from './MarkWatchedButton';
 import { renderStarRating, ratingColor } from './StarRating';
 import { VirtualGrid, computeGridMetrics, setRowsCardWidth, type GridMetrics } from './VirtualGrid';
 import { VirtualScroller } from './VirtualScroller';
 import { LazyCardObserver } from './LazyCardObserver';
-import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard';
+import { buildPosterCard, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { RowsCustomizeModal } from './RowsCustomizeModal';
 import { renderFiltersDropdown, buildFilterSections, buildRatingOpts } from './ui/TabFilters';
@@ -912,70 +912,37 @@ export class ListTab {
 		const typeDef = primaryType
 			? this.getTagDef(primaryType, this.plugin.settings.types)
 			: undefined;
-		const typeColor = typeDef
-			? getThemedColor(primaryType, typeDef.color, this.plugin.settings.colorTheme)
-			: '#888780';
-
-		// under mode wraps the collage in a cell with name + count below (see buildPosterCard)
-		const cell = this.plugin.isCardTextUnder('watchlist')
-			? parent.createDiv({ cls: 'wl-card-cell' })
-			: null;
-		const card = (cell ?? parent).createDiv({ cls: 'wl-card wl-card-group' });
-		card.dataset.groupId = group.id;
-		if (this.selectedItems.has(groupKey(group.id))) card.addClass('wl-card-selected');
-		if (cardHeight !== undefined) (cell ?? card).style.height = `${cardHeight}px`;
-
-		const letter = (group.name.trim().charAt(0) || '?').toUpperCase();
-		renderGroupCollage(card, members, getDisplayPoster, { letter, color: typeColor });
-
-		const textHost = cell
-			? cell.createDiv({ cls: 'wl-card-under-info' })
-			: card.createDiv({ cls: 'wl-card-overlay' });
-		textHost.createSpan({
-			cls: cell ? 'wl-card-under-title' : 'wl-card-title',
-			text: group.name,
-		});
-		const subtitle = textHost.createDiv({ cls: 'wl-card-meta-row' })
-			.createSpan({ cls: 'wl-card-type-badge' });
-		subtitle.style.backgroundColor = typeColor;
-		subtitle.textContent = `${members.length} title${members.length !== 1 ? 's' : ''}`;
-
-		const menuBtn = card.createEl('button', {
-			cls: 'wl-card-menu-btn',
-			text: '⋮',
-		});
-		menuBtn.setAttr('aria-label', 'Group actions');
-		menuBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			openCardMenu(card, menuBtn, [
-				{ label: 'Edit name', onClick: () => this.openRenameGroupPrompt(group) },
-				{
-					label: 'Delete group',
-					onClick: () => {
-						new ConfirmModal(
-							this.plugin.app,
-							`Delete group "${group.name}"? All titles inside will be returned to the main list.`,
-							() => {
-								void this.dataManager.removeGroup(group.id).then(() => {
-									this.expandedGroups.delete(group.id);
-									this.render();
-								});
-							},
-						).open();
-					},
-				},
-			], { container: this.container, cleanups: this.activeCleanups });
-		});
-
-		// under mode: the whole cell opens the group
-		(cell ?? card).addEventListener('click', () => {
-			if (this.selectionMode) {
-				this.toggleCardSelection(card, groupKey(group.id));
-				return;
-			}
-			new GroupDetailModal(this.plugin.app, this.plugin, group, members, () => {
-				this.render();
-			}, (name) => this.applyPersonSearch(name)).open();
+		renderGroupCard(parent, {
+			app: this.plugin.app,
+			group,
+			members,
+			getCover: getDisplayPoster,
+			typeColor: typeDef
+				? getThemedColor(primaryType, typeDef.color, this.plugin.settings.colorTheme)
+				: '#888780',
+			textUnder: this.plugin.isCardTextUnder('watchlist'),
+			selected: this.selectedItems.has(groupKey(group.id)),
+			cardHeight,
+			unit: 'title',
+			container: this.container,
+			cleanups: this.activeCleanups,
+			onRename: () => this.openRenameGroupPrompt(group),
+			deleteMessage: `Delete group "${group.name}"? All titles inside will be returned to the main list.`,
+			onDelete: () => {
+				void this.dataManager.removeGroup(group.id).then(() => {
+					this.expandedGroups.delete(group.id);
+					this.render();
+				});
+			},
+			onActivate: (card) => {
+				if (this.selectionMode) {
+					this.toggleCardSelection(card, groupKey(group.id));
+					return;
+				}
+				new GroupDetailModal(this.plugin.app, this.plugin, group, members, () => {
+					this.render();
+				}, (name) => this.applyPersonSearch(name)).open();
+			},
 		});
 	}
 
