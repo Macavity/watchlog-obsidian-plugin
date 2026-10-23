@@ -10,13 +10,13 @@
 import type { RatingTier } from './types';
 
 /** Text shown for the unrated (0) state — not part of the editable five tiers. */
-export const UNRATED_LABEL = 'Not rated';
+const UNRATED_LABEL = 'Not rated';
 
 /**
  * Maps a rating to its tier index: 0 when unrated, else 1–5. A whole star shares a tier with the
  * half-step *below* it, so we ceil: 0.5 & 1 → 1, … 4.5 & 5 → 5. Never exceeds 5.
  */
-export function ratingTierIndex(rating: number): number {
+function ratingTierIndex(rating: number): number {
 	if (!(rating > 0)) return 0;
 	return Math.min(5, Math.ceil(rating));
 }
@@ -28,7 +28,7 @@ export function ratingColor(rating: number, tiers: RatingTier[]): string {
 }
 
 /** Tier label for a rating, or the unrated label when 0. */
-export function ratingLabel(rating: number, tiers: RatingTier[]): string {
+function ratingLabel(rating: number, tiers: RatingTier[]): string {
 	const idx = ratingTierIndex(rating);
 	return idx === 0 ? UNRATED_LABEL : (tiers[idx - 1]?.label ?? '');
 }

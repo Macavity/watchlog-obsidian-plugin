@@ -1,5 +1,6 @@
 // Minimal stand-in for the 'obsidian' module in unit tests. Extend as tests need more surface.
 import { parse, stringify } from 'yaml';
+import { El } from './helpers/fakeEl';
 
 export function normalizePath(path: string): string {
 	return path
@@ -38,6 +39,17 @@ export class Notice {
 	constructor(public message: string, public timeout?: number) {
 		Notice.shown.push(message);
 	}
+}
+
+/** Modal base with element doubles; open()/close() run the subclass hooks like Obsidian does. */
+export class Modal {
+	titleEl = new El('root');
+	contentEl = new El('root');
+	constructor(public app: unknown) {}
+	onOpen(): void {}
+	onClose(): void {}
+	open(): void { this.onOpen(); }
+	close(): void { this.onClose(); }
 }
 
 export const Platform = { isMobile: false, isDesktop: true };

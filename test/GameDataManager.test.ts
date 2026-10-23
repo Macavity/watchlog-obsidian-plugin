@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { setupGames, makeGame } from './helpers/setupGameDataManager';
-import { tick } from './helpers/setupDataManager';
+import { tick } from './helpers/common';
 
 describe('GameDataManager on vault storage', () => {
 	it('stores games as notes and settings in the base, not data.json', async () => {

@@ -7,7 +7,7 @@
  *
  * Returns the thumbnail (already appended to `parent`).
  */
-export function renderSearchThumbnail(
+function renderSearchThumbnail(
 	parent: HTMLElement,
 	url: string | undefined,
 	alt: string,

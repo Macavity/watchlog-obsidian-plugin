@@ -3,13 +3,14 @@ import { apiErrorMessage } from './ApiService';
 import { fetchReadingCoverById } from './coverRefresh';
 import type WatchLogPlugin from './main';
 import type { ReadingDataManager, ReadingKind } from './ReadingDataManager';
-import { Book, Manga, ReadingStatus, ReadingCustomColumn, ReadingSavedFilterPreset, READING_STATUSES, SELECTABLE_READING_STATUSES, DEFAULT_READING_STATUS_COLORS, normalizeRowsLayout, READING_ROWS_SHELVES, bookUnitProgress, formatCount, sortByFavorited } from './types';
+import { Book, Manga, ReadingStatus, ReadingCustomColumn, ReadingSavedFilterPreset, READING_STATUSES, SELECTABLE_READING_STATUSES, normalizeRowsLayout, READING_ROWS_SHELVES, bookUnitProgress, formatCount, sortByFavorited } from './types';
 import { searchItems, yearOf, type SearchFieldSpec } from './SearchQuery';
 import { renderSearchHelpButton } from './SearchHelpModal';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { RowsCustomizeModal } from './RowsCustomizeModal';
 import { AddReadingModal } from './AddReadingModal';
 import { ReadingDetailModal } from './ReadingDetailModal';
+import { coverFallbackColor, readingStatusColor } from './readingColors';
 import { ReadingManageColumnsModal } from './ReadingManageColumnsModal';
 import { ConfirmModal } from './ConfirmModal';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
@@ -80,31 +81,6 @@ function filtersActive(f: ReadingFilters): number {
 		if ((f.customExclude[k]?.length ?? 0) > 0) n++;
 	}
 	return n;
-}
-
-/**
- * Badge colour for a reading status. The names are fixed, but the colours are user-editable
- * (Settings → Customize → Reading) and stored per name in `ReadingSettings.statusColors`; pass
- * that record in to honour the choice. Omitting it, or a missing key, falls back to the default.
- */
-export function readingStatusColor(
-	status: ReadingStatus,
-	colors?: Record<string, string>,
-): string {
-	return colors?.[status] ?? DEFAULT_READING_STATUS_COLORS[status] ?? '#888780';
-}
-
-const COVER_PALETTE = [
-	'#3a4a6b', '#4a3a6b', '#6b3a4a', '#6b5a3a',
-	'#3a6b5a', '#5a6b3a', '#3a5a6b', '#6b3a5a',
-];
-
-export function coverFallbackColor(id: string): string {
-	let hash = 0;
-	for (let i = 0; i < id.length; i++) {
-		hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-	}
-	return COVER_PALETTE[hash % COVER_PALETTE.length] ?? '#3a4a6b';
 }
 
 function bookProgress(b: Book): number {

@@ -1,38 +1,11 @@
 // FakeApp + storage stores + ReadingDataManager wired like main.ts (root 'W', base file present).
-import { parse, stringify } from 'yaml';
-import { createFakeApp } from '../fakes/fakeApp';
-import { VaultLayout } from '../../src/storage/VaultLayout';
-import { LocalStore } from '../../src/storage/LocalStore';
-import { SharedConfigStore } from '../../src/storage/SharedConfigStore';
-import { EntryIndex } from '../../src/storage/EntryIndex';
+import { createStores } from './common';
 import { ReadingDataManager } from '../../src/ReadingDataManager';
-import { DEFAULT_SETTINGS } from '../../src/types';
 import type { Book, Manga } from '../../src/types';
-import type WatchLogPlugin from '../../src/main';
-
-const g = globalThis as Record<string, unknown>;
-g.window ??= globalThis;
-g.activeDocument ??= { dispatchEvent: () => true };
 
 export async function setupReadingDataManager(files: Record<string, string>) {
-	const f = createFakeApp(files);
-	const settings = { ...DEFAULT_SETTINGS, types: [{ name: 'Movie', color: '#000' }] };
-	const plugin = {
-		app: f.app,
-		settings,
-		manifest: f.plugin.manifest,
-		registerEvent: f.plugin.registerEvent,
-	} as unknown as WatchLogPlugin;
-	const local = new LocalStore(f.plugin);
-	await local.load();
-	const layout = new VaultLayout('W', () => settings.types.map((t) => t.name));
-	const shared = new SharedConfigStore(f.app, () => layout, { parse, stringify });
-	if (!f.files.has('W/WatchLog.base')) await shared.createBase({});
-	await shared.load();
-	const index = new EntryIndex(f.app, () => layout, local, f.plugin.registerEvent);
-	await index.build();
-	index.start();
-	const rdm = new ReadingDataManager(plugin, { index, local, shared, layout: () => layout });
+	const { f, plugin, local, shared, index, stores } = await createStores(files, { createBase: true });
+	const rdm = new ReadingDataManager(plugin, stores);
 	await rdm.init();
 	return { rdm, f, local, index, shared };
 }
@@ -56,5 +29,3 @@ export function makeManga(over: Partial<Manga>): Manga {
 		customFields: {}, ...over,
 	} as Manga;
 }
-
-export const tick = (ms = 200) => new Promise((r) => setTimeout(r, ms));

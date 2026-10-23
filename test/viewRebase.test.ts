@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { setupDataManager, tick } from './helpers/setupDataManager';
+import { setupDataManager } from './helpers/setupDataManager';
+import { tick } from './helpers/common';
 import { setupGames } from './helpers/setupGameDataManager';
 import { setupReadingDataManager } from './helpers/setupReadingDataManager';
 import type { ApiOutcome } from '../src/ApiService';

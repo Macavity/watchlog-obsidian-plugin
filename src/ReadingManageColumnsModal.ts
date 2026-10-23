@@ -4,6 +4,7 @@ import type { ReadingDataManager } from './ReadingDataManager';
 import { ReadingCustomColumn, DEFAULT_FIELD_COLOR } from './types';
 import { ConfirmModal } from './ConfirmModal';
 import { openColorPicker } from './ColorPicker';
+import { attachCardDrag, renderTypeSelect, type DragState } from './ui/ColumnsEditor';
 
 type Kind = 'book' | 'manga';
 
@@ -14,7 +15,7 @@ export class ReadingManageColumnsModal extends Modal {
 	private onChanged: () => void;
 	private listEl: HTMLElement | null = null;
 	private styleGroupEl: HTMLElement | null = null;
-	private dragFromIndex = -1;
+	private drag: DragState = { from: -1 };
 
 	constructor(
 		app: App,
@@ -129,32 +130,7 @@ export class ReadingManageColumnsModal extends Modal {
 		cols.forEach((col, idx) => {
 			const card = this.listEl!.createDiv({ cls: 'wl-editcol-card wl-reading-col-card' });
 
-			const handle = card.createDiv({ cls: 'wl-editcol-card-handle', text: '⠿' });
-			handle.title = 'Drag to reorder';
-			handle.addEventListener('mousedown', () => card.setAttribute('draggable', 'true'));
-			card.addEventListener('dragstart', (e) => {
-				this.dragFromIndex = idx;
-				e.dataTransfer?.setData('text/plain', String(idx));
-				card.addClass('wl-cl-dragging');
-			});
-			card.addEventListener('dragend', () => {
-				card.removeClass('wl-cl-dragging');
-				card.setAttribute('draggable', 'false');
-			});
-			card.addEventListener('dragover', (e) => {
-				e.preventDefault();
-				card.addClass('wl-cl-drag-over');
-			});
-			card.addEventListener('dragleave', () => card.removeClass('wl-cl-drag-over'));
-			card.addEventListener('drop', (e) => {
-				e.preventDefault();
-				card.removeClass('wl-cl-drag-over');
-				const from = this.dragFromIndex;
-				const to = idx;
-				this.dragFromIndex = -1;
-				if (from === to || from < 0) return;
-				void this.reorder(from, to);
-			});
+			attachCardDrag(card, idx, this.drag, (from, to) => void this.reorder(from, to));
 
 			const nameInput = card.createEl('input', {
 				cls: 'wl-modal-input wl-editcol-card-name',
@@ -171,14 +147,7 @@ export class ReadingManageColumnsModal extends Modal {
 				void this.updateColumn({ ...col, name: next });
 			});
 
-			const typeSelect = card.createEl('select', { cls: 'wl-select wl-editcol-card-type' });
-			for (const t of ['text', 'number', 'select'] as const) {
-				const opt = typeSelect.createEl('option', {
-					value: t,
-					text: t.charAt(0).toUpperCase() + t.slice(1),
-				});
-				if (col.type === t) opt.selected = true;
-			}
+			const typeSelect = renderTypeSelect(card, col.type);
 
 			const colorDot = card.createEl('button', { cls: 'wl-reading-col-color-dot' });
 			colorDot.style.backgroundColor = col.color ?? DEFAULT_FIELD_COLOR;

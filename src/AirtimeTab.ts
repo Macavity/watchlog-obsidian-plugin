@@ -1,11 +1,20 @@
-import { App, Modal, Notice, setIcon } from 'obsidian';
+import { App, Modal, Notice } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { ReadingDataManager } from './ReadingDataManager';
 import type { GameDataManager } from './GameDataManager';
-import type { WatchLogTitle, AirtimeEntry, AirtimeSchedule, AirtimeRecurrence, MaybeTitle, Book, Manga, Game } from './types';
+import type { WatchLogTitle, AirtimeEntry, AirtimeSchedule, MaybeTitle, Book, Manga, Game } from './types';
 import { getAirtimeScheduleString, getThemedColor, getReadingTypeColor, getDisplayPoster, isReleaseDateFuture, formatDateDisplay, todayIso, toIsoDate, GAME_AUTO_STATUS } from './types';
-import { createDatePicker } from './DatePicker';
+import {
+	type ScheduleFormState,
+	RECURRENCE_OPTIONS,
+	buildScheduleFromState,
+	counterField,
+	initialScheduleState,
+	renderCounterRow,
+	renderScheduleModal,
+	resolveScheduleMode,
+} from './ui/ScheduleForm';
 import { rawgResizedCover } from './ApiService';
 import { VirtualGrid, computeGridMetrics, type GridMetrics } from './VirtualGrid';
 import { VirtualScroller } from './VirtualScroller';
@@ -16,6 +25,8 @@ import { MaybeAddModal } from './MaybeAddModal';
 import { ReadingScheduleModal } from './ReadingScheduleModal';
 import { GameScheduleModal } from './GameScheduleModal';
 import { UpcomingFinderModal, type UpcomingFinderItem } from './UpcomingFinderModal';
+import { renderAddButton, renderViewDropdown } from './ui/TabToolbar';
+import { renderActionBar } from './ui/ActionBar';
 
 /**
  * A normalized Upcoming card subject — a watchlist title, a reading item or a game — so the
@@ -485,10 +496,7 @@ export class AirtimeTab {
 		}
 		const controls = headerEl.createDiv({ cls: 'wl-header-controls' });
 		const rightGroup = controls.createDiv({ cls: 'wl-header-controls-right' });
-		const addBtnWrap = rightGroup.createDiv({ cls: 'wl-add-btn-wrap' });
-		const addBtn = addBtnWrap.createEl('button', { cls: 'wl-add-btn wl-btn-success', text: '+ add' });
-		addBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
+		renderAddButton(rightGroup, () => {
 			new MaybeAddModal(this.plugin.app, this.plugin, this.dataManager, () => this.render()).open();
 		});
 
@@ -653,78 +661,33 @@ export class AirtimeTab {
 
 	/** The Watchlist view popover, reduced to List / Cards. Persisted in upcomingTrackerView. */
 	private renderViewDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm wl-view-btn' });
-		setIcon(btn, this.trackerView === 'cards' ? 'layout-grid' : 'list');
-		btn.title = 'View';
-
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const existing = wrap.querySelector('.wl-dropdown');
-			if (existing) { existing.remove(); return; }
-
-			const panel = wrap.createDiv({ cls: 'wl-dropdown wl-view-panel' });
-
-			const options: { key: 'cards' | 'list'; label: string; icon: string }[] = [
+		renderViewDropdown<'cards' | 'list'>(parent, {
+			current: this.trackerView,
+			options: [
 				{ key: 'cards', label: 'Cards', icon: 'layout-grid' },
 				{ key: 'list', label: 'List', icon: 'list' },
-			];
-			for (const opt of options) {
-				const active = this.trackerView === opt.key;
-				const row = panel.createDiv({ cls: `wl-view-option-row${active ? ' is-active' : ''}` });
-				const iconEl = row.createSpan({ cls: 'wl-view-option-icon' });
-				setIcon(iconEl, opt.icon);
-				row.createSpan({ cls: 'wl-view-option-label', text: opt.label });
-				if (active) {
-					const checkEl = row.createSpan({ cls: 'wl-view-option-check' });
-					setIcon(checkEl, 'check');
-				}
-				row.addEventListener('click', (ev) => {
-					ev.stopPropagation();
-					panel.remove();
-					activeDocument.removeEventListener('click', closer, true);
-					if (this.trackerView === opt.key) return;
-					this.trackerView = opt.key;
-					this._trackerPersistentScrollTop = 0;
-					this.plugin.settings.upcomingTrackerView = opt.key;
-					void this.plugin.saveSettings();
-					this.render();
-				});
-			}
-
-			const closer = (ev: MouseEvent) => {
-				if (!wrap.contains(ev.target as Node)) {
-					panel.remove();
-					activeDocument.removeEventListener('click', closer, true);
-				}
-			};
-			window.setTimeout(() => activeDocument.addEventListener('click', closer, true), 0);
-			this.activeCleanups.push(() => activeDocument.removeEventListener('click', closer, true));
+			],
+			registerCleanup: (fn) => this.activeCleanups.push(fn),
+			onSelect: (key) => {
+				this.trackerView = key;
+				this._trackerPersistentScrollTop = 0;
+				this.plugin.settings.upcomingTrackerView = key;
+				void this.plugin.saveSettings();
+				this.render();
+			},
 		});
 	}
 
 	private renderActionBar(parent: HTMLElement): void {
-		const bar = parent.createDiv({ cls: 'wl-action-bar' });
-
-		const deleteBtn = bar.createEl('button', {
-			cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
-			text: '✕',
-		});
-		deleteBtn.title = 'Remove from upcoming';
-		deleteBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const count = this.selectedItems.size;
-			new ConfirmModal(
-				this.plugin.app,
-				`Remove ${count} selected item${count !== 1 ? 's' : ''} from Upcoming? This cannot be undone.`,
-				() => {
-					void (async () => {
-						await this.dataManager.removeAirtimeEntriesBatch(Array.from(this.selectedItems));
-						this.selectedItems.clear();
-						this.render();
-					})();
-				},
-			).open();
+		renderActionBar(parent, this.plugin.app, {
+			title: 'Remove from upcoming',
+			selected: this.selectedItems,
+			message: (count) => `Remove ${count} selected item${count !== 1 ? 's' : ''} from Upcoming? This cannot be undone.`,
+			onConfirm: async () => {
+				await this.dataManager.removeAirtimeEntriesBatch(Array.from(this.selectedItems));
+				this.selectedItems.clear();
+				this.render();
+			},
 		});
 	}
 
@@ -1644,23 +1607,22 @@ export class AirtimeTab {
 
 // AirtimeScheduleModal
 
-type AirtimeRecurringKind = Exclude<AirtimeRecurrence, 'once'>;
+/** Without a schedule the title's shape only picks the DEFAULT mode; the toggle makes it overridable. */
+function defaultScheduleMode(title: WatchLogTitle): 'single' | 'recurring' {
+	return title.totalEpisodes <= 1 ? 'single' : 'recurring';
+}
 
 class AirtimeScheduleModal extends Modal {
 	private title: WatchLogTitle;
 	// UI state — Save assembles a fresh AirtimeSchedule from the fields the active mode/recurrence
 	// actually shows (buildSchedule), so a value left over from another mode can never leak in
-	private mode: 'single' | 'recurring';
-	private recurrence: AirtimeRecurringKind;
-	private releaseDate: string; // YYYY-MM-DD ('' = unset) — same format the Watchlist/Reading auto-import writes
-	private releaseTime: string; // HH:MM ('' = unset), local time
-	private dayOfWeek: number;
-	private dayOfMonth: number;
+	// releaseDate is YYYY-MM-DD ('' = unset) — same format the Watchlist/Reading auto-import writes;
+	// releaseTime is HH:MM ('' = unset), local time
+	private form: ScheduleFormState;
 	private currentSeason: number | null;
 	private currentEpisode: number | null;
 	private totalSeasons: number | null;
 	private totalEpisodes: number | null;
-	private saveBtn: HTMLButtonElement | null = null;
 	private onSave: (
 		schedule: AirtimeSchedule,
 		season: number | null,
@@ -1689,24 +1651,11 @@ class AirtimeScheduleModal extends Modal {
 		super(app);
 		this.title = title;
 		this.onSave = onSave;
-		const s = existingSchedule;
-		// mode: an explicit initialMode wins (the tick confirm's "Switch to Recurring episodes" opens
-		// straight into Recurring); otherwise an existing schedule decides — auto-imported entries arrive
-		// as 'once'. Without a schedule the title's shape only picks the DEFAULT, and the toggle makes it
-		// overridable instead of the old hidden totalEpisodes<=1 fork.
-		this.mode = initialMode ?? (s
-			? (s.recurrence === 'once' ? 'single' : 'recurring')
-			: (title.totalEpisodes <= 1 ? 'single' : 'recurring'));
-		this.recurrence = s && s.recurrence !== 'once' ? s.recurrence : 'weekly';
-		this.releaseDate =
-			s?.releaseDate ??
-			(title.releaseDate && /^\d{4}-\d{2}-\d{2}$/.test(title.releaseDate) ? title.releaseDate : '');
-		this.releaseTime = s?.releaseTime ?? '';
-		// weekly default: shows usually keep their premiere weekday, so derive it from the known release
-		// date before falling back to Saturday
-		this.dayOfWeek = s?.dayOfWeek ??
-			(this.releaseDate ? new Date(this.releaseDate + 'T00:00:00').getDay() : 6);
-		this.dayOfMonth = s?.dayOfMonth ?? 1;
+		this.form = initialScheduleState(
+			existingSchedule,
+			title.releaseDate,
+			resolveScheduleMode(existingSchedule, initialMode, defaultScheduleMode(title)),
+		);
 		this.currentSeason = currentSeason;
 		this.currentEpisode = currentEpisode;
 		this.totalSeasons = totalSeasons ?? (title.seasons.length > 0 ? title.seasons.length : null);
@@ -1744,200 +1693,46 @@ class AirtimeScheduleModal extends Modal {
 		return `${jh}:${jm}`;
 	}
 
-	/**
-	 * Single release needs a date; recurring is always saveable (its selects and clamped inputs
-	 * cannot hold an invalid value).
-	 */
-	private isValid(): boolean {
-		return this.mode !== 'single' || this.releaseDate !== '';
-	}
-
-	private updateSaveState(): void {
-		if (this.saveBtn) this.saveBtn.disabled = !this.isValid();
-	}
-
-	/** The schedule handed to onSave: built fresh from the visible fields only. */
-	private buildSchedule(): AirtimeSchedule {
-		if (this.mode === 'single') {
-			return {
-				recurrence: 'once',
-				releaseDate: this.releaseDate,
-				...(this.releaseTime ? { releaseTime: this.releaseTime } : {}),
-			};
-		}
-		return {
-			recurrence: this.recurrence,
-			...(this.recurrence === 'weekly' ? { dayOfWeek: this.dayOfWeek } : {}),
-			...(this.recurrence === 'monthly' ? { dayOfMonth: this.dayOfMonth } : {}),
-			...(this.releaseTime ? { releaseTime: this.releaseTime } : {}),
-		};
+	/** Progress: one compact row — Season [2] of [3] · Episode [7] of [13]. */
+	private renderCounters(parent: HTMLElement): void {
+		renderCounterRow(parent, [
+			{
+				label: 'Season',
+				current: counterField('Current season', this.currentSeason, (v) => { this.currentSeason = v; }, 1),
+				total: counterField('Total seasons', this.totalSeasons, (v) => { this.totalSeasons = v; }, 1),
+			},
+			{
+				label: 'Episode',
+				current: counterField('Next episode', this.currentEpisode, (v) => { this.currentEpisode = v; }, 1),
+				total: counterField('Total episodes', this.totalEpisodes, (v) => { this.totalEpisodes = v; }),
+			},
+		]);
 	}
 
 	private renderForm(): void {
-		const content = this.contentEl;
-		content.empty();
-
-		const makeRow = (parent: HTMLElement, label: string): HTMLElement => {
-			const row = parent.createDiv({ cls: 'wl-modal-row' });
-			row.createSpan({ cls: 'wl-modal-label', text: label });
-			return row;
-		};
-
-		/** Native time input + live JST converter label. */
-		const makeTimeRow = (parent: HTMLElement): void => {
-			const row = parent.createDiv({ cls: 'wl-modal-row wl-modal-row-mt' });
-			row.createSpan({ cls: 'wl-modal-label', text: 'Time (optional)' });
-			const inp = row.createEl('input', {
-				cls: 'wl-modal-input wl-time-input',
-				attr: { type: 'time' },
-			});
-			inp.value = this.releaseTime;
-			const jstLabel = row.createSpan({ cls: 'wl-jst-clock' });
-			const updateJST = (): void => {
-				jstLabel.textContent = this.releaseTime
-					? `JST ${this.localHHMMtoJST(this.releaseTime)} · stored as local time`
-					: 'JST —';
-			};
-			updateJST();
-			inp.addEventListener('input', () => {
-				this.releaseTime = inp.value;
-				updateJST();
-			});
-		};
-
-		// mode toggle
-		const modeRow = content.createDiv({ cls: 'wl-schedule-mode-row' });
-		const makeModeBtn = (label: string, value: 'single' | 'recurring'): void => {
-			const btn = modeRow.createEl('button', {
-				cls: `wl-btn wl-btn-sm wl-schedule-mode-btn${this.mode === value ? ' is-active' : ''}`,
-				text: label,
-			});
-			btn.addEventListener('click', () => {
-				if (this.mode === value) return;
-				this.mode = value;
-				this.renderForm();
-			});
-		};
-		makeModeBtn('Single release', 'single');
-		makeModeBtn('Recurring episodes', 'recurring');
-
-		if (this.mode === 'single') {
-			// single release: just a date (+ optional time)
-			const dateRow = makeRow(content, 'Release date');
-			createDatePicker({
-				parent: dateRow,
-				inputCls: 'wl-modal-input wl-date-input',
-				value: this.releaseDate || null,
-				lenient: true,
-				onChange: (iso) => {
-					// the picker only ever commits YYYY-MM-DD or null — no silent-failure path
-					this.releaseDate = iso ?? '';
-					this.updateSaveState();
-				},
-			});
-			makeTimeRow(content);
-		} else {
-			// recurring: cadence + its one extra field (+ time)
-			const recRow = makeRow(content, 'Airs');
-			const recSelect = recRow.createEl('select', { cls: 'wl-select' });
-			const recOptions: Array<[AirtimeRecurringKind, string]> = [
-				['daily', 'Daily'],
-				['weekly', 'Weekly'],
-				['monthly', 'Monthly'],
-			];
-			for (const [val, label] of recOptions) {
-				const opt = recSelect.createEl('option', { text: label, value: val });
-				if (val === this.recurrence) opt.selected = true;
-			}
-
-			const extraEl = content.createDiv();
-			const renderExtra = (): void => {
-				extraEl.empty();
-				if (this.recurrence === 'weekly') {
-					const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-					const r = makeRow(extraEl, 'Day of week');
-					const daySelect = r.createEl('select', { cls: 'wl-select' });
-					DAYS.forEach((d, i) => {
-						const opt = daySelect.createEl('option', { text: d, value: String(i) });
-						if (i === this.dayOfWeek) opt.selected = true;
-					});
-					daySelect.addEventListener('change', () => {
-						this.dayOfWeek = parseInt(daySelect.value, 10);
-					});
-				}
-				if (this.recurrence === 'monthly') {
-					const r = makeRow(extraEl, 'Day of month');
-					const inp = r.createEl('input', {
-						cls: 'wl-modal-input wl-modal-input-sm',
-						attr: { type: 'number', min: '1', max: '31', placeholder: '1' },
-					});
-					inp.value = String(this.dayOfMonth);
-					inp.addEventListener('input', () => {
-						const v = parseInt(inp.value, 10);
-						this.dayOfMonth = isNaN(v) ? 1 : Math.min(31, Math.max(1, v));
-					});
-				}
-				makeTimeRow(extraEl);
-			};
-			recSelect.addEventListener('change', () => {
-				this.recurrence = recSelect.value as AirtimeRecurringKind;
-				renderExtra();
-			});
-			renderExtra();
-
-			// progress: one compact row — Season [2] of [3] · Episode [7] of [13]
-			const progRow = content.createDiv({ cls: 'wl-modal-row wl-schedule-progress-row' });
-			const makeNum = (
-				value: number | null,
-				aria: string,
-				onInput: (v: number | null) => void,
-				min = 1,
-			): void => {
-				const inp = progRow.createEl('input', {
-					cls: 'wl-modal-input wl-schedule-num',
-					attr: { type: 'number', min: String(min), placeholder: '—', 'aria-label': aria },
-				});
-				if (value !== null) inp.value = String(value);
-				inp.addEventListener('input', () => onInput(parseInt(inp.value, 10) || null));
-			};
-			progRow.createSpan({ cls: 'wl-modal-label', text: 'Season' });
-			makeNum(this.currentSeason, 'Current season', (v) => { this.currentSeason = v; });
-			progRow.createSpan({ cls: 'wl-schedule-progress-sep', text: 'of' });
-			makeNum(this.totalSeasons, 'Total seasons', (v) => { this.totalSeasons = v; });
-			progRow.createSpan({ cls: 'wl-schedule-progress-sep wl-schedule-progress-dot', text: '·' });
-			progRow.createSpan({ cls: 'wl-modal-label', text: 'Episode' });
-			makeNum(this.currentEpisode, 'Next episode', (v) => { this.currentEpisode = v; });
-			progRow.createSpan({ cls: 'wl-schedule-progress-sep', text: 'of' });
-			makeNum(this.totalEpisodes, 'Total episodes', (v) => { this.totalEpisodes = v; }, 0);
-		}
-
-		// the save side-effects, stated instead of silent
-		content.createDiv({
-			cls: 'wl-modal-info wl-schedule-hint',
-			text: this.mode === 'single'
+		renderScheduleModal(this.contentEl, this.form, {
+			withTime: true,
+			withRecurring: true,
+			recurrenceLabel: 'Airs',
+			recurrenceOptions: RECURRENCE_OPTIONS,
+			modeLabels: ['Single release', 'Recurring episodes'],
+			hint: (mode) => mode === 'single'
 				? "Saving also updates this title's release date."
 				: "Saving also updates this title's total episodes.",
-		});
-
-		// cancel / save
-		const btnRow = content.createDiv({ cls: 'wl-modal-btn-row' });
-		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-mr', text: 'Cancel' });
-		cancelBtn.addEventListener('click', () => this.close());
-
-		this.saveBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' });
-		this.saveBtn.addEventListener('click', () => {
-			if (!this.isValid()) return;
-			void (async () => {
+			timeNote: (time) => time
+				? `JST ${this.localHHMMtoJST(time)} · stored as local time`
+				: 'JST —',
+			renderCounters: (parent) => this.renderCounters(parent),
+			modal: this,
+			onSave: async () => {
 				await this.onSave(
-					this.buildSchedule(),
+					buildScheduleFromState(this.form, true),
 					this.currentSeason,
 					this.currentEpisode,
 					this.totalSeasons,
 					this.totalEpisodes,
 				);
-				this.close();
-			})();
+			},
 		});
-		this.updateSaveState();
 	}
 }

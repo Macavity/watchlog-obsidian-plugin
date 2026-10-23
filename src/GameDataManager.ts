@@ -7,6 +7,7 @@ import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
 import { splitNested, type SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { decodeGame, encodeGame } from './storage/gameCodec';
+import { extractNotes, replaceNotesSection } from './storage/noteBody';
 import {
 	Game,
 	GameGroup,
@@ -22,16 +23,6 @@ import {
 	todayIso,
 } from './types';
 
-/** Every frontmatter key encodeGame can emit; the full rewrite deletes the ones it omits. */
-const GAME_KEYS: readonly string[] = [
-	'title', 'developer', 'publisher', 'genre', 'status', 'priority', 'favorite', 'dateFavorited', 'wishlist',
-	'rating', 'progress', 'playtime', 'achievements', 'platforms', 'singleplayer', 'coop', 'multiplayer',
-	'dateStarted', 'dateFinished', 'releaseDate', 'dateAdded', 'dateModified', 'coverUrl', 'storeUrl',
-	'externalLink', 'externalId', 'steamAppId', 'lastPlayed', 'groups', 'type',
-	'airtimeRecurrence', 'airtimeDay', 'airtimeTime', 'airtimeSeason', 'airtimeEpisode', 'airtimeAcknowledged',
-];
-
-const NOTES_RE = /(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/;
 const GAMES_FOLDER_PREFIX = 'Games/';
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
@@ -41,29 +32,6 @@ function slugify(input: string): string {
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, '-')
 		.replace(/^-|-$/g, '');
-}
-
-/** `## Notes` body of a note; null when the section is absent. */
-function extractNotes(content: string): string | null {
-	const match = content.match(NOTES_RE);
-	if (!match) return null;
-	// strip the template's leading blank line and trailing whitespace, keep internal breaks
-	return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
-}
-
-/** Replaces the `## Notes` body, keeping the heading, other sections and frontmatter; appends when missing. */
-function replaceNotesSection(existing: string, notesBody: string): string {
-	const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
-	if (!headingMatch || headingMatch.index === undefined) {
-		const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
-		return `${existing}${sep}\n## Notes\n\n${notesBody}\n`;
-	}
-	const bodyStart = headingMatch.index + headingMatch[0].length;
-	const after = existing.slice(bodyStart);
-	const nextHeading = after.match(/\n(?:## |# )/);
-	const bodyEnd =
-		nextHeading && nextHeading.index !== undefined ? bodyStart + nextHeading.index : existing.length;
-	return `${existing.slice(0, bodyStart)}\n${notesBody}\n${existing.slice(bodyEnd)}`;
 }
 
 /**
@@ -124,14 +92,6 @@ export class GameDataManager {
 		if (dm) {
 			for (const g of this.getGames()) if (isReleaseDateFuture(g.releaseDate)) await dm.autoAddGameToUpcoming(g);
 		}
-		this.notifyListeners();
-	}
-
-	/** Re-reads the shared settings (backup restore) and refreshes listeners. */
-	async load(): Promise<void> {
-		await this.shared.load();
-		this.settingsCache = null;
-		this.views.clear();
 		this.notifyListeners();
 	}
 
@@ -722,40 +682,6 @@ export class GameDataManager {
 		return this.layout().pathFromId(game.id);
 	}
 
-	/** Creates the note only if missing; true when one was created. */
-	async createGameNoteIfMissing(game: Game): Promise<boolean> {
-		if (this.fileOf(game.id)) return false;
-		await this.createNote(game);
-		return true;
-	}
-
-	/** Writes the game's frontmatter (creates the note when missing); the body stays as is. */
-	async writeGameNote(game: Game): Promise<string> {
-		await this.writeGame(game);
-		return this.layout().pathFromId(game.id);
-	}
-
-	/**
-	 * Rewrites every plugin-owned frontmatter key of an existing game note, body verbatim. Keys the
-	 * encoder omits are removed, except fields the decoder could not read. Does NOT create the file —
-	 * returns false then. Used by the bulk "Rewrite all frontmatter" action.
-	 */
-	async rewriteFrontmatterIfExists(game: Game): Promise<boolean> {
-		const file = this.fileOf(game.id);
-		if (!file) return false;
-		const out = this.encode(game);
-		const keep = new Set(this.index.invalidFields(game.id));
-		return this.processFrontMatter(file, game, (raw) => {
-			for (const key of GAME_KEYS) {
-				if (key in out) {
-					if (!keep.has(key) || !(key in raw)) raw[key] = out[key];
-				} else if (!keep.has(key)) {
-					delete raw[key];
-				}
-			}
-		});
-	}
-
 	async readGameNote(game: Game): Promise<string | null> {
 		const file = this.fileOf(game.id);
 		return file ? this.plugin.app.vault.read(file) : null;
@@ -773,9 +699,5 @@ export class GameDataManager {
 		const file = this.fileOf(game.id);
 		if (!file) return;
 		await this.plugin.app.vault.process(file, (content) => replaceNotesSection(content, notesBody));
-	}
-
-	async deleteGameNote(game: Game): Promise<void> {
-		await this.deleteNote(game.id);
 	}
 }

@@ -15,7 +15,7 @@ const PUNCT = /[\u0021-\u002f\u003a-\u0040\u005b-\u0060\u007b-\u007e\u00a1-\u00b
  * Articles are kept — dropping them collides too often ("The Office" vs "Office").
  * Returns '' when nothing survives; callers must skip empty keys.
  */
-export function normalizeTitleKey(title: string): string {
+function normalizeTitleKey(title: string): string {
 	return title
 		.normalize('NFKD')
 		.replace(/[\u0300-\u036f]/g, '')

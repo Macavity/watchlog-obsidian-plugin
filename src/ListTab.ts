@@ -1,8 +1,8 @@
-import { Modal, setIcon } from 'obsidian';
+import { setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, TagDefinition, SavedFilterPreset, Season } from './types';
-import { formatTime, formatDateDisplay, todayIso, getThemedColor, getDisplayPoster, getTitleCredits, getManualCredits, normalizeRowsLayout, ROWS_SHELVES, ROWS_EXCLUSIVE_SHELVES, sortByFavorited, priorityFilterOpts, formatPriorityOpt, migratePriorityExclude } from './types';
+import { formatTime, formatDateDisplay, todayIso, getThemedColor, getDisplayPoster, getTitleCredits, getManualCredits, normalizeRowsLayout, ROWS_SHELVES, ROWS_EXCLUSIVE_SHELVES, sortByFavorited, migratePriorityExclude } from './types';
 import { searchItems, yearOf, type SearchFieldSpec } from './SearchQuery';
 import { renderSearchHelpButton } from './SearchHelpModal';
 import { createDatePicker } from './DatePicker';
@@ -11,30 +11,29 @@ import { inferHistoryAction, inferHistorySource } from './HistoryManager';
 import { AddTitleModal } from './AddTitleModal';
 import { AddFromUrlModal } from './AddFromUrlModal';
 import { AddTitleChoiceModal } from './AddTitleChoiceModal';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown, renderViewDropdown, type SortFields } from './ui/TabToolbar';
+import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
+import { renderGroupCard } from './ui/GroupCard';
+import { PRIORITY_ORDER, pickRandom, compareUnsetLast, comparePriority, isRecentlyReleased } from './ui/TabHelpers';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { EditTitleModal } from './EditTitleModal';
 import { ConfirmModal } from './ConfirmModal';
 import { TitleDetailModal, GroupDetailModal, renderCreditsRows, renderCreditsRefreshButton } from './TitleDetailModal';
 import { AddCreditModal } from './AddCreditModal';
-import { renderGroupCollage } from './CollageUtil';
 import { appendMarkWatchedButton, isSingleEpisodeTitle } from './MarkWatchedButton';
 import { renderStarRating, ratingColor } from './StarRating';
 import { VirtualGrid, computeGridMetrics, setRowsCardWidth, type GridMetrics } from './VirtualGrid';
 import { VirtualScroller } from './VirtualScroller';
 import { LazyCardObserver } from './LazyCardObserver';
-import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard';
+import { buildPosterCard, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
 import { RowsCustomizeModal } from './RowsCustomizeModal';
-import { toggleFilterPanel, FilterSection } from './FilterPanel';
-import { toggleSortPopover } from './SortPopover';
+import { renderFiltersDropdown, buildFilterSections, buildRatingOpts } from './ui/TabFilters';
 
 
 type DisplayItem =
 	| { kind: 'title'; data: WatchLogTitle }
 	| { kind: 'group'; data: WatchLogGroup; members: WatchLogTitle[] };
-
-
-const PRIORITY_ORDER = ['High', 'Medium', 'Low'] as const;
 
 // selection key of a group: its id is its name, which could equal a title id
 const GROUP_KEY_PREFIX = 'group:';
@@ -53,10 +52,9 @@ export class ListTab {
 	filterPriorityExclude: Set<string> = new Set();
 	filterRatingExclude: Set<string> = new Set();
 	filterGroupExclude: Set<string> = new Set();
-	filterSort = 'dateAdded';
-	filterSortDir: 'asc' | 'desc' = 'desc';
-	filterSecondSort = 'none';
-	filterSecondSortDir: 'asc' | 'desc' = 'asc';
+	private readonly sort: SortFields = {
+		filterSort: 'dateAdded', filterSortDir: 'desc', filterSecondSort: 'none', filterSecondSortDir: 'asc',
+	};
 	searchQuery = '';
 	expandedId: string | null = null;
 	collapsedSeasons: Set<number> = new Set();
@@ -142,11 +140,11 @@ export class ListTab {
 				plugin.settings.priorities,
 			);
 			const ms = ListTab.migrateSortKey(saved.sort ?? 'dateAdded-newest');
-			this.filterSort     = ms.key;
-			this.filterSortDir  = saved.sortDir ?? ms.dir;
+			this.sort.filterSort     = ms.key;
+			this.sort.filterSortDir  = saved.sortDir ?? ms.dir;
 			const ms2 = ListTab.migrateSortKey(saved.secondSort ?? 'none');
-			this.filterSecondSort    = ms2.key;
-			this.filterSecondSortDir = saved.secondSortDir ?? ms2.dir;
+			this.sort.filterSecondSort    = ms2.key;
+			this.sort.filterSecondSortDir = saved.secondSortDir ?? ms2.dir;
 			this.filterRatingEmptyOnly      = saved.ratingEmptyOnly      ?? false;
 			this.filterRecentlyArrivedOnly  = saved.recentlyArrivedOnly  ?? false;
 			this.filterGroupsOnly           = saved.groupsOnly           ?? false;
@@ -178,6 +176,12 @@ export class ListTab {
 		}
 	}
 
+	/** Saves the live filters and drops the saved-preset highlight. */
+	private persistFilters(): void {
+		this.saveFiltersToSettings();
+		this.deactivateSavedFilter();
+	}
+
 	private saveFiltersToSettings(): void {
 		this.plugin.settings.listFilters = {
 			typeExclude:     Array.from(this.filterTypeExclude),
@@ -185,10 +189,10 @@ export class ListTab {
 			groupExclude:    Array.from(this.filterGroupExclude),
 			ratingExclude:   Array.from(this.filterRatingExclude),
 			priorityExclude: Array.from(this.filterPriorityExclude),
-			sort:          this.filterSort,
-			sortDir:       this.filterSortDir,
-			secondSort:    this.filterSecondSort,
-			secondSortDir: this.filterSecondSortDir,
+			sort:          this.sort.filterSort,
+			sortDir:       this.sort.filterSortDir,
+			secondSort:    this.sort.filterSecondSort,
+			secondSortDir: this.sort.filterSecondSortDir,
 			ratingEmptyOnly:       this.filterRatingEmptyOnly,
 			recentlyArrivedOnly:   this.filterRecentlyArrivedOnly,
 			groupsOnly:            this.filterGroupsOnly,
@@ -221,6 +225,13 @@ export class ListTab {
 		this.filterFavoritesOnly        = false;
 	}
 
+	/** Applies the stored preset and persists it as the active filter. */
+	private activatePreset(preset: SavedFilterPreset): void {
+		this.applyPreset(preset);
+		this.savedFilterActive = true;
+		this.saveFiltersToSettings();
+	}
+
 	private applyPreset(preset: SavedFilterPreset): void {
 		this.filterTypeExclude          = new Set(preset.typeExclude);
 		this.filterStatusExclude        = new Set(preset.statusExclude);
@@ -244,20 +255,11 @@ export class ListTab {
 		}
 	}
 
-	private static isRecentlyArrived(title: WatchLogTitle): boolean {
-		if (!title.releaseDate || !/^\d{4}-\d{2}-\d{2}$/.test(title.releaseDate)) return false;
-		const releaseMs = new Date(title.releaseDate + 'T00:00:00').getTime();
-		const today = new Date();
-		today.setHours(0, 0, 0, 0);
-		const diffDays = (today.getTime() - releaseMs) / 86400000;
-		return diffDays >= 0 && diffDays <= 7;
-	}
-
 	private titlePassesFilters(t: WatchLogTitle): boolean {
 		if (this.filterFavoritesOnly && !t.favorite) return false;
 		if (this.filterTypeExclude.size > 0 && this.filterTypeExclude.has(t.type)) return false;
 		if (this.filterRecentlyArrivedOnly) {
-			if (!ListTab.isRecentlyArrived(t)) return false;
+			if (!isRecentlyReleased(t.releaseDate)) return false;
 		} else if (this.filterStatusExclude.size > 0 && this.filterStatusExclude.has(t.status)) {
 			return false;
 		}
@@ -663,7 +665,7 @@ export class ListTab {
 				.filter((t): t is WatchLogTitle => t !== undefined);
 			if (picks.length < ListTab.RECOMMENDED_COUNT && picks.length < pool.length) {
 				const used = new Set(picks.map((t) => t.id));
-				picks.push(...ListTab.pickRandom(
+				picks.push(...pickRandom(
 					pool.filter((t) => !used.has(t.id)),
 					ListTab.RECOMMENDED_COUNT - picks.length,
 				));
@@ -672,7 +674,7 @@ export class ListTab {
 			return picks;
 		}
 
-		const picks = ListTab.pickRandom(pool, ListTab.RECOMMENDED_COUNT);
+		const picks = pickRandom(pool, ListTab.RECOMMENDED_COUNT);
 		this.dataManager.setRecommendedDaily({ date: today, ids: picks.map((t) => t.id) });
 		return picks;
 	}
@@ -712,18 +714,6 @@ export class ListTab {
 			if (out.length >= 10) break;
 		}
 		return out;
-	}
-
-	/** Fisher–Yates on a copy, returning the first `count` items. */
-	private static pickRandom<T>(pool: T[], count: number): T[] {
-		const arr = [...pool];
-		for (let i = arr.length - 1; i > 0; i--) {
-			const j = Math.floor(Math.random() * (i + 1));
-			const tmp = arr[i]!;
-			arr[i] = arr[j]!;
-			arr[j] = tmp;
-		}
-		return arr.slice(0, count);
 	}
 
 	private buildCardElement(
@@ -898,105 +888,44 @@ export class ListTab {
 		const typeDef = primaryType
 			? this.getTagDef(primaryType, this.plugin.settings.types)
 			: undefined;
-		const typeColor = typeDef
-			? getThemedColor(primaryType, typeDef.color, this.plugin.settings.colorTheme)
-			: '#888780';
-
-		// under mode wraps the collage in a cell with name + count below (see buildPosterCard)
-		const cell = this.plugin.isCardTextUnder('watchlist')
-			? parent.createDiv({ cls: 'wl-card-cell' })
-			: null;
-		const card = (cell ?? parent).createDiv({ cls: 'wl-card wl-card-group' });
-		card.dataset.groupId = group.id;
-		if (this.selectedItems.has(groupKey(group.id))) card.addClass('wl-card-selected');
-		if (cardHeight !== undefined) (cell ?? card).style.height = `${cardHeight}px`;
-
-		const letter = (group.name.trim().charAt(0) || '?').toUpperCase();
-		renderGroupCollage(card, members, getDisplayPoster, { letter, color: typeColor });
-
-		const textHost = cell
-			? cell.createDiv({ cls: 'wl-card-under-info' })
-			: card.createDiv({ cls: 'wl-card-overlay' });
-		textHost.createSpan({
-			cls: cell ? 'wl-card-under-title' : 'wl-card-title',
-			text: group.name,
-		});
-		const subtitle = textHost.createDiv({ cls: 'wl-card-meta-row' })
-			.createSpan({ cls: 'wl-card-type-badge' });
-		subtitle.style.backgroundColor = typeColor;
-		subtitle.textContent = `${members.length} title${members.length !== 1 ? 's' : ''}`;
-
-		const menuBtn = card.createEl('button', {
-			cls: 'wl-card-menu-btn',
-			text: '⋮',
-		});
-		menuBtn.setAttr('aria-label', 'Group actions');
-		menuBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			openCardMenu(card, menuBtn, [
-				{ label: 'Edit name', onClick: () => this.openRenameGroupPrompt(group) },
-				{
-					label: 'Delete group',
-					onClick: () => {
-						new ConfirmModal(
-							this.plugin.app,
-							`Delete group "${group.name}"? All titles inside will be returned to the main list.`,
-							() => {
-								void this.dataManager.removeGroup(group.id).then(() => {
-									this.expandedGroups.delete(group.id);
-									this.render();
-								});
-							},
-						).open();
-					},
-				},
-			], { container: this.container, cleanups: this.activeCleanups });
-		});
-
-		// under mode: the whole cell opens the group
-		(cell ?? card).addEventListener('click', () => {
-			if (this.selectionMode) {
-				this.toggleCardSelection(card, groupKey(group.id));
-				return;
-			}
-			new GroupDetailModal(this.plugin.app, this.plugin, group, members, () => {
-				this.render();
-			}, (name) => this.applyPersonSearch(name)).open();
+		renderGroupCard(parent, {
+			app: this.plugin.app,
+			group,
+			members,
+			getCover: getDisplayPoster,
+			typeColor: typeDef
+				? getThemedColor(primaryType, typeDef.color, this.plugin.settings.colorTheme)
+				: '#888780',
+			textUnder: this.plugin.isCardTextUnder('watchlist'),
+			selected: this.selectedItems.has(groupKey(group.id)),
+			cardHeight,
+			unit: 'title',
+			container: this.container,
+			cleanups: this.activeCleanups,
+			onRename: () => this.openRenameGroupPrompt(group),
+			deleteMessage: `Delete group "${group.name}"? All titles inside will be returned to the main list.`,
+			onDelete: () => {
+				void this.dataManager.removeGroup(group.id).then(() => {
+					this.expandedGroups.delete(group.id);
+					this.render();
+				});
+			},
+			onActivate: (card) => {
+				if (this.selectionMode) {
+					this.toggleCardSelection(card, groupKey(group.id));
+					return;
+				}
+				new GroupDetailModal(this.plugin.app, this.plugin, group, members, () => {
+					this.render();
+				}, (name) => this.applyPersonSearch(name)).open();
+			},
 		});
 	}
 
 	private openRenameGroupPrompt(group: WatchLogGroup): void {
-		const modal = new Modal(this.plugin.app);
-		modal.titleEl.setText('Rename group');
-		const input = modal.contentEl.createEl('input', {
-			cls: 'wl-input',
-			attr: { type: 'text', value: group.name, placeholder: 'Group name' },
+		openRenameGroupPrompt(this.plugin.app, group.name, (name) => {
+			void this.dataManager.updateGroup({ ...group, name }).then(() => this.render());
 		});
-		const btnRow = modal.contentEl.createDiv({ cls: 'wl-modal-btn-row' });
-		const submit = (): void => {
-			const newName = input.value.trim();
-			if (newName && newName !== group.name) {
-				void this.dataManager
-					.updateGroup({ ...group, name: newName })
-					.then(() => this.render());
-			}
-			modal.close();
-		};
-		btnRow
-			.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' })
-			.addEventListener('click', submit);
-		btnRow
-			.createEl('button', { cls: 'wl-btn', text: 'Cancel' })
-			.addEventListener('click', () => modal.close());
-		input.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter') submit();
-			else if (e.key === 'Escape') modal.close();
-		});
-		modal.open();
-		window.setTimeout(() => {
-			input.focus();
-			input.select();
-		}, 0);
 	}
 
 	private openEditModalForTitle(titleId: string): void {
@@ -1083,34 +1012,19 @@ export class ListTab {
 	 * the box out of the header. Ids, not DOM: the grid sections are virtualised.
 	 */
 	private shelfSelect(ids: string[]): ShelfSelect | undefined {
-		if (!this.selectionMode) return undefined;
-		return {
-			ids,
-			selected: this.selectedItems,
-			onToggle: (sectionIds, selectAll) => {
-				for (const id of sectionIds) {
-					if (selectAll) { this.selectedItems.add(id); } else { this.selectedItems.delete(id); }
-				}
-				this.syncCardSelectionClasses();
-				this.refreshToolbarActions();
-			},
-			register: (refresh) => this.shelfSelectRefreshers.push(refresh),
-		};
-	}
-
-	/** A title can sit in several sections, so every header box re-reads the set. */
-	private refreshShelfSelects(): void {
-		for (const refresh of this.shelfSelectRefreshers) refresh();
+		return buildShelfSelect(this.selectionMode, ids, this.selectedItems, this.shelfSelectRefreshers, () => {
+			this.syncCardSelectionClasses();
+			this.refreshToolbarActions();
+		});
 	}
 
 	/** Sync wl-card-selected across the whole tab (Cards grid, shelves, By-type grids). */
 	private syncCardSelectionClasses(): void {
-		this.container.querySelectorAll<HTMLElement>('.wl-card').forEach((card) => {
+		syncSelectionClasses(this.container, this.selectedItems, (card) => {
 			const groupId = card.dataset.groupId;
-			const id = card.dataset.titleId ?? (groupId !== undefined ? groupKey(groupId) : undefined);
-			card.classList.toggle('wl-card-selected', !!id && this.selectedItems.has(id));
+			return card.dataset.titleId ?? (groupId !== undefined ? groupKey(groupId) : undefined);
 		});
-		this.refreshShelfSelects();
+		refreshShelfSelects(this.shelfSelectRefreshers);
 	}
 
 	/**
@@ -1118,19 +1032,11 @@ export class ListTab {
 	 * view, so every instance of the id is synced.
 	 */
 	private toggleCardSelection(card: HTMLElement, id: string): void {
-		if (this.selectedItems.has(id)) {
-			this.selectedItems.delete(id);
-		} else {
-			this.selectedItems.add(id);
-		}
-		const selected = this.selectedItems.has(id);
 		const selector = id.startsWith(GROUP_KEY_PREFIX)
 			? `.wl-card[data-group-id="${CSS.escape(id.slice(GROUP_KEY_PREFIX.length))}"]`
 			: `.wl-card[data-title-id="${CSS.escape(id)}"]`;
-		this.container
-			.querySelectorAll<HTMLElement>(selector)
-			.forEach((el) => el.classList.toggle('wl-card-selected', selected));
-		this.refreshShelfSelects();
+		toggleCardSelected(this.container, this.selectedItems, id, selector);
+		refreshShelfSelects(this.shelfSelectRefreshers);
 		this.refreshToolbarActions();
 	}
 
@@ -1153,61 +1059,42 @@ export class ListTab {
 	private renderToolbarActions(controls: HTMLElement): void {
 		// saved filter preset (only when one is stored)
 		const preset = this.dataManager.getSavedFilterPreset();
-		if (preset) {
-			const savedBtn = controls.createEl('button', {
-				cls: `wl-btn wl-btn-sm${this.savedFilterActive ? ' wl-btn-preset-active' : ''}`,
-				text: 'Saved filter',
-			});
-			this.savedFilterBtnEl = savedBtn;
-			savedBtn.addEventListener('click', () => {
-				this.applyPreset(preset);
-				this.savedFilterActive = true;
-				this.saveFiltersToSettings();
-				// rebuild toolbar + content, not the whole tab
-				this.refreshToolbarActions();
-				this.rerenderActiveView();
-			});
-		} else {
-			this.savedFilterBtnEl = null;
-		}
-
-		this.renderFiltersDropdown(controls);
-
-		this.renderSortingDropdown(controls);
-
-		// action bar — selection mode with items selected
-		if (this.selectionMode && this.selectedItems.size > 0) {
-			this.renderActionBar(controls);
-		}
-
-		if (this.selectionMode) {
-			const hasAny = this.selectedItems.size > 0;
-			const selAllBtn = controls.createEl('button', { cls: 'wl-btn wl-btn-sm', text: hasAny ? 'None' : 'All' });
-			selAllBtn.title = hasAny ? 'Deselect all' : 'Select all visible';
-			selAllBtn.addEventListener('click', () => {
-				if (this.selectedItems.size > 0) {
-					this.selectedItems.clear();
-				} else {
-					for (const item of this.getDisplayItems()) {
-						this.selectedItems.add(itemKey(item));
+		this.savedFilterBtnEl = renderToolbarCore(controls, {
+			preset: preset && {
+				active: this.savedFilterActive,
+				onApply: () => {
+					this.activatePreset(preset);
+					// rebuild toolbar + content, not the whole tab
+					this.refreshToolbarActions();
+					this.rerenderActiveView();
+				},
+			},
+			renderFilters: (parent) => this.renderFiltersDropdown(parent),
+			renderSorting: (parent) => this.renderSortingDropdown(parent),
+			// action bar — selection mode with items selected
+			renderActionBar: this.selectionMode && this.selectedItems.size > 0
+				? (parent) => this.renderActionBar(parent)
+				: undefined,
+			selection: {
+				selectionMode: this.selectionMode,
+				hasSelection: this.selectedItems.size > 0,
+				onToggleAll: () => {
+					if (this.selectedItems.size > 0) {
+						this.selectedItems.clear();
+					} else {
+						for (const item of this.getDisplayItems()) {
+							this.selectedItems.add(itemKey(item));
+						}
 					}
-				}
-				this.refreshToolbarActions();
-				if (this.currentView === 'rows') {
-					this.syncCardSelectionClasses();
-				} else {
-					this.rerenderTable();
-				}
-			});
-		}
-
-		// in selection mode the button is the way out — red Cancel
-		const selBtn = controls.createEl('button', {
-			cls: `wl-btn wl-btn-sm${this.selectionMode ? ' wl-btn-cancel' : ''}`,
-			text: this.selectionMode ? 'Cancel' : 'Select',
-		});
-		selBtn.addEventListener('click', () => {
-			this.setSelectionMode(!this.selectionMode);
+					this.refreshToolbarActions();
+					if (this.currentView === 'rows') {
+						this.syncCardSelectionClasses();
+					} else {
+						this.rerenderTable();
+					}
+				},
+				onToggleMode: () => this.setSelectionMode(!this.selectionMode),
+			},
 		});
 
 		const rightGroup = controls.createDiv({ cls: 'wl-header-controls-right' });
@@ -1215,12 +1102,7 @@ export class ListTab {
 		this.renderViewDropdown(rightGroup);
 
 		// add button, far right — opens the chooser modal
-		const addBtnWrap = rightGroup.createDiv({ cls: 'wl-add-btn-wrap' });
-		const addBtn = addBtnWrap.createEl('button', { cls: 'wl-add-btn wl-btn-success', text: '+ add' });
-		addBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			this.openAddTitleChooser();
-		});
+		renderAddButton(rightGroup, () => this.openAddTitleChooser());
 	}
 
 	private openAddTitleChooser(): void {
@@ -1236,111 +1118,53 @@ export class ListTab {
 	}
 
 	private renderFiltersDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Filters ▼' });
-		const dotEl = btn.createSpan({ cls: 'wl-filter-dot' });
-		if (this.hasActiveFilter()) { dotEl.show(); } else { dotEl.hide(); }
-
-		const clearBtn = parent.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-clear-filters', text: '✕ clear' });
-		clearBtn.title = 'Clear all filters';
-		if (this.hasActiveFilter()) { clearBtn.show(); } else { clearBtn.hide(); }
-		clearBtn.addEventListener('click', () => {
-			this.clearAllFilters();
-			this.saveFiltersToSettings();
-			this.deactivateSavedFilter();
-			dotEl.hide();
-			clearBtn.hide();
-			this.rerenderTable();
-		});
-
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-
-			const typeOpts = this.plugin.settings.types.map((t) => t.name);
-			const statusOpts = this.plugin.settings.statuses.map((s) => s.name);
-			// half options (½ … 4½) appear only when a title holds that exact rating; keys
-			// mirror titlePassesFilters' `${t.rating}★`, so 4.5 matches "4.5★", never 4 or 5
-			const presentHalfRatings = new Set<number>();
-			for (const t of this.dataManager.getTitles()) {
-				if (t.rating % 1 === 0.5) presentHalfRatings.add(t.rating);
-			}
-			const ratingOpts: string[] = [];
-			for (let i = 1; i <= 5; i++) {
-				if (presentHalfRatings.has(i - 0.5)) ratingOpts.push(`${i - 0.5}★`);
-				ratingOpts.push(`${i}★`);
-			}
-			const formatRatingOpt = (opt: string): string =>
-				opt.replace(/^(\d+)\.5/, (_m, whole: string) => (whole === '0' ? '½' : `${whole}½`));
-			const priorityOpts = priorityFilterOpts(this.plugin.settings.priorities);
-			const groupOpts = this.dataManager.getGroups().map((g) => g.name);
-
-			// draft — live filter state only changes on Apply
-			const draft = {
-				typeExclude:              new Set(this.filterTypeExclude),
-				statusExclude:            new Set(this.filterStatusExclude),
-				ratingExclude:            new Set(this.filterRatingExclude),
-				priorityExclude:          new Set(this.filterPriorityExclude),
-				groupExclude:             new Set(this.filterGroupExclude),
-				filterRatingEmptyOnly:    this.filterRatingEmptyOnly,
-				filterRecentlyArrivedOnly: this.filterRecentlyArrivedOnly,
-				filterGroupsOnly:         this.filterGroupsOnly,
-				filterFavoritesOnly:      this.filterFavoritesOnly,
-			};
-
-			const sections: FilterSection[] = [
-				{ label: 'Type',     opts: typeOpts,     excludeSet: draft.typeExclude },
-				{
-					label: 'Status', opts: statusOpts, excludeSet: draft.statusExclude,
-					specials: [{
-						text: '✦ Recently arrived',
-						spanCls: 'wl-recently-arrived-filter',
-						get: () => draft.filterRecentlyArrivedOnly,
-						set: (v) => { draft.filterRecentlyArrivedOnly = v; },
-						mode: 'exclusive',
-						resetOnGlobal: true,
-					}],
+		renderFiltersDropdown(parent, {
+			hasActiveFilter: () => this.hasActiveFilter(),
+			clearAll: () => this.clearAllFilters(),
+			rerender: () => this.rerenderTable(),
+			persist: () => this.persistFilters(),
+			rerenderAll: () => this.render(),
+			registerCleanup: (fn) => this.activeCleanups.push(fn),
+			preset: {
+				exists: () => this.dataManager.getSavedFilterPreset() !== null,
+				remove: async () => {
+					await this.dataManager.setSavedFilterPreset(null);
+					this.savedFilterActive = false;
 				},
-				{
-					label: 'Rating', opts: ratingOpts, excludeSet: draft.ratingExclude,
-					formatOpt: formatRatingOpt,
-					specials: [{
-						text: 'Empty',
-						get: () => draft.filterRatingEmptyOnly,
-						set: (v) => { draft.filterRatingEmptyOnly = v; },
-						mode: 'exclusive',
-					}],
-				},
-				{
-					label: 'Priority', opts: priorityOpts, excludeSet: draft.priorityExclude,
-					formatOpt: formatPriorityOpt,
-				},
-			];
-			if (groupOpts.length > 0) {
-				sections.push({
-					label: 'Group', opts: groupOpts, excludeSet: draft.groupExclude,
-					specials: [{
-						text: '◇ Groups only',
-						spanCls: 'wl-recently-arrived-filter',
-						get: () => draft.filterGroupsOnly,
-						set: (v) => { draft.filterGroupsOnly = v; },
-						mode: 'independent',
-						dividerAfter: true,
-					}],
-				});
-			}
+			},
+			openDraft: () => {
+				// draft — live filter state only changes on Apply
+				const draft = {
+					typeExclude:              new Set(this.filterTypeExclude),
+					statusExclude:            new Set(this.filterStatusExclude),
+					ratingExclude:            new Set(this.filterRatingExclude),
+					priorityExclude:          new Set(this.filterPriorityExclude),
+					groupExclude:             new Set(this.filterGroupExclude),
+					filterRatingEmptyOnly:    this.filterRatingEmptyOnly,
+					filterRecentlyArrivedOnly: this.filterRecentlyArrivedOnly,
+					filterGroupsOnly:         this.filterGroupsOnly,
+					filterFavoritesOnly:      this.filterFavoritesOnly,
+				};
 
-			toggleFilterPanel({
-				anchor: btn,
-				outsideGuard: wrap,
-				registerCleanup: (fn) => this.activeCleanups.push(fn),
-				sections,
-				favorites: {
-					get: () => draft.filterFavoritesOnly,
-					set: (v) => { draft.filterFavoritesOnly = v; },
-				},
-				presetExists: this.dataManager.getSavedFilterPreset() !== null,
-				onPresetSave: async () => {
-					await this.dataManager.setSavedFilterPreset({
+				return {
+					sections: buildFilterSections({
+						lead: [{
+							label: 'Type',
+							opts: this.plugin.settings.types.map((t) => t.name),
+							excludeSet: draft.typeExclude,
+						}],
+						statusOpts: this.plugin.settings.statuses.map((s) => s.name),
+						// half options appear only when a title holds that exact rating
+						ratingOpts: buildRatingOpts(this.dataManager.getTitles().map((t) => t.rating)),
+						priorities: this.plugin.settings.priorities,
+						groupOpts: this.dataManager.getGroups().map((g) => g.name),
+						draft,
+					}),
+					favorites: {
+						get: () => draft.filterFavoritesOnly,
+						set: (v) => { draft.filterFavoritesOnly = v; },
+					},
+					savePreset: () => this.dataManager.setSavedFilterPreset({
 						typeExclude:     Array.from(draft.typeExclude),
 						statusExclude:   Array.from(draft.statusExclude),
 						groupExclude:    Array.from(draft.groupExclude),
@@ -1350,162 +1174,96 @@ export class ListTab {
 						recentlyArrivedOnly:   draft.filterRecentlyArrivedOnly,
 						groupsOnly:            draft.filterGroupsOnly,
 						favoritesOnly:         draft.filterFavoritesOnly,
-					});
-				},
-				onPresetDelete: async () => {
-					await this.dataManager.setSavedFilterPreset(null);
-					this.savedFilterActive = false;
-				},
-				onPresetChanged: () => this.render(),
-				onApply: () => {
-					this.filterTypeExclude     = draft.typeExclude;
-					this.filterStatusExclude   = draft.statusExclude;
-					this.filterRatingExclude   = draft.ratingExclude;
-					this.filterPriorityExclude = draft.priorityExclude;
-					this.filterGroupExclude    = draft.groupExclude;
-					this.filterRatingEmptyOnly      = draft.filterRatingEmptyOnly;
-					this.filterRecentlyArrivedOnly  = draft.filterRecentlyArrivedOnly;
-					this.filterGroupsOnly           = draft.filterGroupsOnly;
-					this.filterFavoritesOnly        = draft.filterFavoritesOnly;
-					this.saveFiltersToSettings();
-					this.deactivateSavedFilter();
-					const active = this.hasActiveFilter();
-					if (active) { dotEl.show(); clearBtn.show(); } else { dotEl.hide(); clearBtn.hide(); }
-					this.rerenderTable();
-				},
-			});
+					}),
+					commit: () => {
+						this.filterTypeExclude     = draft.typeExclude;
+						this.filterStatusExclude   = draft.statusExclude;
+						this.filterRatingExclude   = draft.ratingExclude;
+						this.filterPriorityExclude = draft.priorityExclude;
+						this.filterGroupExclude    = draft.groupExclude;
+						this.filterRatingEmptyOnly      = draft.filterRatingEmptyOnly;
+						this.filterRecentlyArrivedOnly  = draft.filterRecentlyArrivedOnly;
+						this.filterGroupsOnly           = draft.filterGroupsOnly;
+						this.filterFavoritesOnly        = draft.filterFavoritesOnly;
+					},
+				};
+			},
 		});
 	}
 
 	private renderSortingDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Sorting ▼' });
-
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			toggleSortPopover({
-				wrap,
-				anchor: btn,
-				registerCleanup: (fn) => this.activeCleanups.push(fn),
-				options: [
-					'Title', 'Date added', 'Progress', 'Rating', 'Priority',
-					'Started', 'Status', 'Date watched', 'Time left', 'Time watched',
-				],
-				labelToKey: (label) => this.sortLabelToKey(label),
-				defaultDirs: ListTab.SORT_DEFAULT_DIR,
-				primary: { key: this.filterSort, dir: this.filterSortDir },
-				secondary: { key: this.filterSecondSort, dir: this.filterSecondSortDir },
-				onChange: (primary, secondary) => {
-					this.filterSort          = primary.key;
-					this.filterSortDir       = primary.dir;
-					this.filterSecondSort    = secondary.key;
-					this.filterSecondSortDir = secondary.dir;
-					this.saveFiltersToSettings();
-					// sorting only reorders content
-					this.rerenderActiveView();
-				},
-			});
+		renderSortingDropdown(parent, this.sort, {
+			registerCleanup: (fn) => this.activeCleanups.push(fn),
+			options: [
+				'Title', 'Date added', 'Progress', 'Rating', 'Priority',
+				'Started', 'Status', 'Date watched', 'Time left', 'Time watched',
+			],
+			labelToKey: (label) => this.sortLabelToKey(label),
+			defaultDirs: ListTab.SORT_DEFAULT_DIR,
+			onSorted: () => {
+				this.saveFiltersToSettings();
+				// sorting only reorders content
+				this.rerenderActiveView();
+			},
 		});
 	}
 
 	private renderViewDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm wl-view-btn' });
-		setIcon(btn, this.currentView === 'rows' ? 'layout-grid' : 'list');
-		btn.title = 'View';
-
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const existing = wrap.querySelector('.wl-dropdown');
-			if (existing) { existing.remove(); return; }
-
-			const panel = wrap.createDiv({ cls: 'wl-dropdown wl-view-panel' });
-
-			const options: { key: 'list' | 'rows'; label: string; icon: string }[] = [
+		renderViewDropdown<'list' | 'rows'>(parent, {
+			current: this.currentView,
+			options: [
 				{ key: 'rows', label: 'Cards', icon: 'layout-grid' },
 				{ key: 'list', label: 'List', icon: 'list' },
-			];
-			for (const opt of options) {
-				const active = this.currentView === opt.key;
-				const row = panel.createDiv({ cls: `wl-view-option-row${active ? ' is-active' : ''}` });
-				const iconEl = row.createSpan({ cls: 'wl-view-option-icon' });
-				setIcon(iconEl, opt.icon);
-				row.createSpan({ cls: 'wl-view-option-label', text: opt.label });
-				if (active) {
-					const checkEl = row.createSpan({ cls: 'wl-view-option-check' });
-					setIcon(checkEl, 'check');
+			],
+			onSelect: (key) => {
+				if (this.currentView === 'rows') {
+					// this also tears down the shared poster observer
+					this.destroyVirtualScroll();
+					this.destroyRowsVirtual();
 				}
-				row.addEventListener('click', (ev) => {
-					ev.stopPropagation();
-					panel.remove();
-					activeDocument.removeEventListener('click', closer, true);
-					if (this.currentView === opt.key) return;
-					if (this.currentView === 'rows') {
-						// this also tears down the shared poster observer
-						this.destroyVirtualScroll();
-						this.destroyRowsVirtual();
-					}
-					this.currentView = opt.key;
-					// last-used persistence (the Upcoming pattern) — no separate default setting
-					this.plugin.settings.defaultWatchlistView = opt.key;
-					void this.plugin.saveSettings();
-					this.render();
-				});
-			}
-
-			const closer = (ev: MouseEvent) => {
-				if (!wrap.contains(ev.target as Node)) {
-					panel.remove();
-					activeDocument.removeEventListener('click', closer, true);
-				}
-			};
-			window.setTimeout(() => activeDocument.addEventListener('click', closer, true), 0);
+				this.currentView = key;
+				// last-used persistence (the Upcoming pattern) — no separate default setting
+				this.plugin.settings.defaultWatchlistView = key;
+				void this.plugin.saveSettings();
+				this.render();
+			},
 		});
 	}
 
+	private collapseIfExpanded(id: string): void {
+		if (this.expandedId === id) this.expandedId = null;
+	}
+
 	private renderActionBar(parent: HTMLElement): void {
-		const bar = parent.createDiv({ cls: 'wl-action-bar' });
-
-		const deleteBtn = bar.createEl('button', {
-			cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
-			text: '✕',
-		});
-		deleteBtn.title = 'Delete selected';
-		deleteBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const count = this.selectedItems.size;
-			new ConfirmModal(this.plugin.app, `Delete ${count} selected item${count !== 1 ? 's' : ''}? This cannot be undone.`, () => {
-				void (async () => {
-					const groupIds = new Map(this.dataManager.getGroups().map((g) => [groupKey(g.id), g.id]));
-					const titleIds: string[] = [];
-					for (const id of Array.from(this.selectedItems)) {
-						const groupId = groupIds.get(id);
-						if (groupId !== undefined) {
-							await this.dataManager.removeGroup(groupId);
-							this.expandedGroups.delete(groupId);
-						} else {
-							titleIds.push(id);
-							if (this.expandedId === id) this.expandedId = null;
-						}
+		const bar = renderActionBar(parent, this.plugin.app, {
+			title: 'Delete selected',
+			selected: this.selectedItems,
+			message: (count) => `Delete ${count} selected item${count !== 1 ? 's' : ''}? This cannot be undone.`,
+			onConfirm: async () => {
+				const groupIds = new Map(this.dataManager.getGroups().map((g) => [groupKey(g.id), g.id]));
+				const titleIds: string[] = [];
+				for (const id of Array.from(this.selectedItems)) {
+					const groupId = groupIds.get(id);
+					if (groupId !== undefined) {
+						await this.dataManager.removeGroup(groupId);
+						this.expandedGroups.delete(groupId);
+					} else {
+						titleIds.push(id);
+						this.collapseIfExpanded(id);
 					}
-					if (titleIds.length > 0) {
-						await this.dataManager.removeTitlesBatch(titleIds);
-					}
-					this.selectedItems.clear();
-					this.render();
-				})();
-			}).open();
+				}
+				if (titleIds.length > 0) {
+					await this.dataManager.removeTitlesBatch(titleIds);
+				}
+				this.selectedItems.clear();
+				this.render();
+			},
 		});
 
-		const statusSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
-		statusSelect.createEl('option', { text: 'Status…', value: '' });
-		for (const s of this.plugin.settings.statuses.filter((s) => s.name !== 'To be released')) {
-			statusSelect.createEl('option', { text: s.name, value: s.name });
-		}
-		statusSelect.addEventListener('change', () => {
-			void (async () => {
-				const newStatus = statusSelect.value;
-				if (!newStatus) return;
+		renderBatchStatusSelect(
+			bar,
+			this.plugin.settings.statuses.map((s) => s.name).filter((name) => name !== 'To be released'),
+			async (newStatus) => {
 				const groupIds = new Set(this.dataManager.getGroups().map((g) => groupKey(g.id)));
 				const updated: WatchLogTitle[] = [];
 				for (const id of this.selectedItems) {
@@ -1522,80 +1280,37 @@ export class ListTab {
 						await this.dataManager.updateMarkdownFile(t);
 					}
 				}
-				statusSelect.value = '';
 				this.render();
-			})();
-		});
+			},
+		);
 
 		const allGroups = this.dataManager.getGroups();
-		const hasGroupSelected = Array.from(this.selectedItems).some((id) =>
-			allGroups.some((g) => groupKey(g.id) === id),
-		);
-		const moveSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
-		if (hasGroupSelected) {
-			moveSelect.disabled = true;
-			moveSelect.title = 'A group is selected; cannot move groups into other groups';
-		}
-		moveSelect.createEl('option', { text: 'Group…', value: '' });
-		for (const g of allGroups) {
-			moveSelect.createEl('option', { text: g.name, value: g.id });
-		}
-		moveSelect.createEl('option', { text: 'Create new group…', value: '__new__' });
-		moveSelect.addEventListener('change', () => {
-			void (async () => {
-				const value = moveSelect.value;
-				if (!value) return;
-				const groupIds = new Set(allGroups.map((g) => groupKey(g.id)));
-				const titleIds = Array.from(this.selectedItems).filter((id) => !groupIds.has(id));
-
-				if (value === '__new__') {
-					// inline input — prompt() is unavailable in Obsidian/Electron
-					moveSelect.value = '';
-					moveSelect.hide();
-					const nameInput = bar.createEl('input', {
-						cls: 'wl-modal-input wl-group-name-input',
-						attr: { type: 'text', placeholder: 'Group name…', maxlength: '64' },
-					});
-					const confirmBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✓' });
-					confirmBtn.title = 'Create group';
-					const cancelBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✕' });
-					cancelBtn.title = 'Cancel';
-
-					const doCreate = async () => {
-						const name = nameInput.value.trim();
-						if (!name) return;
-						const newGroup: WatchLogGroup = {
-							id: this.dataManager.generateGroupId(name),
-							name,
-							titleIds,
-							dateAdded: new Date().toISOString(),
-						};
-						await this.dataManager.addGroup(newGroup);
-						this.selectedItems.clear();
-						this.selectionMode = false;
-						this.render();
-					};
-					confirmBtn.addEventListener('click', (e) => { e.stopPropagation(); void doCreate(); });
-					// cancel only needs the toolbar back
-					cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); this.refreshToolbarActions(); });
-					nameInput.addEventListener('keydown', (e) => {
-						e.stopPropagation();
-						if (e.key === 'Enter') void doCreate();
-						if (e.key === 'Escape') this.refreshToolbarActions();
-					});
-					nameInput.addEventListener('click', (e) => e.stopPropagation());
-					window.setTimeout(() => nameInput.focus(), 0);
-					return;
+		const groupIds = new Set(allGroups.map((g) => groupKey(g.id)));
+		const selectedTitleIds = () => Array.from(this.selectedItems).filter((id) => !groupIds.has(id));
+		renderMoveToGroupSelect(bar, {
+			groups: allGroups,
+			disabled: Array.from(this.selectedItems).some((id) => groupIds.has(id)),
+			onMove: async (groupId) => {
+				for (const id of selectedTitleIds()) {
+					await this.dataManager.addTitleToGroup(groupId, id);
 				}
-
-				for (const id of titleIds) {
-					await this.dataManager.addTitleToGroup(value, id);
-				}
-				moveSelect.value = '';
 				this.selectedItems.clear();
 				this.selectionMode = false;
 				this.render();
-			})();
+			},
+			onCreate: async (name) => {
+				const newGroup: WatchLogGroup = {
+					id: this.dataManager.generateGroupId(name),
+					name,
+					titleIds: selectedTitleIds(),
+					dateAdded: new Date().toISOString(),
+				};
+				await this.dataManager.addGroup(newGroup);
+				this.selectedItems.clear();
+				this.selectionMode = false;
+				this.render();
+			},
+			onCancel: () => this.refreshToolbarActions(),
 		});
 	}
 
@@ -1610,38 +1325,12 @@ export class ListTab {
 	// Search & controls
 
 	private renderSearch(parent: HTMLElement): void {
-		// compact inline search, reusing Reading's classes
-		const searchWrap = parent.createDiv({ cls: 'wl-reading-search-wrap' });
-		const input = searchWrap.createEl('input', {
-			cls: 'wl-reading-search-input',
-			attr: { type: 'text', placeholder: 'Search titles, cast, studio…' },
-		});
-		input.value = this.searchQuery;
-		renderSearchHelpButton(searchWrap, this.plugin.app, 'Watchlist', () => this.searchFields());
-		// clear button — only while there is text
-		const clearBtn = searchWrap.createEl('button', {
-			cls: 'wl-search-clear',
-			attr: { type: 'button', 'aria-label': 'Clear search' },
-		});
-		setIcon(clearBtn, 'x');
-		const syncClear = () => clearBtn.toggleClass('is-visible', input.value.length > 0);
-		syncClear();
-		let searchDebounce = 0;
-		input.addEventListener('input', () => {
-			this.searchQuery = input.value;
-			syncClear();
-			window.clearTimeout(searchDebounce);
-			searchDebounce = window.setTimeout(() => {
-				this.rerenderActiveView();
-			}, 250);
-		});
-		clearBtn.addEventListener('click', () => {
-			window.clearTimeout(searchDebounce);
-			input.value = '';
-			this.searchQuery = '';
-			syncClear();
-			input.focus();
-			this.rerenderActiveView();
+		renderSearchBox(parent, {
+			value: this.searchQuery,
+			placeholder: 'Search titles, cast, studio…',
+			help: (host) => renderSearchHelpButton(host, this.plugin.app, 'Watchlist', () => this.searchFields()),
+			onChange: (q) => { this.searchQuery = q; },
+			onCommit: () => this.rerenderActiveView(),
 		});
 	}
 
@@ -2130,10 +1819,10 @@ export class ListTab {
 	}
 
 	private compareDisplayItems(a: DisplayItem, b: DisplayItem): number {
-		const primaryKey = ListTab.sortBaseAndDirToKey(this.filterSort, this.filterSortDir);
+		const primaryKey = ListTab.sortBaseAndDirToKey(this.sort.filterSort, this.sort.filterSortDir);
 		const primary = this.compareDisplayItemsByKey(primaryKey, a, b);
-		if (primary !== 0 || this.filterSecondSort === 'none') return primary;
-		const secondKey = ListTab.sortBaseAndDirToKey(this.filterSecondSort, this.filterSecondSortDir);
+		if (primary !== 0 || this.sort.filterSecondSort === 'none') return primary;
+		const secondKey = ListTab.sortBaseAndDirToKey(this.sort.filterSecondSort, this.sort.filterSecondSortDir);
 		return this.compareDisplayItemsByKey(secondKey, a, b);
 	}
 
@@ -2171,7 +1860,7 @@ export class ListTab {
 		// release year after the type badge; omitted when unknown
 		const yearMatch = title.releaseDate?.match(/^(\d{4})/);
 		if (yearMatch) badgeRow.createSpan({ cls: 'wl-row-year', text: yearMatch[1] });
-		if (ListTab.isRecentlyArrived(title)) {
+		if (isRecentlyReleased(title.releaseDate)) {
 			badgeRow.createSpan({ cls: 'wl-recently-arrived', text: '· Recently arrived' });
 		}
 		const barWrap = colTitle.createDiv({ cls: 'wl-progress-wrap' });
@@ -2944,22 +2633,9 @@ export class ListTab {
 			case 'dateAdded-oldest': return new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime();
 			case 'progress-high':    return this.dataManager.getProgress(b) - this.dataManager.getProgress(a);
 			case 'progress-low':     return this.dataManager.getProgress(a) - this.dataManager.getProgress(b);
-			case 'rating-high': {
-				const ra = a.rating === 0 ? -1 : a.rating;
-				const rb = b.rating === 0 ? -1 : b.rating;
-				return rb - ra;
-			}
-			case 'rating-low': {
-				if (a.rating === 0 && b.rating === 0) return 0;
-				if (a.rating === 0) return 1;
-				if (b.rating === 0) return -1;
-				return a.rating - b.rating;
-			}
-			case 'priority': {
-				const ai = PRIORITY_ORDER.indexOf(a.priority as typeof PRIORITY_ORDER[number]);
-				const bi = PRIORITY_ORDER.indexOf(b.priority as typeof PRIORITY_ORDER[number]);
-				return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-			}
+			case 'rating-high':      return compareUnsetLast(a.rating, b.rating, 'desc');
+			case 'rating-low':       return compareUnsetLast(a.rating, b.rating, 'asc');
+			case 'priority':         return comparePriority(a.priority, b.priority);
 			case 'started-asc': {
 				const da = a.dateStarted ? new Date(a.dateStarted).getTime() : Infinity;
 				const db = b.dateStarted ? new Date(b.dateStarted).getTime() : Infinity;
@@ -3028,10 +2704,10 @@ export class ListTab {
 	 * grids, which sort within each section.
 	 */
 	private sortTitlesByCurrentSort(titles: WatchLogTitle[]): WatchLogTitle[] {
-		const primaryKey = ListTab.sortBaseAndDirToKey(this.filterSort, this.filterSortDir);
-		const secondKey = this.filterSecondSort === 'none'
+		const primaryKey = ListTab.sortBaseAndDirToKey(this.sort.filterSort, this.sort.filterSortDir);
+		const secondKey = this.sort.filterSecondSort === 'none'
 			? 'none'
-			: ListTab.sortBaseAndDirToKey(this.filterSecondSort, this.filterSecondSortDir);
+			: ListTab.sortBaseAndDirToKey(this.sort.filterSecondSort, this.sort.filterSecondSortDir);
 		return [...titles].sort((a, b) => {
 			const primary = this.compareTitlesByKey(primaryKey, a, b);
 			if (primary !== 0 || secondKey === 'none') return primary;

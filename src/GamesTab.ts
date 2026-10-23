@@ -1,10 +1,10 @@
-import { Modal, Notice, TFile, setIcon } from 'obsidian';
+import { Notice, TFile, setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { GameDataManager } from './GameDataManager';
 import {
 	Game, GameGroup, GamesSavedFilterPreset, GAME_AUTO_STATUS, GAME_FINISHED_STATUS,
 	normalizeRowsLayout, GAMES_ROWS_SHELVES, ROWS_EXCLUSIVE_SHELVES, sortByFavorited,
-	priorityFilterOpts, formatPriorityOpt, migratePriorityExclude,
+	migratePriorityExclude,
 } from './types';
 import { searchItems, yearOf, type SearchFieldSpec } from './SearchQuery';
 import { renderSearchHelpButton } from './SearchHelpModal';
@@ -12,14 +12,16 @@ import { RowsCustomizeModal } from './RowsCustomizeModal';
 import { VirtualGrid, computeGridMetrics, setRowsCardWidth, type GridMetrics } from './VirtualGrid';
 import { VirtualScroller } from './VirtualScroller';
 import { LazyCardObserver } from './LazyCardObserver';
-import { buildPosterCard, openCardMenu, POSTER_CARD_TEXT_H } from './PosterCard';
-import { renderGroupCollage } from './CollageUtil';
+import { buildPosterCard, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown, type SortFields } from './ui/TabToolbar';
+import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
+import { renderGroupCard } from './ui/GroupCard';
+import { PRIORITY_ORDER, pickRandom, compareUnsetLast, comparePriority, isRecentlyReleased } from './ui/TabHelpers';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
 import { rawgResizedCover } from './ApiService';
 import { resolveGameCover, type GameCover } from './coverRefresh';
-import { toggleFilterPanel, FilterSection } from './FilterPanel';
-import { toggleSortPopover } from './SortPopover';
+import { renderFiltersDropdown, buildFilterSections, buildRatingOpts } from './ui/TabFilters';
 import { ConfirmModal } from './ConfirmModal';
 import { GameDetailModal, GameGroupDetailModal, gameGroupProgress } from './GameDetailModal';
 import { AddGameModal } from './AddGameModal';
@@ -29,17 +31,6 @@ type GameDisplayItem =
 	| { kind: 'game'; data: Game }
 	| { kind: 'group'; data: GameGroup; members: Game[] };
 
-const PRIORITY_ORDER = ['High', 'Medium', 'Low'] as const;
-
-/** Released within the last 7 days (the Watchlist "Recently arrived" rule). */
-function isRecentlyReleased(releaseDate: string | null): boolean {
-	if (!releaseDate || !/^\d{4}-\d{2}-\d{2}$/.test(releaseDate)) return false;
-	const releaseMs = new Date(releaseDate + 'T00:00:00').getTime();
-	const today = new Date();
-	today.setHours(0, 0, 0, 0);
-	const diffDays = (today.getTime() - releaseMs) / 86400000;
-	return diffDays >= 0 && diffDays <= 7;
-}
 
 /**
  * Games tab: the Watchlist toolbar (search + Saved filter / Filters / Sorting / Select / + Add,
@@ -77,10 +68,9 @@ export class GamesTab {
 	private filterWishlistOnly = false;
 	// hides standalone games, shows only groups
 	private filterGroupsOnly = false;
-	private filterSort = 'dateAdded';
-	private filterSortDir: 'asc' | 'desc' = 'desc';
-	private filterSecondSort = 'none';
-	private filterSecondSortDir: 'asc' | 'desc' = 'asc';
+	private readonly sort: SortFields = {
+		filterSort: 'dateAdded', filterSortDir: 'desc', filterSecondSort: 'none', filterSecondSortDir: 'asc',
+	};
 
 	private savedFilterActive = false;
 	private savedFilterBtnEl: HTMLButtonElement | null = null;
@@ -115,10 +105,10 @@ export class GamesTab {
 			);
 			this.filterPlatformExclude = new Set(saved.platformExclude ?? []);
 			this.filterGroupExclude    = new Set(saved.groupExclude    ?? []);
-			this.filterSort          = saved.sort ?? 'dateAdded';
-			this.filterSortDir       = saved.sortDir ?? 'desc';
-			this.filterSecondSort    = saved.secondSort ?? 'none';
-			this.filterSecondSortDir = saved.secondSortDir ?? 'asc';
+			this.sort.filterSort          = saved.sort ?? 'dateAdded';
+			this.sort.filterSortDir       = saved.sortDir ?? 'desc';
+			this.sort.filterSecondSort    = saved.secondSort ?? 'none';
+			this.sort.filterSecondSortDir = saved.secondSortDir ?? 'asc';
 			this.filterRatingEmptyOnly     = saved.ratingEmptyOnly     ?? false;
 			this.filterRecentlyArrivedOnly = saved.recentlyArrivedOnly ?? false;
 			this.filterFavoritesOnly       = saved.favoritesOnly       ?? false;
@@ -165,6 +155,12 @@ export class GamesTab {
 
 	// Filter state helpers (the Watchlist pattern)
 
+	/** Saves the live filters and drops the saved-preset highlight. */
+	private persistFilters(): void {
+		this.saveFiltersToSettings();
+		this.deactivateSavedFilter();
+	}
+
 	private saveFiltersToSettings(): void {
 		this.plugin.settings.gamesFilters = {
 			genreExclude:    Array.from(this.filterGenreExclude),
@@ -173,10 +169,10 @@ export class GamesTab {
 			priorityExclude: Array.from(this.filterPriorityExclude),
 			platformExclude: Array.from(this.filterPlatformExclude),
 			groupExclude:    Array.from(this.filterGroupExclude),
-			sort:          this.filterSort,
-			sortDir:       this.filterSortDir,
-			secondSort:    this.filterSecondSort,
-			secondSortDir: this.filterSecondSortDir,
+			sort:          this.sort.filterSort,
+			sortDir:       this.sort.filterSortDir,
+			secondSort:    this.sort.filterSecondSort,
+			secondSortDir: this.sort.filterSecondSortDir,
 			ratingEmptyOnly:     this.filterRatingEmptyOnly,
 			recentlyArrivedOnly: this.filterRecentlyArrivedOnly,
 			favoritesOnly:       this.filterFavoritesOnly,
@@ -212,6 +208,13 @@ export class GamesTab {
 		this.filterFavoritesOnly       = false;
 		this.filterWishlistOnly        = false;
 		this.filterGroupsOnly          = false;
+	}
+
+	/** Applies the stored preset and persists it as the active filter. */
+	private activatePreset(preset: GamesSavedFilterPreset): void {
+		this.applyPreset(preset);
+		this.savedFilterActive = true;
+		this.saveFiltersToSettings();
 	}
 
 	private applyPreset(preset: GamesSavedFilterPreset): void {
@@ -326,33 +329,15 @@ export class GamesTab {
 			}
 			case 'progress':
 				return dir === 'asc' ? a.progress - b.progress : b.progress - a.progress;
-			case 'playtime': {
-				// untracked (0) sorts below every real playtime, like the rating rule
-				const pa = a.playtimeMinutes;
-				const pb = b.playtimeMinutes;
-				if (pa === 0 && pb === 0) return 0;
-				if (pa === 0) return 1;
-				if (pb === 0) return -1;
-				return dir === 'asc' ? pa - pb : pb - pa;
-			}
-			case 'rating': {
-				if (dir === 'desc') {
-					// un-rated (0) sorts below every real rating
-					const ra = a.rating === 0 ? -1 : a.rating;
-					const rb = b.rating === 0 ? -1 : b.rating;
-					return rb - ra;
-				}
-				if (a.rating === 0 && b.rating === 0) return 0;
-				if (a.rating === 0) return 1;
-				if (b.rating === 0) return -1;
-				return a.rating - b.rating;
-			}
-			case 'priority': {
-				// direction-agnostic High → Low, empty last (the Watchlist rule)
-				const ai = PRIORITY_ORDER.indexOf(a.priority as typeof PRIORITY_ORDER[number]);
-				const bi = PRIORITY_ORDER.indexOf(b.priority as typeof PRIORITY_ORDER[number]);
-				return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-			}
+			// untracked (0) sorts below every real playtime, like the rating rule
+			case 'playtime':
+				return compareUnsetLast(a.playtimeMinutes, b.playtimeMinutes, dir);
+			// un-rated (0) sorts below every real rating
+			case 'rating':
+				return compareUnsetLast(a.rating, b.rating, dir);
+			// direction-agnostic High → Low, empty last (the Watchlist rule)
+			case 'priority':
+				return comparePriority(a.priority, b.priority);
 			case 'started':
 				return GamesTab.compareNullableDates(a.dateStarted, b.dateStarted, dir);
 			case 'status': {
@@ -397,10 +382,10 @@ export class GamesTab {
 	 */
 	private sortGames(list: Game[]): Game[] {
 		return [...list].sort((a, b) => {
-			const primary = this.compareGamesByKey(this.filterSort, this.filterSortDir, a, b);
+			const primary = this.compareGamesByKey(this.sort.filterSort, this.sort.filterSortDir, a, b);
 			if (primary !== 0) return primary;
-			if (this.filterSecondSort !== 'none') {
-				return this.compareGamesByKey(this.filterSecondSort, this.filterSecondSortDir, a, b);
+			if (this.sort.filterSecondSort !== 'none') {
+				return this.compareGamesByKey(this.sort.filterSecondSort, this.sort.filterSecondSortDir, a, b);
 			}
 			return 0;
 		});
@@ -433,10 +418,10 @@ export class GamesTab {
 			...topLevel.map((g) => ({ kind: 'game' as const, data: g })),
 		];
 		items.sort((a, b) => {
-			const primary = this.compareItemsByKey(this.filterSort, this.filterSortDir, a, b);
+			const primary = this.compareItemsByKey(this.sort.filterSort, this.sort.filterSortDir, a, b);
 			if (primary !== 0) return primary;
-			if (this.filterSecondSort !== 'none') {
-				return this.compareItemsByKey(this.filterSecondSort, this.filterSecondSortDir, a, b);
+			if (this.sort.filterSecondSort !== 'none') {
+				return this.compareItemsByKey(this.sort.filterSecondSort, this.sort.filterSecondSortDir, a, b);
 			}
 			return 0;
 		});
@@ -874,7 +859,7 @@ export class GamesTab {
 				.filter((g): g is Game => g !== undefined);
 			if (picks.length < GamesTab.RECOMMENDED_COUNT && picks.length < pool.length) {
 				const used = new Set(picks.map((g) => g.id));
-				picks.push(...GamesTab.pickRandom(
+				picks.push(...pickRandom(
 					pool.filter((g) => !used.has(g.id)),
 					GamesTab.RECOMMENDED_COUNT - picks.length,
 				));
@@ -883,7 +868,7 @@ export class GamesTab {
 			return picks;
 		}
 
-		const picks = GamesTab.pickRandom(pool, GamesTab.RECOMMENDED_COUNT);
+		const picks = pickRandom(pool, GamesTab.RECOMMENDED_COUNT);
 		this.gameData.setRecommendedDaily({ date: today, ids: picks.map((g) => g.id) });
 		return picks;
 	}
@@ -908,51 +893,13 @@ export class GamesTab {
 			.slice(0, 10);
 	}
 
-	/** Fisher–Yates on a copy, returning the first `count` items. */
-	private static pickRandom<T>(pool: T[], count: number): T[] {
-		const arr = [...pool];
-		for (let i = arr.length - 1; i > 0; i--) {
-			const j = Math.floor(Math.random() * (i + 1));
-			const tmp = arr[i]!;
-			arr[i] = arr[j]!;
-			arr[j] = tmp;
-		}
-		return arr.slice(0, count);
-	}
-
 	private renderSearch(parent: HTMLElement): void {
-		// compact inline search inside the toolbar row (the Watchlist classes)
-		const searchWrap = parent.createDiv({ cls: 'wl-reading-search-wrap' });
-		const input = searchWrap.createEl('input', {
-			cls: 'wl-reading-search-input',
-			attr: { type: 'text', placeholder: 'Search title, developer, platform…' },
-		});
-		input.value = this.searchQuery;
-		renderSearchHelpButton(searchWrap, this.plugin.app, 'Games', () => this.searchFields());
-		// clear button — only while there is text
-		const clearBtn = searchWrap.createEl('button', {
-			cls: 'wl-search-clear',
-			attr: { type: 'button', 'aria-label': 'Clear search' },
-		});
-		setIcon(clearBtn, 'x');
-		const syncClear = () => clearBtn.toggleClass('is-visible', input.value.length > 0);
-		syncClear();
-		let searchDebounce = 0;
-		input.addEventListener('input', () => {
-			this.searchQuery = input.value;
-			syncClear();
-			window.clearTimeout(searchDebounce);
-			searchDebounce = window.setTimeout(() => {
-				this.renderContent();
-			}, 250);
-		});
-		clearBtn.addEventListener('click', () => {
-			window.clearTimeout(searchDebounce);
-			input.value = '';
-			this.searchQuery = '';
-			syncClear();
-			input.focus();
-			this.renderContent();
+		renderSearchBox(parent, {
+			value: this.searchQuery,
+			placeholder: 'Search title, developer, platform…',
+			help: (host) => renderSearchHelpButton(host, this.plugin.app, 'Games', () => this.searchFields()),
+			onChange: (q) => { this.searchQuery = q; },
+			onCommit: () => this.renderContent(),
 		});
 	}
 
@@ -970,186 +917,102 @@ export class GamesTab {
 	private renderToolbarActions(controls: HTMLElement): void {
 		// saved filter preset (only when one is stored)
 		const preset = this.gameData.getSavedFilterPreset();
-		if (preset) {
-			const savedBtn = controls.createEl('button', {
-				cls: `wl-btn wl-btn-sm${this.savedFilterActive ? ' wl-btn-preset-active' : ''}`,
-				text: 'Saved filter',
-			});
-			this.savedFilterBtnEl = savedBtn;
-			savedBtn.addEventListener('click', () => {
-				this.applyPreset(preset);
-				this.savedFilterActive = true;
-				this.saveFiltersToSettings();
-				this.refreshToolbarActions();
-				this.renderContent();
-			});
-		} else {
-			this.savedFilterBtnEl = null;
-		}
-
-		this.renderFiltersDropdown(controls);
-
-		this.renderSortingDropdown(controls);
-
-		// action bar — selection mode with items selected
-		if (this.selectionMode && this.selectedIds.size > 0) {
-			this.renderActionBar(controls);
-		}
-
-		if (this.selectionMode) {
-			const hasAny = this.selectedIds.size > 0;
-			const selAllBtn = controls.createEl('button', { cls: 'wl-btn wl-btn-sm', text: hasAny ? 'None' : 'All' });
-			selAllBtn.title = hasAny ? 'Deselect all' : 'Select all visible';
-			selAllBtn.addEventListener('click', () => {
-				if (this.selectedIds.size > 0) {
-					this.selectedIds.clear();
-				} else {
-					for (const item of this.getDisplayItems()) {
-						this.selectedIds.add(item.data.id);
+		this.savedFilterBtnEl = renderToolbarCore(controls, {
+			preset: preset && {
+				active: this.savedFilterActive,
+				onApply: () => {
+					this.activatePreset(preset);
+					this.refreshToolbarActions();
+					this.renderContent();
+				},
+			},
+			renderFilters: (parent) => this.renderFiltersDropdown(parent),
+			renderSorting: (parent) => this.renderSortingDropdown(parent),
+			// action bar — selection mode with items selected
+			renderActionBar: this.selectionMode && this.selectedIds.size > 0
+				? (parent) => this.renderActionBar(parent)
+				: undefined,
+			selection: {
+				selectionMode: this.selectionMode,
+				hasSelection: this.selectedIds.size > 0,
+				onToggleAll: () => {
+					if (this.selectedIds.size > 0) {
+						this.selectedIds.clear();
+					} else {
+						for (const item of this.getDisplayItems()) {
+							this.selectedIds.add(item.data.id);
+						}
 					}
-				}
-				this.refreshToolbarActions();
-				this.syncCardSelectionClasses();
-			});
-		}
-
-		// in selection mode the button is the way out — red Cancel
-		const selBtn = controls.createEl('button', {
-			cls: `wl-btn wl-btn-sm${this.selectionMode ? ' wl-btn-cancel' : ''}`,
-			text: this.selectionMode ? 'Cancel' : 'Select',
-		});
-		selBtn.addEventListener('click', () => {
-			this.setSelectionMode(!this.selectionMode);
+					this.refreshToolbarActions();
+					this.syncCardSelectionClasses();
+				},
+				onToggleMode: () => this.setSelectionMode(!this.selectionMode),
+			},
 		});
 
 		// add button, far right on the toolbar row
 		const rightGroup = controls.createDiv({ cls: 'wl-header-controls-right' });
-		const addBtnWrap = rightGroup.createDiv({ cls: 'wl-add-btn-wrap' });
-		const addBtn = addBtnWrap.createEl('button', { cls: 'wl-add-btn wl-btn-success', text: '+ add' });
-		addBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			this.openAddPrompt();
-		});
+		renderAddButton(rightGroup, () => this.openAddPrompt());
 	}
 
 	private renderFiltersDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Filters ▼' });
-		const dotEl = btn.createSpan({ cls: 'wl-filter-dot' });
-		if (this.hasActiveFilter()) { dotEl.show(); } else { dotEl.hide(); }
+		renderFiltersDropdown(parent, {
+			hasActiveFilter: () => this.hasActiveFilter(),
+			clearAll: () => this.clearAllFilters(),
+			rerender: () => this.renderContent(),
+			persist: () => this.persistFilters(),
+			rerenderAll: () => this.render(),
+			registerCleanup: (fn) => this.activeCleanups.push(fn),
+			preset: {
+				exists: () => this.gameData.getSavedFilterPreset() !== null,
+				remove: async () => {
+					await this.gameData.setSavedFilterPreset(null);
+					this.savedFilterActive = false;
+				},
+			},
+			openDraft: () => {
+				const settings = this.gameData.getSettings();
+				const platformOpts = settings.platforms.map((p) => p.name);
 
-		const clearBtn = parent.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-clear-filters', text: '✕ clear' });
-		clearBtn.title = 'Clear all filters';
-		if (this.hasActiveFilter()) { clearBtn.show(); } else { clearBtn.hide(); }
-		clearBtn.addEventListener('click', () => {
-			this.clearAllFilters();
-			this.saveFiltersToSettings();
-			this.deactivateSavedFilter();
-			dotEl.hide();
-			clearBtn.hide();
-			this.renderContent();
-		});
+				// draft — live filter state only changes on Apply
+				const draft = {
+					genreExclude:    new Set(this.filterGenreExclude),
+					statusExclude:   new Set(this.filterStatusExclude),
+					ratingExclude:   new Set(this.filterRatingExclude),
+					priorityExclude: new Set(this.filterPriorityExclude),
+					platformExclude: new Set(this.filterPlatformExclude),
+					groupExclude:    new Set(this.filterGroupExclude),
+					filterRatingEmptyOnly:     this.filterRatingEmptyOnly,
+					filterRecentlyArrivedOnly: this.filterRecentlyArrivedOnly,
+					filterFavoritesOnly:       this.filterFavoritesOnly,
+					filterWishlistOnly:        this.filterWishlistOnly,
+					filterGroupsOnly:          this.filterGroupsOnly,
+				};
 
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const settings = this.gameData.getSettings();
-
-			const genreOpts = settings.types.map((t) => t.name);
-			const statusOpts = settings.statuses.map((s) => s.name);
-			// half options (½ … 4½) appear only when a game holds that exact rating (the Watchlist rule)
-			const presentHalfRatings = new Set<number>();
-			for (const g of this.gameData.getGames()) {
-				if (g.rating % 1 === 0.5) presentHalfRatings.add(g.rating);
-			}
-			const ratingOpts: string[] = [];
-			for (let i = 1; i <= 5; i++) {
-				if (presentHalfRatings.has(i - 0.5)) ratingOpts.push(`${i - 0.5}★`);
-				ratingOpts.push(`${i}★`);
-			}
-			const formatRatingOpt = (opt: string): string =>
-				opt.replace(/^(\d+)\.5/, (_m, whole: string) => (whole === '0' ? '½' : `${whole}½`));
-			const priorityOpts = priorityFilterOpts(this.plugin.settings.priorities);
-			const platformOpts = settings.platforms.map((p) => p.name);
-			const groupOpts = this.gameData.getGroups().map((g) => g.name);
-
-			// draft — live filter state only changes on Apply
-			const draft = {
-				genreExclude:    new Set(this.filterGenreExclude),
-				statusExclude:   new Set(this.filterStatusExclude),
-				ratingExclude:   new Set(this.filterRatingExclude),
-				priorityExclude: new Set(this.filterPriorityExclude),
-				platformExclude: new Set(this.filterPlatformExclude),
-				groupExclude:    new Set(this.filterGroupExclude),
-				filterRatingEmptyOnly:     this.filterRatingEmptyOnly,
-				filterRecentlyArrivedOnly: this.filterRecentlyArrivedOnly,
-				filterFavoritesOnly:       this.filterFavoritesOnly,
-				filterWishlistOnly:        this.filterWishlistOnly,
-				filterGroupsOnly:          this.filterGroupsOnly,
-			};
-
-			const sections: FilterSection[] = [
-				{ label: 'Genre', opts: genreOpts, excludeSet: draft.genreExclude },
-				{
-					label: 'Status', opts: statusOpts, excludeSet: draft.statusExclude,
-					specials: [{
-						text: '✦ Recently arrived',
-						spanCls: 'wl-recently-arrived-filter',
-						get: () => draft.filterRecentlyArrivedOnly,
-						set: (v) => { draft.filterRecentlyArrivedOnly = v; },
-						mode: 'exclusive',
-						resetOnGlobal: true,
+				return {
+					sections: buildFilterSections({
+						lead: [{ label: 'Genre', opts: settings.types.map((t) => t.name), excludeSet: draft.genreExclude }],
+						statusOpts: settings.statuses.map((s) => s.name),
+						// half options appear only when a game holds that exact rating (the Watchlist rule)
+						ratingOpts: buildRatingOpts(this.gameData.getGames().map((g) => g.rating)),
+						priorities: this.plugin.settings.priorities,
+						middle: platformOpts.length > 0
+							? [{ label: 'Platform', opts: platformOpts, excludeSet: draft.platformExclude }]
+							: [],
+						groupOpts: this.gameData.getGroups().map((g) => g.name),
+						draft,
+					}),
+					favorites: {
+						get: () => draft.filterFavoritesOnly,
+						set: (v) => { draft.filterFavoritesOnly = v; },
+					},
+					standaloneRows: [{
+						text: '🎁 Wishlist',
+						spanCls: 'wl-wishlist-filter',
+						get: () => draft.filterWishlistOnly,
+						set: (v) => { draft.filterWishlistOnly = v; },
 					}],
-				},
-				{
-					label: 'Rating', opts: ratingOpts, excludeSet: draft.ratingExclude,
-					formatOpt: formatRatingOpt,
-					specials: [{
-						text: 'Empty',
-						get: () => draft.filterRatingEmptyOnly,
-						set: (v) => { draft.filterRatingEmptyOnly = v; },
-						mode: 'exclusive',
-					}],
-				},
-				{
-					label: 'Priority', opts: priorityOpts, excludeSet: draft.priorityExclude,
-					formatOpt: formatPriorityOpt,
-				},
-			];
-			if (platformOpts.length > 0) {
-				sections.push({ label: 'Platform', opts: platformOpts, excludeSet: draft.platformExclude });
-			}
-			if (groupOpts.length > 0) {
-				sections.push({
-					label: 'Group', opts: groupOpts, excludeSet: draft.groupExclude,
-					specials: [{
-						text: '◇ Groups only',
-						spanCls: 'wl-recently-arrived-filter',
-						get: () => draft.filterGroupsOnly,
-						set: (v) => { draft.filterGroupsOnly = v; },
-						mode: 'independent',
-						dividerAfter: true,
-					}],
-				});
-			}
-
-			toggleFilterPanel({
-				anchor: btn,
-				outsideGuard: wrap,
-				registerCleanup: (fn) => this.activeCleanups.push(fn),
-				sections,
-				favorites: {
-					get: () => draft.filterFavoritesOnly,
-					set: (v) => { draft.filterFavoritesOnly = v; },
-				},
-				standaloneRows: [{
-					text: '🎁 Wishlist',
-					spanCls: 'wl-wishlist-filter',
-					get: () => draft.filterWishlistOnly,
-					set: (v) => { draft.filterWishlistOnly = v; },
-				}],
-				presetExists: this.gameData.getSavedFilterPreset() !== null,
-				onPresetSave: async () => {
-					await this.gameData.setSavedFilterPreset({
+					savePreset: () => this.gameData.setSavedFilterPreset({
 						genreExclude:    Array.from(draft.genreExclude),
 						statusExclude:   Array.from(draft.statusExclude),
 						ratingExclude:   Array.from(draft.ratingExclude),
@@ -1161,63 +1024,39 @@ export class GamesTab {
 						favoritesOnly:       draft.filterFavoritesOnly,
 						wishlistOnly:        draft.filterWishlistOnly,
 						groupsOnly:          draft.filterGroupsOnly,
-					});
-				},
-				onPresetDelete: async () => {
-					await this.gameData.setSavedFilterPreset(null);
-					this.savedFilterActive = false;
-				},
-				onPresetChanged: () => this.render(),
-				onApply: () => {
-					this.filterGenreExclude    = draft.genreExclude;
-					this.filterStatusExclude   = draft.statusExclude;
-					this.filterRatingExclude   = draft.ratingExclude;
-					this.filterPriorityExclude = draft.priorityExclude;
-					this.filterPlatformExclude = draft.platformExclude;
-					this.filterGroupExclude    = draft.groupExclude;
-					this.filterRatingEmptyOnly     = draft.filterRatingEmptyOnly;
-					this.filterRecentlyArrivedOnly = draft.filterRecentlyArrivedOnly;
-					this.filterFavoritesOnly       = draft.filterFavoritesOnly;
-					this.filterWishlistOnly        = draft.filterWishlistOnly;
-					this.filterGroupsOnly          = draft.filterGroupsOnly;
-					this.saveFiltersToSettings();
-					this.deactivateSavedFilter();
-					const active = this.hasActiveFilter();
-					if (active) { dotEl.show(); clearBtn.show(); } else { dotEl.hide(); clearBtn.hide(); }
-					this.renderContent();
-				},
-			});
+					}),
+					commit: () => {
+						this.filterGenreExclude    = draft.genreExclude;
+						this.filterStatusExclude   = draft.statusExclude;
+						this.filterRatingExclude   = draft.ratingExclude;
+						this.filterPriorityExclude = draft.priorityExclude;
+						this.filterPlatformExclude = draft.platformExclude;
+						this.filterGroupExclude    = draft.groupExclude;
+						this.filterRatingEmptyOnly     = draft.filterRatingEmptyOnly;
+						this.filterRecentlyArrivedOnly = draft.filterRecentlyArrivedOnly;
+						this.filterFavoritesOnly       = draft.filterFavoritesOnly;
+						this.filterWishlistOnly        = draft.filterWishlistOnly;
+						this.filterGroupsOnly          = draft.filterGroupsOnly;
+					},
+				};
+			},
 		});
 	}
 
 	private renderSortingDropdown(parent: HTMLElement): void {
-		const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-		const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Sorting ▼' });
-
-		btn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			toggleSortPopover({
-				wrap,
-				anchor: btn,
-				registerCleanup: (fn) => this.activeCleanups.push(fn),
-				options: [
-					'Title', 'Date added', 'Progress', 'Playtime', 'Rating', 'Priority',
-					'Started', 'Status', 'Date finished', 'Release date',
-				],
-				labelToKey: (label) => this.sortLabelToKey(label),
-				defaultDirs: GamesTab.SORT_DEFAULT_DIR,
-				primary: { key: this.filterSort, dir: this.filterSortDir },
-				secondary: { key: this.filterSecondSort, dir: this.filterSecondSortDir },
-				onChange: (primary, secondary) => {
-					this.filterSort          = primary.key;
-					this.filterSortDir       = primary.dir;
-					this.filterSecondSort    = secondary.key;
-					this.filterSecondSortDir = secondary.dir;
-					this.saveFiltersToSettings();
-					// sorting only reorders content
-					this.renderContent();
-				},
-			});
+		renderSortingDropdown(parent, this.sort, {
+			registerCleanup: (fn) => this.activeCleanups.push(fn),
+			options: [
+				'Title', 'Date added', 'Progress', 'Playtime', 'Rating', 'Priority',
+				'Started', 'Status', 'Date finished', 'Release date',
+			],
+			labelToKey: (label) => this.sortLabelToKey(label),
+			defaultDirs: GamesTab.SORT_DEFAULT_DIR,
+			onSorted: () => {
+				this.saveFiltersToSettings();
+				// sorting only reorders content
+				this.renderContent();
+			},
 		});
 	}
 
@@ -1239,33 +1078,16 @@ export class GamesTab {
 	 * the box out of the header. Ids, not DOM: the grid sections are virtualised.
 	 */
 	private shelfSelect(ids: string[]): ShelfSelect | undefined {
-		if (!this.selectionMode) return undefined;
-		return {
-			ids,
-			selected: this.selectedIds,
-			onToggle: (sectionIds, selectAll) => {
-				for (const id of sectionIds) {
-					if (selectAll) { this.selectedIds.add(id); } else { this.selectedIds.delete(id); }
-				}
-				this.syncCardSelectionClasses();
-				this.refreshToolbarActions();
-			},
-			register: (refresh) => this.shelfSelectRefreshers.push(refresh),
-		};
-	}
-
-	/** A game can sit in several sections, so every header box re-reads the set. */
-	private refreshShelfSelects(): void {
-		for (const refresh of this.shelfSelectRefreshers) refresh();
+		return buildShelfSelect(this.selectionMode, ids, this.selectedIds, this.shelfSelectRefreshers, () => {
+			this.syncCardSelectionClasses();
+			this.refreshToolbarActions();
+		});
 	}
 
 	/** Applies/removes wl-card-selected on every currently rendered card. */
 	private syncCardSelectionClasses(): void {
-		this.container.querySelectorAll<HTMLElement>('.wl-card').forEach((card) => {
-			const id = card.dataset.gameId ?? card.dataset.groupId;
-			card.classList.toggle('wl-card-selected', !!id && this.selectedIds.has(id));
-		});
-		this.refreshShelfSelects();
+		syncSelectionClasses(this.container, this.selectedIds, (card) => card.dataset.gameId ?? card.dataset.groupId);
+		refreshShelfSelects(this.shelfSelectRefreshers);
 	}
 
 	/**
@@ -1273,68 +1095,48 @@ export class GamesTab {
 	 * every instance of the id is synced.
 	 */
 	private toggleCardSelection(card: HTMLElement, id: string): void {
-		if (this.selectedIds.has(id)) {
-			this.selectedIds.delete(id);
-		} else {
-			this.selectedIds.add(id);
-		}
-		const selected = this.selectedIds.has(id);
 		const esc = CSS.escape(id);
-		this.container
-			.querySelectorAll<HTMLElement>(`.wl-card[data-game-id="${esc}"], .wl-card[data-group-id="${esc}"]`)
-			.forEach((el) => el.classList.toggle('wl-card-selected', selected));
-		this.refreshShelfSelects();
+		toggleCardSelected(
+			this.container,
+			this.selectedIds,
+			id,
+			`.wl-card[data-game-id="${esc}"], .wl-card[data-group-id="${esc}"]`,
+		);
+		refreshShelfSelects(this.shelfSelectRefreshers);
 		this.refreshToolbarActions();
 	}
 
 	private renderActionBar(parent: HTMLElement): void {
-		const bar = parent.createDiv({ cls: 'wl-action-bar' });
-
-		const deleteBtn = bar.createEl('button', {
-			cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
-			text: '✕',
-		});
-		deleteBtn.title = 'Delete selected';
-		deleteBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const count = this.selectedIds.size;
-			new ConfirmModal(
-				this.plugin.app,
-				`Delete ${count} selected item${count !== 1 ? 's' : ''}? Deleted games' note files will be moved to the trash; deleting a group returns its games to the main list.`,
-				() => {
-					void (async () => {
-						// selected groups are dissolved (games return to the grid); selected games are batch-deleted
-						// with their note files
-						const groupIds = new Set(this.gameData.getGroups().map((g) => g.id));
-						const gameIds: string[] = [];
-						for (const id of Array.from(this.selectedIds)) {
-							if (groupIds.has(id)) {
-								await this.gameData.removeGroup(id);
-							} else {
-								gameIds.push(id);
-							}
-						}
-						if (gameIds.length > 0) {
-							await this.gameData.removeGamesBatch(gameIds);
-						}
-						this.selectedIds.clear();
-						this.render();
-					})();
-				},
-			).open();
+		const bar = renderActionBar(parent, this.plugin.app, {
+			title: 'Delete selected',
+			selected: this.selectedIds,
+			message: (count) => `Delete ${count} selected item${count !== 1 ? 's' : ''}? Deleted games' note files will be moved to the trash; deleting a group returns its games to the main list.`,
+			onConfirm: async () => {
+				// selected groups are dissolved (games return to the grid); selected games are batch-deleted
+				// with their note files
+				const groupIds = new Set(this.gameData.getGroups().map((g) => g.id));
+				const gameIds: string[] = [];
+				for (const id of Array.from(this.selectedIds)) {
+					if (groupIds.has(id)) {
+						await this.gameData.removeGroup(id);
+					} else {
+						gameIds.push(id);
+					}
+				}
+				if (gameIds.length > 0) {
+					await this.gameData.removeGamesBatch(gameIds);
+				}
+				this.selectedIds.clear();
+				this.render();
+			},
 		});
 
 		// batch status change (the auto "To be released" stays release-date-driven; groups are skipped —
 		// status belongs to the member games)
-		const statusSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
-		statusSelect.createEl('option', { text: 'Status…', value: '' });
-		for (const s of this.gameData.getSettings().statuses.filter((s) => s.name !== GAME_AUTO_STATUS)) {
-			statusSelect.createEl('option', { text: s.name, value: s.name });
-		}
-		statusSelect.addEventListener('change', () => {
-			void (async () => {
-				const newStatus = statusSelect.value;
-				if (!newStatus) return;
+		renderBatchStatusSelect(
+			bar,
+			this.gameData.getSettings().statuses.map((s) => s.name).filter((name) => name !== GAME_AUTO_STATUS),
+			async (newStatus) => {
 				for (const id of this.selectedIds) {
 					const game = this.gameData.getGame(id);
 					if (game) {
@@ -1342,76 +1144,35 @@ export class GamesTab {
 					}
 				}
 				await this.gameData.saveAndNotify();
-				statusSelect.value = '';
-			})();
-		});
+			},
+		);
 
 		const allGroups = this.gameData.getGroups();
-		const hasGroupSelected = Array.from(this.selectedIds).some((id) =>
-			allGroups.some((g) => g.id === id),
-		);
-		const moveSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
-		if (hasGroupSelected) {
-			moveSelect.disabled = true;
-			moveSelect.title = 'A group is selected; cannot move groups into other groups';
-		}
-		moveSelect.createEl('option', { text: 'Group…', value: '' });
-		for (const g of allGroups) {
-			moveSelect.createEl('option', { text: g.name, value: g.id });
-		}
-		moveSelect.createEl('option', { text: 'Create new group…', value: '__new__' });
-		moveSelect.addEventListener('change', () => {
-			void (async () => {
-				const value = moveSelect.value;
-				if (!value) return;
-				const groupIds = new Set(allGroups.map((g) => g.id));
-				const gameIds = Array.from(this.selectedIds).filter((id) => !groupIds.has(id));
-
-				if (value === '__new__') {
-					// inline input — prompt() is unavailable in Obsidian/Electron
-					moveSelect.value = '';
-					moveSelect.hide();
-					const nameInput = bar.createEl('input', {
-						cls: 'wl-modal-input wl-group-name-input',
-						attr: { type: 'text', placeholder: 'Group name…', maxlength: '64' },
-					});
-					const confirmBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✓' });
-					confirmBtn.title = 'Create group';
-					const cancelBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✕' });
-					cancelBtn.title = 'Cancel';
-
-					const doCreate = async () => {
-						const name = nameInput.value.trim();
-						if (!name) return;
-						const newGroup: GameGroup = {
-							id: this.gameData.generateGroupId(name),
-							name,
-							gameIds,
-							dateAdded: new Date().toISOString(),
-						};
-						this.selectedIds.clear();
-						this.selectionMode = false;
-						await this.gameData.addGroup(newGroup);
-					};
-					confirmBtn.addEventListener('click', (e) => { e.stopPropagation(); void doCreate(); });
-					// cancel only needs the toolbar back
-					cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); this.refreshToolbarActions(); });
-					nameInput.addEventListener('keydown', (e) => {
-						e.stopPropagation();
-						if (e.key === 'Enter') void doCreate();
-						if (e.key === 'Escape') this.refreshToolbarActions();
-					});
-					nameInput.addEventListener('click', (e) => e.stopPropagation());
-					window.setTimeout(() => nameInput.focus(), 0);
-					return;
-				}
-
+		const groupIds = new Set(allGroups.map((g) => g.id));
+		const selectedGameIds = () => Array.from(this.selectedIds).filter((id) => !groupIds.has(id));
+		renderMoveToGroupSelect(bar, {
+			groups: allGroups,
+			disabled: Array.from(this.selectedIds).some((id) => groupIds.has(id)),
+			onMove: async (groupId) => {
+				const gameIds = selectedGameIds();
 				this.selectedIds.clear();
 				this.selectionMode = false;
 				for (const id of gameIds) {
-					await this.gameData.addGameToGroup(value, id);
+					await this.gameData.addGameToGroup(groupId, id);
 				}
-			})();
+			},
+			onCreate: async (name) => {
+				const newGroup: GameGroup = {
+					id: this.gameData.generateGroupId(name),
+					name,
+					gameIds: selectedGameIds(),
+					dateAdded: new Date().toISOString(),
+				};
+				this.selectedIds.clear();
+				this.selectionMode = false;
+				await this.gameData.addGroup(newGroup);
+			},
+			onCancel: () => this.refreshToolbarActions(),
 		});
 	}
 
@@ -1547,94 +1308,35 @@ export class GamesTab {
 	private renderGroupCard(parent: HTMLElement, group: GameGroup, members: Game[], cardHeight?: number): void {
 		const settings = this.gameData.getSettings();
 		const primaryType = members[0]?.type ?? '';
-		const typeColor = settings.types.find((t) => t.name === primaryType)?.color ?? '#888780';
-
-		// under mode wraps the collage in a cell with name + count below (see buildPosterCard)
-		const cell = this.plugin.isCardTextUnder('games')
-			? parent.createDiv({ cls: 'wl-card-cell' })
-			: null;
-		const card = (cell ?? parent).createDiv({ cls: 'wl-card wl-card-group' });
-		card.dataset.groupId = group.id;
-		if (this.selectedIds.has(group.id)) card.addClass('wl-card-selected');
-		if (cardHeight !== undefined) (cell ?? card).style.height = `${cardHeight}px`;
-
-		const letter = (group.name.trim().charAt(0) || '?').toUpperCase();
-		renderGroupCollage(card, members, (g) => rawgResizedCover(g.coverUrl), { letter, color: typeColor });
-
-		const textHost = cell
-			? cell.createDiv({ cls: 'wl-card-under-info' })
-			: card.createDiv({ cls: 'wl-card-overlay' });
-		textHost.createSpan({
-			cls: cell ? 'wl-card-under-title' : 'wl-card-title',
-			text: group.name,
-		});
-		const subtitle = textHost.createDiv({ cls: 'wl-card-meta-row' })
-			.createSpan({ cls: 'wl-card-type-badge' });
-		subtitle.style.backgroundColor = typeColor;
-		subtitle.textContent = `${members.length} game${members.length !== 1 ? 's' : ''}`;
-
-		const menuBtn = card.createEl('button', {
-			cls: 'wl-card-menu-btn',
-			text: '⋮',
-		});
-		menuBtn.setAttr('aria-label', 'Group actions');
-		menuBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			openCardMenu(card, menuBtn, [
-				{ label: 'Edit name', onClick: () => this.openRenameGroupPrompt(group) },
-				{
-					label: 'Delete group',
-					onClick: () => {
-						new ConfirmModal(
-							this.plugin.app,
-							`Delete group "${group.name}"? All games inside will be returned to the main list.`,
-							() => { void this.gameData.removeGroup(group.id); },
-						).open();
-					},
-				},
-			], { container: this.container, cleanups: this.activeCleanups });
-		});
-
-		// under mode: the whole cell opens the group
-		(cell ?? card).addEventListener('click', () => {
-			if (this.selectionMode) {
-				this.toggleCardSelection(card, group.id);
-				return;
-			}
-			new GameGroupDetailModal(this.plugin.app, this.plugin, this.gameData, group, members).open();
+		renderGroupCard(parent, {
+			app: this.plugin.app,
+			group,
+			members,
+			getCover: (g) => rawgResizedCover(g.coverUrl),
+			typeColor: settings.types.find((t) => t.name === primaryType)?.color ?? '#888780',
+			textUnder: this.plugin.isCardTextUnder('games'),
+			selected: this.selectedIds.has(group.id),
+			cardHeight,
+			unit: 'game',
+			container: this.container,
+			cleanups: this.activeCleanups,
+			onRename: () => this.openRenameGroupPrompt(group),
+			deleteMessage: `Delete group "${group.name}"? All games inside will be returned to the main list.`,
+			onDelete: () => { void this.gameData.removeGroup(group.id); },
+			onActivate: (card) => {
+				if (this.selectionMode) {
+					this.toggleCardSelection(card, group.id);
+					return;
+				}
+				new GameGroupDetailModal(this.plugin.app, this.plugin, this.gameData, group, members).open();
+			},
 		});
 	}
 
 	private openRenameGroupPrompt(group: GameGroup): void {
-		const modal = new Modal(this.plugin.app);
-		modal.titleEl.setText('Rename group');
-		const input = modal.contentEl.createEl('input', {
-			cls: 'wl-input',
-			attr: { type: 'text', value: group.name, placeholder: 'Group name' },
+		openRenameGroupPrompt(this.plugin.app, group.name, (name) => {
+			void this.gameData.updateGroup({ ...group, name });
 		});
-		const btnRow = modal.contentEl.createDiv({ cls: 'wl-modal-btn-row' });
-		const submit = (): void => {
-			const newName = input.value.trim();
-			if (newName && newName !== group.name) {
-				void this.gameData.updateGroup({ ...group, name: newName });
-			}
-			modal.close();
-		};
-		btnRow
-			.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' })
-			.addEventListener('click', submit);
-		btnRow
-			.createEl('button', { cls: 'wl-btn', text: 'Cancel' })
-			.addEventListener('click', () => modal.close());
-		input.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter') submit();
-			else if (e.key === 'Escape') modal.close();
-		});
-		modal.open();
-		window.setTimeout(() => {
-			input.focus();
-			input.select();
-		}, 0);
 	}
 
 	private openDetailModal(game: Game): void {

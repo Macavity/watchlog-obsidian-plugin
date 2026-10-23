@@ -43,4 +43,14 @@ describe('reading codec', () => {
 		const out = encodeBook(decodeBook('Books/Z', { title: 'Z', status: 'Reading', ...base }).entry);
 		expect(Object.keys(out).some(k => k.startsWith('airtime'))).toBe(false);
 	});
+
+	it.each([
+		['book', (fm: Record<string, unknown>) => decodeBook('Books/E', fm).entry],
+		['manga', (fm: Record<string, unknown>) => decodeManga('Manga/E', fm).entry],
+	])('leaves optional keys missing on a decoded %s without them', (_kind, decode) => {
+		const entry = decode({ title: 'E', status: 'Reading', ...base });
+		for (const key of ['favorite', 'dateFavorited', 'externalLink', 'groups', 'airtime']) {
+			expect(entry).not.toHaveProperty(key);
+		}
+	});
 });

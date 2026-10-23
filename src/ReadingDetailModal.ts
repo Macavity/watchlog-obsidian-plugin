@@ -14,7 +14,7 @@ import { appendNoteLinkButton } from './NoteLinkButton';
 import { ConfirmModal } from './ConfirmModal';
 import { renderStarRating } from './StarRating';
 import { VaultFilePicker } from './AddReadingModal';
-import { readingStatusColor, coverFallbackColor } from './ReadingTab';
+import { readingStatusColor, coverFallbackColor } from './readingColors';
 import { openStatusDropdown, renderSegmentedToggle } from './StatusDropdown';
 import { ReadingManageColumnsModal } from './ReadingManageColumnsModal';
 import { pinModalFooter } from './StickyModal';

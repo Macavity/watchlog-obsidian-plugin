@@ -1,8 +1,47 @@
 import { MarkdownPostProcessorContext } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
-import type { WatchLogTitle, TagDefinition } from './types';
+import type { WatchLogTitle, WatchLogGroup, TagDefinition } from './types';
 import { formatTime, getThemedColor, formatDateDisplay, formatShortDateDisplay } from './types';
+
+export interface NextRelease { titleName: string; type: string; releaseDate: string; daysUntil: number }
+
+/** Episode progress (%) over all member titles; 0 when they have no episodes. */
+export function groupProgress(members: WatchLogTitle[], effectiveTotal: (t: WatchLogTitle) => number): number {
+	const watched = members.reduce((sum, t) => sum + t.watchedEpisodes.length, 0);
+	const total = members.reduce((sum, t) => sum + effectiveTotal(t), 0);
+	return total > 0 ? Math.min(100, Math.round((watched / total) * 100)) : 0;
+}
+
+/** The one-off airtime entry with the soonest release at or after `now`, or null. */
+export function findNextRelease(
+	entries: ReturnType<DataManager['getAirtimeEntries']>,
+	titles: WatchLogTitle[],
+	now: number,
+): NextRelease | null {
+	const titleMap = new Map(titles.map((t) => [t.id, t]));
+	// date-only releases compare by local calendar day: a release stays "today" until midnight
+	const today = new Date(now);
+	today.setHours(0, 0, 0, 0);
+	const todayMs = today.getTime();
+	let best: NextRelease | null = null;
+	let bestMs = Infinity;
+	for (const entry of entries) {
+		const title = titleMap.get(entry.titleId);
+		if (!title || entry.schedule.recurrence !== 'once' || !entry.schedule.releaseDate) continue;
+		const dayMs = new Date(entry.schedule.releaseDate + 'T00:00:00').getTime();
+		if (dayMs >= todayMs && dayMs < bestMs) {
+			bestMs = dayMs;
+			best = {
+				titleName: title.title,
+				type: title.type,
+				releaseDate: entry.schedule.releaseDate,
+				daysUntil: Math.round((dayMs - todayMs) / 86400000),
+			};
+		}
+	}
+	return best;
+}
 
 export class WidgetRenderer {
 	private plugin: WatchLogPlugin;
@@ -160,23 +199,12 @@ export class WidgetRenderer {
 
 		this.sep(mainRow);
 
-		const typeDef = this.getTagDef(title.type, this.plugin.settings.types);
-		const colored = this.plugin.settings.coloredTypeBadges;
-		const typeBadge = mainRow.createSpan({
-			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-			text: title.type,
-		});
-		if (colored && typeDef) typeBadge.style.backgroundColor = getThemedColor(title.type, typeDef.color, this.plugin.settings.colorTheme);
+		this.renderBadge(mainRow, title.type, this.plugin.settings.types);
 
 		this.sep(mainRow);
 
 		// status badge (respects coloredTypeBadges)
-		const statusDef = this.getTagDef(title.status, this.plugin.settings.statuses);
-		const statusBadge = mainRow.createSpan({
-			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-			text: title.status,
-		});
-		if (colored && statusDef) statusBadge.style.backgroundColor = getThemedColor(title.status, statusDef.color, this.plugin.settings.colorTheme);
+		this.renderBadge(mainRow, title.status, this.plugin.settings.statuses);
 
 		this.sep(mainRow);
 
@@ -203,18 +231,9 @@ export class WidgetRenderer {
 			const nextRow = el.createDiv({ cls: 'wl-widget-next-row' });
 
 			if (nextEp !== null) {
-				const nextCb = nextRow.createEl('input', {
-					cls: 'wl-widget-next-cb',
-					attr: { type: 'checkbox' },
-				});
-				nextCb.checked = false;
-				nextCb.title = `Mark Episode ${nextEp} as watched`;
-				nextCb.addEventListener('change', () => {
-					void this.dataManager.markEpisodeWatched(title.id, nextEp, true).then(() => {
-						const updated = this.dataManager.getTitle(title.id);
-						if (updated) this.renderWidget(el, updated);
-					});
-				});
+				this.renderEpisodeCheckbox(nextRow, title, {
+					episode: nextEp, checked: false, tooltip: `Mark Episode ${nextEp} as watched`, follow: false,
+				}, (t) => this.renderWidget(el, t));
 				nextRow.createSpan({ cls: 'wl-widget-next-label', text: `Next up: Ep ${nextEp}` });
 			} else {
 				nextRow.createSpan({ cls: 'wl-widget-next-label', text: '✓ All episodes watched' });
@@ -223,18 +242,9 @@ export class WidgetRenderer {
 			// movie: watch checkbox that writes to WatchLog data
 			const watchRow = el.createDiv({ cls: 'wl-widget-next-row' });
 			const watched = title.watchedEpisodes.includes(1);
-			const movieCb = watchRow.createEl('input', {
-				cls: 'wl-widget-next-cb',
-				attr: { type: 'checkbox' },
-			});
-			movieCb.checked = watched;
-			movieCb.title = 'Mark movie as watched';
-			movieCb.addEventListener('change', () => {
-				void this.dataManager.markEpisodeWatched(title.id, 1, movieCb.checked).then(() => {
-					const updated = this.dataManager.getTitle(title.id);
-					if (updated) this.renderWidget(el, updated);
-				});
-			});
+			this.renderEpisodeCheckbox(watchRow, title, {
+				episode: 1, checked: watched, tooltip: 'Mark movie as watched', follow: true,
+			}, (t) => this.renderWidget(el, t));
 			watchRow.createSpan({
 				cls: 'wl-widget-next-label',
 				text: watched ? 'Watched' : 'Mark as watched',
@@ -266,23 +276,12 @@ export class WidgetRenderer {
 
 		this.sep(row);
 
-		const typeDef = this.getTagDef(title.type, this.plugin.settings.types);
-		const colored = this.plugin.settings.coloredTypeBadges;
-		const typeBadge = row.createSpan({
-			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-			text: title.type,
-		});
-		if (colored && typeDef) typeBadge.style.backgroundColor = getThemedColor(title.type, typeDef.color, this.plugin.settings.colorTheme);
+		this.renderBadge(row, title.type, this.plugin.settings.types);
 
 		this.sep(row);
 
 		// status badge (respects coloredTypeBadges)
-		const statusDef = this.getTagDef(title.status, this.plugin.settings.statuses);
-		const statusBadge = row.createSpan({
-			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-			text: title.status,
-		});
-		if (colored && statusDef) statusBadge.style.backgroundColor = getThemedColor(title.status, statusDef.color, this.plugin.settings.colorTheme);
+		this.renderBadge(row, title.status, this.plugin.settings.statuses);
 
 		this.sep(row);
 
@@ -295,39 +294,92 @@ export class WidgetRenderer {
 		const isMovie = title.type === 'Movie';
 		if (isMovie) {
 			const watched = title.watchedEpisodes.includes(1);
-			const movieCb = row.createEl('input', {
-				cls: 'wl-widget-next-cb',
-				attr: { type: 'checkbox' },
-			});
-			movieCb.checked = watched;
-			movieCb.title = 'Mark movie as watched';
-			movieCb.addEventListener('change', () => {
-				void this.dataManager.markEpisodeWatched(title.id, 1, movieCb.checked).then(() => {
-					const updated = this.dataManager.getTitle(title.id);
-					if (updated) this.renderWidgetMinimal(el, updated);
-				});
-			});
+			this.renderEpisodeCheckbox(row, title, {
+				episode: 1, checked: watched, tooltip: 'Mark movie as watched', follow: true,
+			}, (t) => this.renderWidgetMinimal(el, t));
 		} else {
 			const nextEp = this.dataManager.getNextUnwatchedEpisode(title);
-			const nextCb = row.createEl('input', {
-				cls: 'wl-widget-next-cb',
-				attr: { type: 'checkbox' },
-			});
 			if (nextEp !== null) {
-				nextCb.checked = false;
-				nextCb.title = `Mark Episode ${nextEp} as watched`;
-				nextCb.addEventListener('change', () => {
-					void this.dataManager.markEpisodeWatched(title.id, nextEp, true).then(() => {
-						const updated = this.dataManager.getTitle(title.id);
-						if (updated) this.renderWidgetMinimal(el, updated);
-					});
-				});
+				this.renderEpisodeCheckbox(row, title, {
+					episode: nextEp, checked: false, tooltip: `Mark Episode ${nextEp} as watched`, follow: false,
+				}, (t) => this.renderWidgetMinimal(el, t));
 			} else {
+				const nextCb = row.createEl('input', {
+					cls: 'wl-widget-next-cb',
+					attr: { type: 'checkbox' },
+				});
 				nextCb.checked = true;
 				nextCb.disabled = true;
 				nextCb.title = 'All episodes watched';
 			}
 		}
+	}
+
+	/** Type / status badge: coloured from the tag definition when coloured badges are on. */
+	private renderBadge(host: HTMLElement, text: string, tags: TagDefinition[]): void {
+		const def = this.getTagDef(text, tags);
+		const colored = this.plugin.settings.coloredTypeBadges;
+		const badge = host.createSpan({
+			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
+			text,
+		});
+		if (colored && def) badge.style.backgroundColor = getThemedColor(text, def.color, this.plugin.settings.colorTheme);
+	}
+
+	/**
+	 * Checkbox that marks an episode watched. `follow` mirrors the checkbox state (movie toggle);
+	 * otherwise it only ever marks the episode as watched (next-up box).
+	 */
+	private renderEpisodeCheckbox(
+		host: HTMLElement,
+		title: WatchLogTitle,
+		spec: { episode: number; checked: boolean; tooltip: string; follow: boolean },
+		rerender: (updated: WatchLogTitle) => void,
+	): void {
+		const cb = host.createEl('input', {
+			cls: 'wl-widget-next-cb',
+			attr: { type: 'checkbox' },
+		});
+		cb.checked = spec.checked;
+		cb.title = spec.tooltip;
+		cb.addEventListener('change', () => {
+			void this.dataManager.markEpisodeWatched(title.id, spec.episode, spec.follow ? cb.checked : true).then(() => {
+				const updated = this.dataManager.getTitle(title.id);
+				if (updated) rerender(updated);
+			});
+		});
+	}
+
+	/** Soonest future one-off release among the airtime entries. */
+	private nextRelease(): NextRelease | null {
+		return findNextRelease(this.dataManager.getAirtimeEntries(), this.dataManager.getTitles(), Date.now());
+	}
+
+	private getPinned(): { pinnedTitle: WatchLogTitle | null; pinnedGroup: WatchLogGroup | null } {
+		const pinnedTitle = this.dataManager.getTitles().find((t) => t.pinned) ?? null;
+		const pinnedGroupId = this.dataManager.getPinnedGroupId();
+		const pinnedGroup = pinnedGroupId
+			? this.dataManager.getGroups().find((g) => g.id === pinnedGroupId) ?? null
+			: null;
+		return { pinnedTitle, pinnedGroup };
+	}
+
+	/** Title count and episode progress (%) of a group's member titles. */
+	private pinnedGroupStats(group: WatchLogGroup): { count: number; progress: number } {
+		const byId = new Map(this.dataManager.getTitles().map((t) => [t.id, t]));
+		const members = group.titleIds
+			.map((id) => byId.get(id))
+			.filter((t): t is WatchLogTitle => t !== undefined);
+		return {
+			count: members.length,
+			progress: groupProgress(members, (t) => this.dataManager.getEffectiveTotal(t)),
+		};
+	}
+
+	private renderNwBarCol(bottomRow: HTMLElement, progress: number): void {
+		const barCol = bottomRow.createDiv({ cls: 'wl-nw-bar-col' });
+		barCol.createDiv({ cls: 'wl-nw-pct', text: `${progress}%` });
+		barCol.createDiv({ cls: 'wl-full-card-bar-wrap' }).createDiv({ cls: 'wl-full-card-bar' }).style.width = `${progress}%`;
 	}
 
 	private sep(parent: HTMLElement): void {
@@ -441,14 +493,15 @@ export class WidgetRenderer {
 		const card = el.createDiv({ cls: 'wl-full-card wl-full-card-time' });
 		card.createDiv({ cls: 'wl-full-card-header', text: 'Time' });
 		const cols = card.createDiv({ cls: 'wl-full-card-time-cols' });
-		const makeCol = (mins: number, label: string) => {
-			const col = cols.createDiv({ cls: 'wl-full-card-time-col' });
-			col.createDiv({ cls: 'wl-full-card-value', text: formatTime(mins) });
-			col.createDiv({ cls: 'wl-full-card-days', text: this.formatTimeDays(mins) });
-			col.createDiv({ cls: 'wl-full-card-sub', text: label });
-		};
-		makeCol(watchedMins, 'watched');
-		makeCol(remainingMins, 'remaining');
+		this.renderTimeCol(cols, 'wl-full-card-time-col', watchedMins, 'watched');
+		this.renderTimeCol(cols, 'wl-full-card-time-col', remainingMins, 'remaining');
+	}
+
+	private renderTimeCol(cols: HTMLElement, cls: string, mins: number, label: string): void {
+		const col = cols.createDiv({ cls });
+		col.createDiv({ cls: 'wl-full-card-value', text: formatTime(mins) });
+		col.createDiv({ cls: 'wl-full-card-days', text: this.formatTimeDays(mins) });
+		col.createDiv({ cls: 'wl-full-card-sub', text: label });
 	}
 
 	private formatTimeDays(minutes: number): string {
@@ -472,16 +525,9 @@ export class WidgetRenderer {
 		const card = el.createDiv({ cls: 'wl-full-card wl-full-card-triple' });
 		const cols = card.createDiv({ cls: 'wl-triple-cols' });
 
-		const makeTimeCol = (mins: number, label: string) => {
-			const col = cols.createDiv({ cls: 'wl-triple-col' });
-			col.createDiv({ cls: 'wl-full-card-value', text: formatTime(mins) });
-			col.createDiv({ cls: 'wl-full-card-days', text: this.formatTimeDays(mins) });
-			col.createDiv({ cls: 'wl-full-card-sub', text: label });
-		};
-
-		makeTimeCol(watchedMins, 'watched');
+		this.renderTimeCol(cols, 'wl-triple-col', watchedMins, 'watched');
 		cols.createDiv({ cls: 'wl-vert-sep' });
-		makeTimeCol(remainingMins, 'remaining');
+		this.renderTimeCol(cols, 'wl-triple-col', remainingMins, 'remaining');
 		cols.createDiv({ cls: 'wl-vert-sep' });
 
 		const completedCol = cols.createDiv({ cls: 'wl-triple-col' });
@@ -505,30 +551,8 @@ export class WidgetRenderer {
 			return;
 		}
 
-		const entries = this.dataManager.getAirtimeEntries();
-		const titles = this.dataManager.getTitles();
-		const titleMap = new Map(titles.map((t) => [t.id, t]));
-
 		// the entry with the soonest future release date
-		const now = Date.now();
-		let bestEntry: { titleName: string; type: string; releaseDate: string; daysUntil: number } | null = null;
-		let bestMs = Infinity;
-
-		for (const entry of entries) {
-			const title = titleMap.get(entry.titleId);
-			if (!title || entry.schedule.recurrence !== 'once' || !entry.schedule.releaseDate) continue;
-			const ms = new Date(entry.schedule.releaseDate + 'T12:00:00').getTime();
-			if (ms >= now && ms < bestMs) {
-				bestMs = ms;
-				const daysUntil = Math.round((ms - now) / 86400000);
-				bestEntry = {
-					titleName: title.title,
-					type: title.type,
-					releaseDate: entry.schedule.releaseDate,
-					daysUntil,
-				};
-			}
-		}
+		const bestEntry = this.nextRelease();
 
 		el.addClass('wl-wupcoming');
 
@@ -545,13 +569,7 @@ export class WidgetRenderer {
 		const card = el.createDiv({ cls: 'wl-upcoming-card' });
 		card.createSpan({ cls: 'wl-upcoming-title', text: bestEntry.titleName });
 
-		const typeDef = this.getTagDef(bestEntry.type, this.plugin.settings.types);
-		const colored = this.plugin.settings.coloredTypeBadges;
-		const badge = card.createSpan({
-			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-			text: bestEntry.type,
-		});
-		if (colored && typeDef) badge.style.backgroundColor = getThemedColor(bestEntry.type, typeDef.color, this.plugin.settings.colorTheme);
+		this.renderBadge(card, bestEntry.type, this.plugin.settings.types);
 
 		card.createSpan({ cls: 'wl-upcoming-date', text: formatDateDisplay(bestEntry.releaseDate) });
 		const daysUntil = bestEntry.daysUntil;
@@ -562,7 +580,7 @@ export class WidgetRenderer {
 
 	private renderUpcomingFull(
 		el: HTMLElement,
-		bestEntry: { titleName: string; type: string; releaseDate: string; daysUntil: number } | null,
+		bestEntry: NextRelease | null,
 	): void {
 		el.empty();
 		const card = el.createDiv({ cls: 'wl-full-card' });
@@ -573,13 +591,7 @@ export class WidgetRenderer {
 		}
 		card.createDiv({ cls: 'wl-full-card-title', text: bestEntry.titleName });
 		const meta = card.createDiv({ cls: 'wl-full-card-meta' });
-		const typeDef = this.getTagDef(bestEntry.type, this.plugin.settings.types);
-		const colored = this.plugin.settings.coloredTypeBadges;
-		const badge = meta.createSpan({
-			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-			text: bestEntry.type,
-		});
-		if (colored && typeDef) badge.style.backgroundColor = getThemedColor(bestEntry.type, typeDef.color, this.plugin.settings.colorTheme);
+		this.renderBadge(meta, bestEntry.type, this.plugin.settings.types);
 		const daysUntil = bestEntry.daysUntil;
 		const countdown = daysUntil === 0 ? 'today' : daysUntil === 1 ? 'tomorrow' : `in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}`;
 		meta.createSpan({ text: countdown });
@@ -598,14 +610,10 @@ export class WidgetRenderer {
 		const isFull = source.trim().toLowerCase() === 'full';
 		el.addClass('wl-wnowwatching');
 
-		const pinnedTitle = this.dataManager.getTitles().find((t) => t.pinned);
-		const pinnedGroupId = this.dataManager.getPinnedGroupId();
-		const pinnedGroup = pinnedGroupId
-			? this.dataManager.getGroups().find((g) => g.id === pinnedGroupId)
-			: null;
+		const { pinnedTitle, pinnedGroup } = this.getPinned();
 
 		if (isFull) {
-			this.renderNowWatchingFull(el, pinnedTitle ?? null, pinnedGroup ?? null);
+			this.renderNowWatchingFull(el, pinnedTitle, pinnedGroup);
 			return;
 		}
 
@@ -618,15 +626,8 @@ export class WidgetRenderer {
 
 		if (pinnedGroup) {
 			card.createSpan({ cls: 'wl-nowwatching-title', text: pinnedGroup.name });
-			const allTitles = this.dataManager.getTitles();
-			const titleMap = new Map(allTitles.map((t) => [t.id, t]));
-			const members = pinnedGroup.titleIds
-				.map((id) => titleMap.get(id))
-				.filter((t): t is WatchLogTitle => t !== undefined);
-			const totalWatched = members.reduce((s, t) => s + t.watchedEpisodes.length, 0);
-			const totalEps = members.reduce((s, t) => s + this.dataManager.getEffectiveTotal(t), 0);
-			const progress = totalEps > 0 ? Math.min(100, Math.round((totalWatched / totalEps) * 100)) : 0;
-			card.createSpan({ cls: 'wl-nowwatching-ep', text: `${members.length} title${members.length !== 1 ? 's' : ''}` });
+			const { count, progress } = this.pinnedGroupStats(pinnedGroup);
+			card.createSpan({ cls: 'wl-nowwatching-ep', text: `${count} title${count !== 1 ? 's' : ''}` });
 			const barWrap = card.createDiv({ cls: 'wl-nowwatching-bar-wrap' });
 			barWrap.createDiv({ cls: 'wl-nowwatching-bar' }).style.width = `${progress}%`;
 			card.createSpan({ cls: 'wl-nowwatching-pct', text: `${progress}%` });
@@ -636,13 +637,7 @@ export class WidgetRenderer {
 		const pinned = pinnedTitle!;
 		card.createSpan({ cls: 'wl-nowwatching-title', text: pinned.title });
 
-		const typeDef = this.getTagDef(pinned.type, this.plugin.settings.types);
-		const colored = this.plugin.settings.coloredTypeBadges;
-		const badge = card.createSpan({
-			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-			text: pinned.type,
-		});
-		if (colored && typeDef) badge.style.backgroundColor = getThemedColor(pinned.type, typeDef.color, this.plugin.settings.colorTheme);
+		this.renderBadge(card, pinned.type, this.plugin.settings.types);
 
 		if (pinned.type !== 'Movie') {
 			const nextEp = this.dataManager.getNextUnwatchedEpisode(pinned);
@@ -659,7 +654,7 @@ export class WidgetRenderer {
 	private renderNowWatchingFull(
 		el: HTMLElement,
 		pinnedTitle: WatchLogTitle | null,
-		pinnedGroup: import('./types').WatchLogGroup | null,
+		pinnedGroup: WatchLogGroup | null,
 	): void {
 		el.empty();
 		const card = el.createDiv({ cls: 'wl-full-card wl-full-card-nw' });
@@ -672,19 +667,10 @@ export class WidgetRenderer {
 
 		if (pinnedGroup) {
 			card.createDiv({ cls: 'wl-full-card-title', text: pinnedGroup.name });
-			const allTitles = this.dataManager.getTitles();
-			const titleMap = new Map(allTitles.map((t) => [t.id, t]));
-			const members = pinnedGroup.titleIds
-				.map((id) => titleMap.get(id))
-				.filter((t): t is WatchLogTitle => t !== undefined);
-			const totalWatched = members.reduce((s, t) => s + t.watchedEpisodes.length, 0);
-			const totalEps = members.reduce((s, t) => s + this.dataManager.getEffectiveTotal(t), 0);
-			const progress = totalEps > 0 ? Math.min(100, Math.round((totalWatched / totalEps) * 100)) : 0;
+			const { count, progress } = this.pinnedGroupStats(pinnedGroup);
 			const bottomRow = card.createDiv({ cls: 'wl-nw-bottom-row' });
-			bottomRow.createSpan({ cls: 'wl-full-card-sub', text: `${members.length} title${members.length !== 1 ? 's' : ''}` });
-			const barCol = bottomRow.createDiv({ cls: 'wl-nw-bar-col' });
-			barCol.createDiv({ cls: 'wl-nw-pct', text: `${progress}%` });
-			barCol.createDiv({ cls: 'wl-full-card-bar-wrap' }).createDiv({ cls: 'wl-full-card-bar' }).style.width = `${progress}%`;
+			bottomRow.createSpan({ cls: 'wl-full-card-sub', text: `${count} title${count !== 1 ? 's' : ''}` });
+			this.renderNwBarCol(bottomRow, progress);
 			return;
 		}
 
@@ -694,17 +680,9 @@ export class WidgetRenderer {
 		const progress = this.dataManager.getProgress(pinned);
 		const bottomRow = card.createDiv({ cls: 'wl-nw-bottom-row' });
 
-		const typeDef = this.getTagDef(pinned.type, this.plugin.settings.types);
-		const colored = this.plugin.settings.coloredTypeBadges;
-		const badge = bottomRow.createSpan({
-			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-			text: pinned.type,
-		});
-		if (colored && typeDef) badge.style.backgroundColor = getThemedColor(pinned.type, typeDef.color, this.plugin.settings.colorTheme);
+		this.renderBadge(bottomRow, pinned.type, this.plugin.settings.types);
 
-		const barCol = bottomRow.createDiv({ cls: 'wl-nw-bar-col' });
-		barCol.createDiv({ cls: 'wl-nw-pct', text: `${progress}%` });
-		barCol.createDiv({ cls: 'wl-full-card-bar-wrap' }).createDiv({ cls: 'wl-full-card-bar' }).style.width = `${progress}%`;
+		this.renderNwBarCol(bottomRow, progress);
 	}
 
 	// wl-now-next
@@ -718,38 +696,18 @@ export class WidgetRenderer {
 		el.empty();
 		el.addClass('wl-wnownext');
 
-		const pinnedTitle = this.dataManager.getTitles().find((t) => t.pinned);
-		const pinnedGroupId = this.dataManager.getPinnedGroupId();
-		const pinnedGroup = pinnedGroupId
-			? this.dataManager.getGroups().find((g) => g.id === pinnedGroupId)
-			: null;
+		const { pinnedTitle, pinnedGroup } = this.getPinned();
 
-		const entries = this.dataManager.getAirtimeEntries();
-		const titles = this.dataManager.getTitles();
-		const titleMap = new Map(titles.map((t) => [t.id, t]));
-		const now = Date.now();
-		let bestEntry: { titleName: string; type: string; releaseDate: string; daysUntil: number } | null = null;
-		let bestMs = Infinity;
+		const bestEntry = this.nextRelease();
 
-		for (const entry of entries) {
-			const title = titleMap.get(entry.titleId);
-			if (!title || entry.schedule.recurrence !== 'once' || !entry.schedule.releaseDate) continue;
-			const ms = new Date(entry.schedule.releaseDate + 'T12:00:00').getTime();
-			if (ms >= now && ms < bestMs) {
-				bestMs = ms;
-				const daysUntil = Math.round((ms - now) / 86400000);
-				bestEntry = { titleName: title.title, type: title.type, releaseDate: entry.schedule.releaseDate, daysUntil };
-			}
-		}
-
-		this.renderNowNextCard(el, pinnedTitle ?? null, pinnedGroup ?? null, bestEntry);
+		this.renderNowNextCard(el, pinnedTitle, pinnedGroup, bestEntry);
 	}
 
 	private renderNowNextCard(
 		el: HTMLElement,
 		pinnedTitle: WatchLogTitle | null,
-		pinnedGroup: import('./types').WatchLogGroup | null,
-		bestEntry: { titleName: string; type: string; releaseDate: string; daysUntil: number } | null,
+		pinnedGroup: WatchLogGroup | null,
+		bestEntry: NextRelease | null,
 	): void {
 		el.empty();
 		const card = el.createDiv({ cls: 'wl-full-card wl-full-card-now-next' });
@@ -763,15 +721,8 @@ export class WidgetRenderer {
 			nowCol.createDiv({ cls: 'wl-full-card-sub', text: 'Nothing pinned.' });
 		} else if (pinnedGroup) {
 			nowCol.createDiv({ cls: 'wl-full-card-title', text: pinnedGroup.name });
-			const allTitles = this.dataManager.getTitles();
-			const titleMap2 = new Map(allTitles.map((t) => [t.id, t]));
-			const members = pinnedGroup.titleIds
-				.map((id) => titleMap2.get(id))
-				.filter((t): t is WatchLogTitle => t !== undefined);
-			const totalWatched = members.reduce((s, t) => s + t.watchedEpisodes.length, 0);
-			const totalEps = members.reduce((s, t) => s + this.dataManager.getEffectiveTotal(t), 0);
-			const progress = totalEps > 0 ? Math.min(100, Math.round((totalWatched / totalEps) * 100)) : 0;
-			nowCol.createDiv({ cls: 'wl-full-card-sub', text: `${members.length} title${members.length !== 1 ? 's' : ''} · ${progress}%` });
+			const { count, progress } = this.pinnedGroupStats(pinnedGroup);
+			nowCol.createDiv({ cls: 'wl-full-card-sub', text: `${count} title${count !== 1 ? 's' : ''} · ${progress}%` });
 		} else {
 			const pinned = pinnedTitle!;
 			nowCol.createDiv({ cls: 'wl-full-card-title', text: pinned.title });

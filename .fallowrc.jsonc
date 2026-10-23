@@ -7,6 +7,12 @@
 
 	"entry": ["src/main.ts"],
 
+	// Semantic pass via TypeScript-Go: resolves member calls through property chains
+	// (`plugin.dataManager.x()`, `leaf.view.x()` after instanceof, getters) that the syntactic
+	// pass reports as unused. Needs a tsconfig without `baseUrl` and with a modern
+	// `moduleResolution`; TypeScript-Go rejects `baseUrl` and `node` as blocking diagnostics.
+	"typeAware": { "enabled": true },
+
 	"duplicates": {
 		// Audit tiers duplication as warn by default, even when the change introduces
 		// it. Any threshold > 0 turns introduced duplication into a fail verdict, while

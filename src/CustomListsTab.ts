@@ -7,10 +7,22 @@ import { ConfirmModal } from './ConfirmModal';
 import { openColorPicker, deriveFillColor, deriveBorderColor } from './ColorPicker';
 import { openStatusDropdown } from './StatusDropdown';
 import { openAddForTitle } from './AddRouter';
+import { cloneColumns, renderCancelSave, renderColumnsEditor } from './ui/ColumnsEditor';
 
 /** Row name, trimmed — the index signature types it loosely. */
 function rowName(row: CustomListRow): string {
 	return String((row as Record<string, string | undefined>)['name'] ?? '').trim();
+}
+
+/** Key handling of an inline cell editor: Tab / Shift+Tab / Enter commit and navigate, Escape cancels. */
+function handleEditKey(
+	e: KeyboardEvent,
+	commit: (nav: 'tab' | 'shift-tab' | 'enter') => void,
+	cancel: () => void,
+): void {
+	if (e.key === 'Tab') { e.preventDefault(); commit(e.shiftKey ? 'shift-tab' : 'tab'); }
+	else if (e.key === 'Enter') { e.preventDefault(); commit('enter'); }
+	else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); cancel(); }
 }
 
 /** Minimum width (px) a resizable column can be dragged to. */
@@ -214,264 +226,6 @@ export class CustomListManager {
 	}
 }
 
-/**
- * Aligns a column's option-colour map with its trimmed options on save: drops colours for
- * removed options, clears the map for non-select columns.
- */
-function normalizeOptionColors(col: CustomListColumn): void {
-	if (col.type !== 'select') { delete col.optionColors; return; }
-	if (!col.optionColors) return;
-	const opts = new Set(col.options ?? []);
-	const cleaned: Record<string, string> = {};
-	for (const [k, v] of Object.entries(col.optionColors)) {
-		const tk = k.trim();
-		if (opts.has(tk)) cleaned[tk] = v;
-	}
-	if (Object.keys(cleaned).length) col.optionColors = cleaned;
-	else delete col.optionColors;
-}
-
-// Shared column list renderer (EditColumnsModal + DefaultColumnsModal)
-
-function renderColumnList(
-	listEl: HTMLElement,
-	cols: CustomListColumn[],
-	existingRows: CustomListRow[],
-	app: App,
-	onReorder: (from: number, to: number) => void,
-	onDelete: (idx: number) => void,
-	onTypeChange: () => void,
-	onAdd?: () => void,
-	onOptionRename?: (colId: string, oldVal: string, newVal: string) => void,
-): void {
-	listEl.empty();
-	listEl.addClass('wl-editcol-card-grid');
-	let dragFromIndex = -1;
-
-	// permanent auto-included columns — non-editable, non-deletable, non-draggable
-	const renderAutoCard = (label: string): void => {
-		const card = listEl.createDiv({ cls: 'wl-editcol-card wl-editcol-card-auto' });
-		card.setAttribute('data-auto', label);
-		const nameWrap = card.createDiv({ cls: 'wl-editcol-card-name-wrap' });
-		nameWrap.createDiv({ cls: 'wl-editcol-card-name-label', text: label });
-		card.createDiv({ cls: 'wl-editcol-card-type-locked', text: 'Auto' });
-		card.createDiv({ cls: 'wl-editcol-card-spacer' });
-	};
-	renderAutoCard('#');
-	renderAutoCard('Name');
-
-	cols.forEach((col, idx) => {
-		const card = listEl.createDiv({ cls: 'wl-editcol-card' });
-
-		const handle = card.createDiv({ cls: 'wl-editcol-card-handle', text: '⠿' });
-		handle.title = 'Drag to reorder';
-		handle.addEventListener('mousedown', () => card.setAttribute('draggable', 'true'));
-		card.addEventListener('dragstart', (e) => {
-			dragFromIndex = idx;
-			e.dataTransfer?.setData('text/plain', String(idx));
-			card.addClass('wl-cl-dragging');
-		});
-		card.addEventListener('dragend', () => {
-			card.removeClass('wl-cl-dragging');
-			card.setAttribute('draggable', 'false');
-		});
-		card.addEventListener('dragover', (e) => { e.preventDefault(); card.addClass('wl-cl-drag-over'); });
-		card.addEventListener('dragleave', () => card.removeClass('wl-cl-drag-over'));
-		card.addEventListener('drop', (e) => {
-			e.preventDefault();
-			card.removeClass('wl-cl-drag-over');
-			const from = dragFromIndex;
-			const to = idx;
-			if (from !== to && from >= 0) onReorder(from, to);
-		});
-
-		const nameInput = card.createEl('input', {
-			cls: 'wl-modal-input wl-editcol-card-name',
-			attr: { type: 'text', placeholder: 'Column name', value: col.label },
-		});
-		nameInput.addEventListener('input', () => { col.label = nameInput.value; });
-
-		const typeSelect = card.createEl('select', { cls: 'wl-select wl-editcol-card-type' });
-		for (const t of ['text', 'number', 'select'] as const) {
-			const opt = typeSelect.createEl('option', {
-				value: t,
-				text: t.charAt(0).toUpperCase() + t.slice(1),
-			});
-			if (col.type === t) opt.selected = true;
-		}
-		typeSelect.addEventListener('change', () => {
-			const newType = typeSelect.value as CustomListColumn['type'];
-			if (newType === 'select') {
-				// rebuild the option list from the distinct non-empty values already in this column's cells, in
-				// order of first appearance. Replaces any stored options (so stale ones don't resurrect) and
-				// leaves the cell values untouched.
-				const seen = new Set<string>();
-				const derived: string[] = [];
-				for (const row of existingRows) {
-					const raw = (row as Record<string, unknown>)[col.id];
-					if (typeof raw !== 'string' && typeof raw !== 'number') continue;
-					const val = String(raw).trim();
-					if (!val || seen.has(val)) continue;
-					seen.add(val);
-					derived.push(val);
-				}
-				col.options = derived;
-			}
-			col.type = newType;
-			onTypeChange();
-		});
-
-		if (col.type === 'text' || col.type === 'number') {
-			const toggles = card.createDiv({ cls: 'wl-editcol-card-toggles' });
-			const boldBtn = toggles.createEl('button', {
-				cls: `wl-btn wl-btn-sm wl-editcol-card-toggle wl-editcols-bold-btn${col.bold ? ' is-active' : ''}`,
-				text: 'B',
-			});
-			boldBtn.addEventListener('click', () => {
-				col.bold = !col.bold;
-				boldBtn.toggleClass('is-active', !!col.bold);
-			});
-			const italicBtn = toggles.createEl('button', {
-				cls: `wl-btn wl-btn-sm wl-editcol-card-toggle wl-editcols-italic-btn${col.italic ? ' is-active' : ''}`,
-				text: 'I',
-			});
-			italicBtn.addEventListener('click', () => {
-				col.italic = !col.italic;
-				italicBtn.toggleClass('is-active', !!col.italic);
-			});
-
-			if (col.type === 'number') {
-				const autoTimeBtn = toggles.createEl('button', {
-					cls: `wl-btn wl-btn-sm wl-editcol-card-toggle wl-editcols-autotime-btn${col.autoTime ? ' is-active' : ''}`,
-					text: '⏱',
-					attr: { title: 'Auto-populate with remaining watch time from Watchlist' },
-				});
-				autoTimeBtn.addEventListener('click', () => {
-					col.autoTime = !col.autoTime;
-					autoTimeBtn.toggleClass('is-active', !!col.autoTime);
-				});
-			}
-		}
-
-		const delBtn = card.createEl('button', {
-			cls: 'wl-btn wl-btn-sm wl-editcol-card-del',
-			text: '×',
-		});
-		delBtn.title = 'Delete this column';
-		delBtn.addEventListener('click', () => {
-			const hasData = existingRows.some(r => {
-				const val = (r as Record<string, unknown>)[col.id];
-				return val !== undefined && val !== '' && val !== null;
-			});
-			if (hasData) {
-				new ConfirmModal(app, `Delete column "${col.label}"? This will remove all data in this column.`, () => {
-					onDelete(idx);
-				}).open();
-			} else {
-				onDelete(idx);
-			}
-		});
-
-		if (col.type === 'select') {
-			const optsArea = card.createDiv({ cls: 'wl-editcol-card-opts' });
-			const renderOpts = (): void => {
-				optsArea.empty();
-				(col.options ?? []).forEach((opt, oi) => {
-					const optRow = optsArea.createDiv({ cls: 'wl-editcol-card-opt-row' });
-
-					// per-option colour dot — reuses the shared picker + derivation helpers
-					const colorDot = optRow.createEl('button', {
-						cls: 'wl-reading-col-color-dot wl-editcol-opt-color-dot',
-					});
-					colorDot.title = 'Option color';
-					const syncDot = (): void => {
-						const c = col.optionColors?.[col.options?.[oi] ?? ''];
-						if (c) {
-							colorDot.removeClass('is-unset');
-							// colours flow through CSS vars; .is-unset gates whether they apply
-							colorDot.setCssProps({ '--wl-dot-fill': deriveFillColor(c), '--wl-dot-border': deriveBorderColor(c) });
-						} else {
-							colorDot.addClass('is-unset');
-						}
-					};
-					syncDot();
-					colorDot.addEventListener('click', (e) => {
-						e.stopPropagation();
-						const key = col.options?.[oi] ?? '';
-						if (!key) return; // can't colour a blank option
-						openColorPicker({
-							anchor: colorDot,
-							container: listEl,
-							current: col.optionColors?.[key] ?? DEFAULT_FIELD_COLOR,
-							allowCustom: true,
-							onPick: (color) => {
-								if (color === null) {
-									if (col.optionColors) delete col.optionColors[key];
-								} else {
-									if (!col.optionColors) col.optionColors = {};
-									col.optionColors[key] = color;
-								}
-								syncDot();
-							},
-						});
-					});
-
-					const optInput = optRow.createEl('input', {
-						cls: 'wl-modal-input wl-editcol-card-opt-input',
-						attr: { type: 'text', value: opt, placeholder: 'Option' },
-					});
-					let prevVal = opt;
-					optInput.addEventListener('input', () => {
-						if (!col.options) col.options = [];
-						const nextVal = optInput.value;
-						if (nextVal !== prevVal) {
-							// keep any assigned colour attached to the renamed value
-							if (col.optionColors) {
-								const moved = col.optionColors[prevVal];
-								if (moved !== undefined) {
-									if (nextVal) col.optionColors[nextVal] = moved;
-									delete col.optionColors[prevVal];
-								}
-							}
-							// record the rename so row cells can be migrated at save time
-							onOptionRename?.(col.id, prevVal, nextVal);
-						}
-						col.options[oi] = nextVal;
-						prevVal = nextVal;
-					});
-					const delOpt = optRow.createEl('button', {
-						cls: 'wl-btn wl-btn-sm wl-editcol-card-opt-del',
-						text: '×',
-						attr: { title: 'Remove this option' },
-					});
-					delOpt.addEventListener('click', () => {
-						const key = col.options?.[oi];
-						col.options?.splice(oi, 1);
-						if (key && col.optionColors) delete col.optionColors[key];
-						renderOpts();
-					});
-				});
-				const addOpt = optsArea.createEl('button', {
-					cls: 'wl-btn wl-btn-sm wl-editcol-card-opt-add',
-					text: '+ option',
-				});
-				addOpt.addEventListener('click', () => {
-					if (!col.options) col.options = [];
-					col.options.push('');
-					renderOpts();
-				});
-			};
-			renderOpts();
-		}
-	});
-
-	if (onAdd) {
-		const addCard = listEl.createDiv({ cls: 'wl-editcol-card wl-editcol-card-add' });
-		addCard.createDiv({ cls: 'wl-editcol-card-add-label', text: '+ add column' });
-		addCard.addEventListener('click', () => onAdd());
-	}
-}
-
 // EditColumnsModal
 
 class EditColumnsModal extends Modal {
@@ -480,7 +234,6 @@ class EditColumnsModal extends Modal {
 	private onSave: (columns: CustomListColumn[]) => Promise<void>;
 	private cols: CustomListColumn[];
 	private tabColor: string | undefined;
-	private listEl!: HTMLElement;
 	// colId → (original option value → latest value). Applied to row cells on Save only — never live,
 	// so a Cancel can't leak a rename into a later cell-edit save.
 	private optionRenames: Map<string, Map<string, string>> = new Map();
@@ -496,13 +249,7 @@ class EditColumnsModal extends Modal {
 		this.manager = manager;
 		this.onSave = onSave;
 		this.tabColor = list.tabColor;
-		this.cols = list.columns
-			.filter(c => !c.locked)
-			.map(c => ({
-				...c,
-				options: c.options ? [...c.options] : undefined,
-				optionColors: c.optionColors ? { ...c.optionColors } : undefined,
-			}));
+		this.cols = cloneColumns(list.columns.filter(c => !c.locked));
 	}
 
 	onOpen(): void {
@@ -513,19 +260,15 @@ class EditColumnsModal extends Modal {
 	}
 
 	private renderBody(): void {
-		this.contentEl.empty();
-		this.contentEl.addClass('wl-editcols-modal');
-
-		this.renderTabColorRow(this.contentEl);
-
-		this.listEl = this.contentEl.createDiv({ cls: 'wl-editcols-list' });
-		this.renderCols();
-
-		const footer = this.contentEl.createDiv({ cls: 'wl-modal-btn-row wl-editcols-footer' });
-		const cancelBtn = footer.createEl('button', { cls: 'wl-btn', text: 'Cancel' });
-		cancelBtn.addEventListener('click', () => this.close());
-		const saveBtn = footer.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' });
-		saveBtn.addEventListener('click', () => void this.handleSave());
+		renderColumnsEditor(this.contentEl, { cols: this.cols }, {
+			app: this.app,
+			rows: this.list.rows,
+			renderHeader: (parent) => this.renderTabColorRow(parent),
+			newColumnId: (cols) => this.manager.generateColId([...this.list.columns.filter(c => !c.locked), ...cols]),
+			onOptionRename: (colId, oldVal, newVal) => this.recordOptionRename(colId, oldVal, newVal),
+			onSave: (cols) => this.handleSave(cols),
+			onCancel: () => this.close(),
+		});
 	}
 
 	private renderTabColorRow(parent: HTMLElement): void {
@@ -559,33 +302,6 @@ class EditColumnsModal extends Modal {
 		});
 	}
 
-	private renderCols(): void {
-		renderColumnList(
-			this.listEl,
-			this.cols,
-			this.list.rows,
-			this.app,
-			(from, to) => {
-				const [moved] = this.cols.splice(from, 1);
-				this.cols.splice(from < to ? to - 1 : to, 0, moved!);
-				this.renderCols();
-			},
-			(idx) => { this.cols.splice(idx, 1); this.renderBody(); },
-			() => this.renderBody(),
-			() => {
-				this.cols.push({
-					id: this.manager.generateColId([...this.list.columns.filter(c => !c.locked), ...this.cols]),
-					label: '',
-					type: 'text',
-					bold: false,
-					italic: false,
-				});
-				this.renderBody();
-			},
-			(colId, oldVal, newVal) => this.recordOptionRename(colId, oldVal, newVal),
-		);
-	}
-
 	/**
 	 * Accumulates a net (original → latest) rename per option, composing keystrokes so
 	 * "A"→"Ap"→"Apple" collapses to "A"→"Apple".
@@ -617,22 +333,10 @@ class EditColumnsModal extends Modal {
 		}
 	}
 
-	private handleSave(): void {
-		for (const col of this.cols) {
-			if (!col.label.trim()) { new Notice('Column names cannot be empty.'); return; }
-			if (col.type === 'select' && (!col.options || col.options.length === 0)) {
-				new Notice(`Column "${col.label}" must have at least one option.`);
-				return;
-			}
-		}
-		for (const col of this.cols) {
-			col.label = col.label.trim();
-			if (col.options) col.options = col.options.map(o => o.trim()).filter(o => o);
-			normalizeOptionColors(col);
-		}
+	private handleSave(cols: CustomListColumn[]): void {
 		this.applyOptionRenamesToRows();
 		this.list.tabColor = this.tabColor;
-		void this.onSave(this.cols).then(() => this.close());
+		void this.onSave(cols).then(() => this.close());
 	}
 }
 
@@ -642,18 +346,12 @@ export class DefaultColumnsModal extends Modal {
 	private plugin: WatchLogPlugin;
 	private cols: CustomListColumn[];
 	private manager: CustomListManager;
-	private listEl!: HTMLElement;
 
 	constructor(app: App, plugin: WatchLogPlugin) {
 		super(app);
 		this.plugin = plugin;
 		this.manager = new CustomListManager(app, plugin);
-		this.cols = (plugin.settings.defaultCustomColumns ?? [])
-			.map(c => ({
-				...c,
-				options: c.options ? [...c.options] : undefined,
-				optionColors: c.optionColors ? { ...c.optionColors } : undefined,
-			}));
+		this.cols = cloneColumns(plugin.settings.defaultCustomColumns ?? []);
 	}
 
 	onOpen(): void {
@@ -664,64 +362,23 @@ export class DefaultColumnsModal extends Modal {
 	}
 
 	private renderBody(): void {
-		this.contentEl.empty();
-		this.contentEl.addClass('wl-editcols-modal');
-
-		this.contentEl.createDiv({
-			cls: 'wl-settings-info',
-			text: 'These columns are pre-populated when creating a new list. The Name column is always added automatically.',
-		});
-
-		this.listEl = this.contentEl.createDiv({ cls: 'wl-editcols-list' });
-		this.renderCols();
-
-		const footer = this.contentEl.createDiv({ cls: 'wl-modal-btn-row wl-editcols-footer' });
-		const cancelBtn = footer.createEl('button', { cls: 'wl-btn', text: 'Cancel' });
-		cancelBtn.addEventListener('click', () => this.close());
-		const saveBtn = footer.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' });
-		saveBtn.addEventListener('click', () => void this.handleSave());
-	}
-
-	private renderCols(): void {
-		renderColumnList(
-			this.listEl,
-			this.cols,
-			[],
-			this.app,
-			(from, to) => {
-				const [moved] = this.cols.splice(from, 1);
-				this.cols.splice(from < to ? to - 1 : to, 0, moved!);
-				this.renderCols();
-			},
-			(idx) => { this.cols.splice(idx, 1); this.renderBody(); },
-			() => this.renderBody(),
-			() => {
-				this.cols.push({
-					id: this.manager.generateColId(this.cols),
-					label: '',
-					type: 'text',
-					bold: false,
-					italic: false,
+		renderColumnsEditor(this.contentEl, { cols: this.cols }, {
+			app: this.app,
+			rows: [],
+			renderHeader: (parent) => {
+				parent.createDiv({
+					cls: 'wl-settings-info',
+					text: 'These columns are pre-populated when creating a new list. The Name column is always added automatically.',
 				});
-				this.renderBody();
 			},
-		);
+			newColumnId: (cols) => this.manager.generateColId(cols),
+			onSave: (cols) => void this.handleSave(cols),
+			onCancel: () => this.close(),
+		});
 	}
 
-	private async handleSave(): Promise<void> {
-		for (const col of this.cols) {
-			if (!col.label.trim()) { new Notice('Column names cannot be empty.'); return; }
-			if (col.type === 'select' && (!col.options || col.options.length === 0)) {
-				new Notice(`Column "${col.label}" must have at least one option.`);
-				return;
-			}
-		}
-		for (const col of this.cols) {
-			col.label = col.label.trim();
-			if (col.options) col.options = col.options.map(o => o.trim()).filter(o => o);
-			normalizeOptionColors(col);
-		}
-		this.plugin.settings.defaultCustomColumns = this.cols;
+	private async handleSave(cols: CustomListColumn[]): Promise<void> {
+		this.plugin.settings.defaultCustomColumns = cols;
 		await this.plugin.saveSettings();
 		new Notice('Default columns saved.');
 		this.close();
@@ -797,10 +454,10 @@ class NotesModal extends Modal {
 		});
 
 		const footer = contentEl.createDiv({ cls: 'wl-modal-btn-row' });
-		const cancelBtn = footer.createEl('button', { cls: 'wl-btn', text: 'Cancel' });
-		cancelBtn.addEventListener('click', () => this.close());
-		const saveBtn = footer.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' });
-		saveBtn.addEventListener('click', () => void this.onSave(textarea.value).then(() => this.close()));
+		renderCancelSave(footer, {
+			onCancel: () => this.close(),
+			onSave: () => void this.onSave(textarea.value).then(() => this.close()),
+		});
 	}
 
 	onClose(): void { this.previewComponent.unload(); this.contentEl.empty(); }
@@ -1569,6 +1226,32 @@ export class CustomListsTab {
 
 	// Cell rendering
 
+	/**
+	 * Mobile: scrolls the active element into view when the keyboard shrinks the viewport.
+	 * Returns a function that detaches the listener (also registered as cleanup).
+	 */
+	private watchKeyboardScroll(cell: HTMLElement): () => void {
+		const onResize = (): void => {
+			const active = activeDocument.activeElement as HTMLElement | null;
+			if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		};
+		const detach = (): void => {
+			if (window.visualViewport) window.visualViewport.removeEventListener('resize', onResize);
+		};
+		if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
+		this.addCleanup(detach);
+		window.setTimeout(() => cell.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+		return detach;
+	}
+
+	/** Removes the capture-phase Escape guard installed while a name cell is edited. */
+	private releaseEscapeGuard(): void {
+		if (!this._escapeKeyHandler) return;
+		activeDocument.removeEventListener('keydown', this._escapeKeyHandler, true);
+		activeDocument.removeEventListener('keyup', this._escapeKeyHandler, true);
+		this._escapeKeyHandler = null;
+	}
+
 	private renderNameCell(
 		cell: HTMLElement,
 		row: CustomListRow,
@@ -1621,16 +1304,7 @@ export class CustomListsTab {
 			activeDocument.removeEventListener('keyup', escHandler, true);
 		});
 
-		// mobile: scroll the active element into view when the keyboard shrinks the viewport
-		const vpResizeHandler = (): void => {
-			const active = activeDocument.activeElement as HTMLElement | null;
-			if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
-		};
-		if (window.visualViewport) window.visualViewport.addEventListener('resize', vpResizeHandler);
-		this.addCleanup(() => {
-			if (window.visualViewport) window.visualViewport.removeEventListener('resize', vpResizeHandler);
-		});
-		window.setTimeout(() => cell.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+		const stopKeyboardScroll = this.watchKeyboardScroll(cell);
 
 		const wrap = cell.createDiv({ cls: 'wl-cl-autofill-wrap' });
 		const input = wrap.createEl('input', {
@@ -1679,12 +1353,8 @@ export class CustomListsTab {
 		const doSave = async (cancel: boolean): Promise<void> => {
 			if (saved) return;
 			saved = true;
-			if (window.visualViewport) window.visualViewport.removeEventListener('resize', vpResizeHandler);
-			if (this._escapeKeyHandler) {
-    			activeDocument.removeEventListener('keydown', this._escapeKeyHandler, true);
-    			activeDocument.removeEventListener('keyup', this._escapeKeyHandler, true);
-    			this._escapeKeyHandler = null;
-			}
+			stopKeyboardScroll();
+			this.releaseEscapeGuard();
 			clearDropdown();
 			const newVal = input.value.trim();
 			if (!cancel) {
@@ -1701,22 +1371,12 @@ export class CustomListsTab {
 		input.addEventListener('keydown', (e) => {
 			if (dropdown) {
 				const items = Array.from(dropdown.querySelectorAll<HTMLElement>('.wl-result-item'));
-				if (e.key === 'ArrowDown') {
+				if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 					e.preventDefault();
-					focusedSuggestionIdx = Math.min(focusedSuggestionIdx + 1, items.length - 1);
-					items.forEach((item, i) => {
-						if (i === focusedSuggestionIdx) item.addClass('wl-result-item-focused');
-						else item.removeClass('wl-result-item-focused');
-					});
-					return;
-				}
-				if (e.key === 'ArrowUp') {
-					e.preventDefault();
-					focusedSuggestionIdx = Math.max(focusedSuggestionIdx - 1, 0);
-					items.forEach((item, i) => {
-						if (i === focusedSuggestionIdx) item.addClass('wl-result-item-focused');
-						else item.removeClass('wl-result-item-focused');
-					});
+					focusedSuggestionIdx = e.key === 'ArrowDown'
+						? Math.min(focusedSuggestionIdx + 1, items.length - 1)
+						: Math.max(focusedSuggestionIdx - 1, 0);
+					items.forEach((item, i) => item.toggleClass('wl-result-item-focused', i === focusedSuggestionIdx));
 					return;
 				}
 				if (e.key === 'Enter' && focusedSuggestionIdx >= 0) {
@@ -1735,10 +1395,7 @@ export class CustomListsTab {
 				}
 			}
 
-			if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); navDirection = 'shift-tab'; void doSave(false); }
-			else if (e.key === 'Tab') { e.preventDefault(); navDirection = 'tab'; void doSave(false); }
-			else if (e.key === 'Enter') { e.preventDefault(); navDirection = 'enter'; void doSave(false); }
-			else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); void doSave(true); }
+			handleEditKey(e, (nav) => { navDirection = nav; void doSave(false); }, () => void doSave(true));
 		});
 	}
 
@@ -1829,16 +1486,7 @@ export class CustomListsTab {
 		cell.empty();
 		cell.addClass('wl-cl-editing');
 
-		// mobile: scroll the active element into view when the keyboard shrinks the viewport
-		const vpResizeHandler = (): void => {
-			const active = activeDocument.activeElement as HTMLElement | null;
-			if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
-		};
-		if (window.visualViewport) window.visualViewport.addEventListener('resize', vpResizeHandler);
-		this.addCleanup(() => {
-			if (window.visualViewport) window.visualViewport.removeEventListener('resize', vpResizeHandler);
-		});
-		window.setTimeout(() => cell.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+		const stopKeyboardScroll = this.watchKeyboardScroll(cell);
 
 		let getValue: () => string | number | undefined;
 		let saved = false;
@@ -1847,12 +1495,8 @@ export class CustomListsTab {
 		const doSave = async (cancel: boolean): Promise<void> => {
 			if (saved) return;
 			saved = true;
-			if (window.visualViewport) window.visualViewport.removeEventListener('resize', vpResizeHandler);
-			if (this._escapeKeyHandler) {
-    			activeDocument.removeEventListener('keydown', this._escapeKeyHandler, true);
-    			activeDocument.removeEventListener('keyup', this._escapeKeyHandler, true);
-    			this._escapeKeyHandler = null;
-			}
+			stopKeyboardScroll();
+			this.releaseEscapeGuard();
 			cell.removeClass('wl-cl-editing');
 			if (!cancel) {
 				const newVal = getValue();
@@ -1864,37 +1508,20 @@ export class CustomListsTab {
 		};
 
 		// select cells never reach startCustomEdit — they open the shared dropdown (openSelectDropdown)
-		if (col.type === 'number') {
-			const input = cell.createEl('input', {
-				cls: 'wl-cl-cell-input',
-				attr: { type: 'number', value: currentVal !== undefined && currentVal !== null ? String(currentVal) : '' },
-			});
-			getValue = () => { const n = parseFloat(input.value); return isNaN(n) ? '' : n; };
-			input.focus();
-			input.select();
-			input.addEventListener('blur', () => void doSave(false));
-			input.addEventListener('keydown', (e) => {
-				if (e.key === 'Enter') { e.preventDefault(); navDirection = 'enter'; void doSave(false); }
-				else if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); navDirection = 'shift-tab'; void doSave(false); }
-				else if (e.key === 'Tab') { e.preventDefault(); navDirection = 'tab'; void doSave(false); }
-				else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); void doSave(true); }
-			});
-		} else {
-			const input = cell.createEl('input', {
-				cls: 'wl-cl-cell-input',
-				attr: { type: 'text', value: currentVal !== undefined && currentVal !== null ? String(currentVal) : '' },
-			});
-			getValue = () => input.value;
-			input.focus();
-			input.select();
-			input.addEventListener('blur', () => void doSave(false));
-			input.addEventListener('keydown', (e) => {
-				if (e.key === 'Enter') { e.preventDefault(); navDirection = 'enter'; void doSave(false); }
-				else if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); navDirection = 'shift-tab'; void doSave(false); }
-				else if (e.key === 'Tab') { e.preventDefault(); navDirection = 'tab'; void doSave(false); }
-				else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); void doSave(true); }
-			});
-		}
+		const isNumber = col.type === 'number';
+		const input = cell.createEl('input', {
+			cls: 'wl-cl-cell-input',
+			attr: { type: isNumber ? 'number' : 'text', value: currentVal !== undefined && currentVal !== null ? String(currentVal) : '' },
+		});
+		getValue = isNumber
+			? () => { const n = parseFloat(input.value); return isNaN(n) ? '' : n; }
+			: () => input.value;
+		input.focus();
+		input.select();
+		input.addEventListener('blur', () => void doSave(false));
+		input.addEventListener('keydown', (e) => {
+			handleEditKey(e, (nav) => { navDirection = nav; void doSave(false); }, () => void doSave(true));
+		});
 	}
 
 	// Auto-populate time column

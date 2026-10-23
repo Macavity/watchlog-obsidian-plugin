@@ -68,7 +68,7 @@ function parseCompare(raw: string): { op: Comparator; value: number } | null {
  * Splits a raw query into tokens. Unknown `field:` prefixes are NOT treated as fields — "Re:Zero"
  * must stay a plain search, so the prefix only counts when it names a real field.
  */
-export function parseQuery<T>(query: string, fields: SearchFieldSpec<T>[]): Token[] {
+function parseQuery<T>(query: string, fields: SearchFieldSpec<T>[]): Token[] {
 	const canonical = new Map<string, string>();
 	for (const f of fields) {
 		canonical.set(f.name.toLowerCase(), f.name);

@@ -17,6 +17,7 @@ import { TITLE_CACHE_KEYS, decodeTitle, encodeTitle, isMovie, seasonsPending, sp
 import { externalIdFromLink } from './storage/externalId';
 import { decodeBook, decodeManga, encodeAirtime } from './storage/readingCodec';
 import { decodeGame } from './storage/gameCodec';
+import { extractNotes, replaceNotesSection } from './storage/noteBody';
 
 export interface DataStores {
 	index: EntryIndex;
@@ -61,45 +62,12 @@ function scheduleOf(a: EntryAirtime, releaseDate: string | null): AirtimeSchedul
 	return s;
 }
 
-const NOTES_RE = /(^|\n)## Notes[ \t]*\r?\n([\s\S]*?)(?=\n## |\n# |$)/;
-
 /** Minimum gap between two API refreshes of a title's airing pointer, unless forced. */
 /** Retry deadline per outcome of a background API check; a missing key waits until a key changes. */
 const API_CHECK_TTL_MS = { ok: 6 * 3_600_000, transient: 3_600_000, notfound: 7 * 24 * 3_600_000 };
 type ApiCheckKind = 'airing' | 'seasons';
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
-
-/** `## Notes` body of a note; null when the section is absent. */
-function extractNotes(content: string): string | null {
-	const match = content.match(NOTES_RE);
-	if (!match) return null;
-	// strip the template's leading blank line and trailing whitespace, keep internal breaks
-	return (match[2] ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
-}
-
-/**
- * Replaces the `## Notes` body, preserving the heading, every other section, the frontmatter and
- * any prose outside it. Appends the heading when missing (never duplicated). The boundary matches
- * extractNotes, so read-then-write round-trips cleanly.
- */
-function replaceNotesSection(existing: string, notesBody: string): string {
-	const headingMatch = existing.match(/(^|\n)## Notes[ \t]*\r?\n/);
-	if (!headingMatch || headingMatch.index === undefined) {
-		const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
-		return `${existing}${sep}\n## Notes\n\n${notesBody}\n`;
-	}
-	const bodyStart = headingMatch.index + headingMatch[0].length;
-	const after = existing.slice(bodyStart);
-	const nextHeading = after.match(/\n(?:## |# )/);
-	const bodyEnd =
-		nextHeading && nextHeading.index !== undefined
-			? bodyStart + nextHeading.index
-			: existing.length;
-	const before = existing.slice(0, bodyStart);
-	const rest = existing.slice(bodyEnd);
-	return `${before}\n${notesBody}\n${rest}`;
-}
 
 /**
  * Watchlist titles, backed by one note per title. Reads come from the EntryIndex (frontmatter) plus
@@ -155,10 +123,6 @@ export class DataManager {
 		this.local = stores.local;
 		this.shared = stores.shared;
 		this.layout = stores.layout;
-	}
-
-	getLayout(): VaultLayout {
-		return this.layout();
 	}
 
 	/** After index.build(): reads note bodies and follows index/vault changes. */
@@ -502,11 +466,6 @@ export class DataManager {
 		await this.shared.update(settings);
 	}
 
-	/** Centralized debounced save for cross-cutting paths (settings, drafts, lists). */
-	queueSave(): void {
-		this.local.queueSave();
-	}
-
 	flushQueuedSaveSync(): void {
 		void this.local.flush();
 	}
@@ -652,20 +611,6 @@ export class DataManager {
 		}
 	}
 
-	/** Batch-update via mutator. Single notify; notes updated. */
-	async batchUpdate(ids: string[], mutator: (t: WatchLogTitle) => void): Promise<void> {
-		let updated = 0;
-		for (const id of ids) {
-			const t = this.getTitle(id);
-			if (!t) continue;
-			mutator(t);
-			t.dateModified = new Date().toISOString();
-			await this.writeTitle(t);
-			updated++;
-		}
-		if (updated > 0) this.notifyListeners();
-	}
-
 	/** Remove multiple titles in one batch: single notify, notes trashed in chunks of 10. */
 	async removeTitlesBatch(ids: string[]): Promise<void> {
 		const CHUNK_SIZE = 10;
@@ -685,9 +630,6 @@ export class DataManager {
 		today.setHours(0, 0, 0, 0);
 		return release > today;
 	}
-
-	/** Upcoming is derived from "To be released" + releaseDate (see getAirtimeEntries): nothing to add. */
-	async autoAddToUpcoming(_title: WatchLogTitle): Promise<void> {}
 
 	/**
 	 * Reconciles the auto "To be released" status with a release-date edit; Upcoming follows from it.
@@ -1314,17 +1256,6 @@ export class DataManager {
 		return Math.max(0, title.totalEpisodes - this.getTotalSkippedCount(title));
 	}
 
-	/** True when absoluteEpNum falls in any season's skippedEpisodes list. */
-	isEpisodeSkipped(title: WatchLogTitle, absoluteEpNum: number): boolean {
-		for (const season of title.seasons) {
-			const rel = absoluteEpNum - season.offset;
-			if (rel >= 1 && rel <= season.episodes && (season.skippedEpisodes ?? []).includes(rel)) {
-				return true;
-			}
-		}
-		return false;
-	}
-
 	/**
 	 * In-memory toggle of an episode's watched state plus auto-complete. Schedules a debounced save
 	 * and does NOT notify — the caller owns targeted DOM updates. Returns the mutated title.
@@ -1337,31 +1268,33 @@ export class DataManager {
 		const title = this.getTitle(id);
 		if (!title || this.blockedBySeasonRefill(title)) return null;
 
-		if (watched) {
-			if (!title.watchedEpisodes.includes(episodeNumber)) {
-				title.watchedEpisodes.push(episodeNumber);
-				title.watchedEpisodes.sort((a, b) => a - b);
-			}
-			const now = new Date().toISOString();
-			if (title.totalEpisodes > 1) {
-				void this.historyManager?.log(
-					`${title.title} (${title.type}) episode ${episodeNumber} was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
-				);
-			} else {
-				void this.historyManager?.log(
-					`${title.title} (${title.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
-				);
-			}
-		} else {
-			title.watchedEpisodes = title.watchedEpisodes.filter((e) => e !== episodeNumber);
-		}
+		this.toggleEpisode(title, episodeNumber, watched);
+		if (watched) this.logEpisodeWatched(title, episodeNumber);
 
 		title.dateModified = new Date().toISOString();
 		this.applyAutoCompleteRules(title);
 		this.scheduleEpisodeSave(id);
 		return title;
+	}
+
+	private logEpisodeWatched(title: WatchLogTitle, episodeNumber: number): void {
+		const when = formatHistoryDate(new Date().toISOString());
+		const text = title.totalEpisodes > 1
+			? `${title.title} (${title.type}) episode ${episodeNumber} was marked as watched on ${when}`
+			: `${title.title} (${title.type}) was marked as watched on ${when}`;
+		void this.historyManager?.log(text, {
+			source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id,
+		});
+	}
+
+	/** Adds (sorted, deduplicated) or removes one episode in the watched list. */
+	private toggleEpisode(title: WatchLogTitle, episodeNumber: number, watched: boolean): void {
+		if (!watched) {
+			title.watchedEpisodes = title.watchedEpisodes.filter((e) => e !== episodeNumber);
+		} else if (!title.watchedEpisodes.includes(episodeNumber)) {
+			title.watchedEpisodes.push(episodeNumber);
+			title.watchedEpisodes.sort((a, b) => a - b);
+		}
 	}
 
 	/** Shared auto-complete / un-complete rules. Mutates title in place. */
@@ -1406,41 +1339,10 @@ export class DataManager {
 		const title = this.getTitle(id);
 		if (!title || this.blockedBySeasonRefill(title)) return;
 
-		if (watched) {
-			if (!title.watchedEpisodes.includes(episodeNumber)) {
-				title.watchedEpisodes.push(episodeNumber);
-				title.watchedEpisodes.sort((a, b) => a - b);
-			}
-			const now = new Date().toISOString();
-			if (title.totalEpisodes > 1) {
-				void this.historyManager?.log(
-					`${title.title} (${title.type}) episode ${episodeNumber} was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
-				);
-			} else {
-				void this.historyManager?.log(
-					`${title.title} (${title.type}) was marked as watched on ${formatHistoryDate(now)}`,
-					{ source: 'Watchlist', action: 'watched', titleName: title.title, titleId: title.id },
-				);
-			}
-		} else {
-			title.watchedEpisodes = title.watchedEpisodes.filter((e) => e !== episodeNumber);
-		}
+		this.toggleEpisode(title, episodeNumber, watched);
+		if (watched) this.logEpisodeWatched(title, episodeNumber);
 
-		const effectiveTotal = this.getEffectiveTotal(title);
-		if (
-			this.plugin.settings.autoCompleteOnLastEpisode &&
-			effectiveTotal > 0 &&
-			title.watchedEpisodes.length >= effectiveTotal
-		) {
-			title.status = 'Completed';
-			if (this.plugin.settings.setFinishDateAutomatically && !title.dateFinished) {
-				title.dateFinished = todayIso();
-			}
-		} else if (title.status === 'Completed' && title.watchedEpisodes.length < effectiveTotal) {
-			title.status = 'Watching';
-			title.dateFinished = null;
-		}
+		this.applyAutoCompleteRules(title);
 
 		await this.updateTitle(title);
 	}
@@ -1481,20 +1383,7 @@ export class DataManager {
 			}
 		}
 
-		const effectiveTotal = this.getEffectiveTotal(title);
-		if (
-			this.plugin.settings.autoCompleteOnLastEpisode &&
-			effectiveTotal > 0 &&
-			title.watchedEpisodes.length >= effectiveTotal
-		) {
-			title.status = 'Completed';
-			if (this.plugin.settings.setFinishDateAutomatically && !title.dateFinished) {
-				title.dateFinished = todayIso();
-			}
-		} else if (title.status === 'Completed' && title.watchedEpisodes.length < effectiveTotal) {
-			title.status = 'Watching';
-			title.dateFinished = null;
-		}
+		this.applyAutoCompleteRules(title);
 
 		await this.updateTitle(title);
 	}
@@ -1837,16 +1726,6 @@ export class DataManager {
 		return this.getTitles()
 			.sort((a, b) => b.dateAdded.localeCompare(a.dateAdded))
 			.slice(0, count);
-	}
-
-	getStatsByType(type: string): { watched: number; total: number } {
-		const EXCLUDED = ['Dropped', 'To be released'];
-		const all = this.getTitles();
-		const titles = (type === 'All' ? all : all.filter((t) => t.type === type))
-			.filter((t) => !EXCLUDED.includes(t.status));
-		const total = titles.length;
-		const watched = titles.filter((t) => t.status === 'Completed').length;
-		return { watched, total };
 	}
 
 	getCompletedCount(): number {

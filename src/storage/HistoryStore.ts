@@ -3,7 +3,7 @@ import type { HistoryEntry } from '../HistoryManager';
 import { formatHistoryLine, parseHistoryLine, type HistoryLine } from './historyLine';
 import type { VaultLayout } from './VaultLayout';
 
-export const MAX_HISTORY_ENTRIES = 1000;
+const MAX_HISTORY_ENTRIES = 1000;
 const GROUP_CREATED = /^Group "(.+)" was created$/;
 
 /** Entries with a `titleId` link to their note (`[[<id>]]`); everything else is plain text. */

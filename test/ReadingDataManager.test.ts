@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { setupReadingDataManager, makeBook, makeManga, tick } from './helpers/setupReadingDataManager';
+import { setupReadingDataManager, makeBook, makeManga } from './helpers/setupReadingDataManager';
+import { tick } from './helpers/common';
 
 describe('ReadingDataManager on vault storage', () => {
 	it('stores books as notes and columns in the base, not in data.json', async () => {

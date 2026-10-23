@@ -44,7 +44,7 @@ const API_TIMEOUT_MS = 8000;
 
 /** Add-flow search: 9 results per modal page, 3 pages. */
 export const SEARCH_PAGE_SIZE = 9;
-export const SEARCH_MAX_PAGES = 3;
+const SEARCH_MAX_PAGES = 3;
 export const SEARCH_RESULT_LIMIT = SEARCH_PAGE_SIZE * SEARCH_MAX_PAGES;
 /** Fixed upstream page sizes; the fetch loops page until they reach the cap. */
 const TMDB_PAGE_SIZE = 20;
@@ -565,7 +565,7 @@ export function apiErrorShort(err: unknown): string {
 }
 
 /** True when the failure is a rejected credential — the one cause that must never read as "not found". */
-export function isAuthFailure(err: unknown): boolean {
+function isAuthFailure(err: unknown): boolean {
 	return err instanceof ApiError && (err.reason === 'auth' || err.reason === 'not-enabled');
 }
 
@@ -2381,7 +2381,7 @@ export function steamAppIdFromUrl(url: string): string {
  * vaguer returns null rather than a guess, because releaseDate drives the auto
  * "To be released" status.
  */
-export function parseSteamReleaseDate(raw: string): string | null {
+function parseSteamReleaseDate(raw: string): string | null {
 	const text = raw.trim();
 	if (text === '') return null;
 	const parsed = Date.parse(text);

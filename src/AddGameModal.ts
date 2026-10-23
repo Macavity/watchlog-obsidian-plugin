@@ -1,13 +1,27 @@
-import { App, Modal, Notice, setIcon } from 'obsidian';
+import { App, Notice, setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { GameDataManager } from './GameDataManager';
-import { apiErrorMessage, rawgResizedCover, steamAppIdFromUrl, type GameSearchResult } from './ApiService';
+import { rawgResizedCover, steamAppIdFromUrl, type GameSearchResult } from './ApiService';
 import { Game, GameGroup, GAME_AUTO_STATUS } from './types';
 import { renderSearchResultRow } from './SearchThumbnail';
+import { SearchFormModal, type SearchPickerOptions } from './ui/SearchFormModal';
 import { LibraryIndex, gameResultIdKeys } from './LibraryIndex';
 import { renderModePill } from './ModePill';
 import { renderTagChips } from './StatusDropdown';
 import { createDatePicker } from './DatePicker';
+import { blockDuplicate, createDuplicateGuard } from './ui/DuplicateGuard';
+import {
+	linkField,
+	makeCell,
+	makeRow as makeFormRow,
+	nameSelect,
+	releaseDateField,
+	renderGroupPicker,
+	resetForm,
+	textInput,
+	titleField,
+	type GroupPickerState,
+} from './ui/FormCells';
 
 /** Lowercased word tokens of a platform name, split into alpha and numeric. */
 function platformTokens(name: string): { alpha: Set<string>; num: Set<string> } {
@@ -34,22 +48,23 @@ function platformMatches(a: string, b: string): boolean {
 	return true;
 }
 
+/** "2021 · PC, PS5": release year and up to three platforms. */
+function gameResultMeta(result: GameSearchResult): string {
+	const year = result.releaseDate.match(/^(\d{4})/)?.[1] ?? '—';
+	const platforms = result.platforms.slice(0, 3).join(', ') || 'Unknown platforms';
+	return `${year} · ${platforms}`;
+}
+
 /**
  * Add-game modal (the AddTitleModal pattern): API search (RAWG or IGDB per gamesApiSource) with
  * thumbnailed results, an editable form below, platform chips, the mode pill and a store-link
  * button. Works as a plain manual form when no API is configured.
  */
-export class AddGameModal extends Modal {
+export class AddGameModal extends SearchFormModal<GameSearchResult> {
 	private plugin: WatchLogPlugin;
 	private gameData: GameDataManager;
 	private onAdded: () => void;
-
-	private searchQuery = '';
-	private searchResults: GameSearchResult[] = [];
-	private isSearching = false;
-	private searchGeneration = 0;
-	private noApiMessage = '';
-	private searchError = '';
+	private initialQuery = '';
 
 	private fieldTitle = '';
 	private fieldDeveloper = '';
@@ -71,16 +86,10 @@ export class AddGameModal extends Modal {
 	private fieldSingleplayer = false;
 	private fieldCoop = false;
 	private fieldMultiplayer = false;
-	private selectedGroupId = '';
-	private newGroupName = '';
-	private skipDuplicateCheck = false;
-	private duplicateWarningEl: HTMLElement | null = null;
+	private group: GroupPickerState = { selectedGroupId: '', newGroupName: '' };
+	private duplicates = createDuplicateGuard();
 	// built on first search, reused for the modal's life
 	private libIndex: LibraryIndex | null = null;
-
-	private resultsEl: HTMLElement | null = null;
-	private formEl: HTMLElement | null = null;
-	private searchDebounce: number | null = null;
 
 	constructor(
 		app: App,
@@ -89,7 +98,7 @@ export class AddGameModal extends Modal {
 		onAdded: () => void,
 		prefill?: { searchQuery?: string; title?: string },
 	) {
-		super(app);
+		super(app, 'Add game', ['wl-add-modal', 'wl-add-game-modal']);
 		this.plugin = plugin;
 		this.gameData = gameData;
 		this.onAdded = onAdded;
@@ -97,142 +106,43 @@ export class AddGameModal extends Modal {
 		this.fieldGenre = s.types[0]?.name ?? '';
 		this.fieldStatus = s.defaultStatus;
 		// prefill (e.g. from Drafts): seed the search box and title field so the modal opens ready to search
-		if (prefill?.searchQuery) this.searchQuery = prefill.searchQuery;
 		if (prefill?.title) this.fieldTitle = prefill.title;
+		this.initialQuery = prefill?.searchQuery ?? '';
 	}
 
-	onOpen(): void {
-		this.titleEl.setText('Add game');
-		this.contentEl.addClass('wl-add-modal', 'wl-add-game-modal');
-		this.buildUI();
+	protected pickerOptions(): SearchPickerOptions<GameSearchResult> {
+		return { placeholder: 'Search for a game...', grid: true, initialQuery: this.initialQuery };
 	}
 
-	onClose(): void {
-		this.contentEl.empty();
-		if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
-	}
-
-	private buildUI(): void {
-		const content = this.contentEl;
-		content.empty();
-
-		const searchRow = content.createDiv({ cls: 'wl-modal-row' });
-		searchRow.createSpan({ cls: 'wl-modal-label', text: 'Search' });
-		const searchInput = searchRow.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'Search for a game...' },
-		});
-		searchInput.value = this.searchQuery;
-		searchInput.addEventListener('input', () => {
-			this.searchQuery = searchInput.value;
-			if (this.searchDebounce) window.clearTimeout(this.searchDebounce);
-			this.searchDebounce = window.setTimeout(() => void this.performSearch(), 600);
-		});
-		const searchBtn = searchRow.createEl('button', { cls: 'wl-btn', text: 'Search' });
-		searchBtn.addEventListener('click', () => void this.performSearch());
-
-		this.resultsEl = content.createDiv({ cls: 'wl-modal-results wl-results-grid' });
-
-		this.formEl = content.createDiv({ cls: 'wl-modal-form' });
-		this.renderForm();
-
-		// a prefilled search fires immediately — the results are the point of routing a draft here
-		if (this.searchQuery.trim()) void this.performSearch();
-	}
-
-	private async performSearch(): Promise<void> {
-		if (!this.searchQuery.trim()) return;
-		const gen = ++this.searchGeneration;
-		this.isSearching = true;
-		this.renderResults();
-
-		try {
-			const api = this.plugin.apiService;
-			const source = this.plugin.settings.gamesApiSource ?? 'rawg';
-
-			let results: GameSearchResult[] = [];
-			let noApi = '';
-			if (source === 'igdb') {
-				if (!api.hasIgdbCredentials()) {
-					noApi = 'No IGDB credentials configured. Go to Settings → API → Games to set the Twitch Client ID and Secret.';
-				} else {
-					results = await api.searchIgdbGames(this.searchQuery);
-				}
-			} else {
-				if (!api.hasRawgKey()) {
-					noApi = 'No RAWG API key configured. Go to Settings → API → Games to set one up.';
-				} else {
-					results = await api.searchRawgGames(this.searchQuery);
-				}
-			}
-			if (gen !== this.searchGeneration) return; // stale
-			this.noApiMessage = noApi;
-			this.searchError = '';
-			this.searchResults = results;
-		} catch (err) {
-			if (gen !== this.searchGeneration) return;
-			this.searchError = apiErrorMessage(err);
-			this.searchResults = [];
-		} finally {
-			if (gen === this.searchGeneration) {
-				this.isSearching = false;
-				this.renderResults();
-			}
+	protected noApiMessage(): string | null {
+		const api = this.plugin.apiService;
+		if (this.plugin.settings.gamesApiSource === 'igdb') {
+			return api.hasIgdbCredentials()
+				? null
+				: 'No IGDB credentials configured. Go to Settings → API → Games to set the Twitch Client ID and Secret.';
 		}
+		return api.hasRawgKey() ? null : 'No RAWG API key configured. Go to Settings → API → Games to set one up.';
 	}
 
-	private renderResults(): void {
-		if (!this.resultsEl) return;
-		this.resultsEl.empty();
+	protected search(query: string): Promise<GameSearchResult[]> {
+		const api = this.plugin.apiService;
+		return this.plugin.settings.gamesApiSource === 'igdb' ? api.searchIgdbGames(query) : api.searchRawgGames(query);
+	}
 
-		if (this.isSearching) {
-			this.resultsEl.createDiv({ cls: 'wl-modal-loading', text: 'Searching...' });
-			return;
-		}
-
-		if (this.noApiMessage) {
-			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api' });
-			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: 'ℹ' });
-			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.noApiMessage });
-			return;
-		}
-
-		if (this.searchError) {
-			const msg = this.resultsEl.createDiv({ cls: 'wl-modal-no-api wl-modal-api-error' });
-			msg.createSpan({ cls: 'wl-modal-no-api-icon', text: '⚠' });
-			msg.createSpan({ cls: 'wl-modal-no-api-text', text: this.searchError });
-			return;
-		}
-
-		if (this.searchResults.length === 0) return;
-
+	protected renderResult(host: HTMLElement, result: GameSearchResult, select: (itemEl: HTMLElement) => void): HTMLElement {
 		if (!this.libIndex) this.libIndex = LibraryIndex.build(this.plugin, ['games']);
-		const libIndex = this.libIndex;
-
-		for (const result of this.searchResults) {
-			const year = result.releaseDate.match(/^(\d{4})/)?.[1] ?? '—';
-			const platforms = result.platforms.slice(0, 3).join(', ') || 'Unknown platforms';
-			renderSearchResultRow(this.resultsEl, {
-				// card covers are full-width now, so request a sharper 600px rendition
-				thumbUrl: rawgResizedCover(result.coverUrl, 600),
-				fallbackIcon: '🎮',
-				title: result.title,
-				meta: `${year} · ${platforms}`,
-				inLibrary: libIndex.lookup(gameResultIdKeys(result), result.title),
-				onClick: (itemEl) => void this.selectResult(result, itemEl),
-			});
-		}
+		return renderSearchResultRow(host, {
+			// card covers are full-width now, so request a sharper 600px rendition
+			thumbUrl: rawgResizedCover(result.coverUrl, 600),
+			fallbackIcon: '🎮',
+			title: result.title,
+			meta: gameResultMeta(result),
+			inLibrary: this.libIndex.lookup(gameResultIdKeys(result), result.title),
+			onClick: select,
+		});
 	}
 
-	private async selectResult(result: GameSearchResult, itemEl: HTMLElement): Promise<void> {
-		if (this.resultsEl) {
-			for (const child of Array.from(this.resultsEl.children)) {
-				child.removeClass('is-selected');
-			}
-		}
-		itemEl.addClass('is-selected');
-
-		const gen = ++this.searchGeneration;
+	protected async selectResult(result: GameSearchResult, isCurrent: () => boolean): Promise<void> {
 		const api = this.plugin.apiService;
 		// remember the origin even if the detail fetch fails — the search row identifies the game well
 		// enough to re-fetch its cover later
@@ -242,7 +152,7 @@ export class AddGameModal extends Modal {
 			const full = result.source === 'igdb'
 				? await api.getIgdbGameDetails(result.id)
 				: await api.getRawgGameDetails(result.id);
-			if (gen !== this.searchGeneration) return;
+			if (!isCurrent()) return;
 			if (full) {
 				this.fieldTitle = full.title;
 				this.fieldDeveloper = full.developer;
@@ -276,78 +186,38 @@ export class AddGameModal extends Modal {
 			.map((own) => own.name);
 	}
 
-	private renderForm(): void {
-		if (!this.formEl) return;
-		this.formEl.empty();
+	protected renderForm(): void {
+		const form = resetForm(this.formEl);
+		if (!form) return;
+		const makeRow = (label: string): HTMLElement => makeFormRow(form, label);
 
-		const makeRow = (label: string): HTMLElement => {
-			const row = this.formEl!.createDiv({ cls: 'wl-modal-row' });
-			row.createSpan({ cls: 'wl-modal-label', text: label });
-			return row;
-		};
+		titleField(form, this.fieldTitle, 'Game title', (v) => { this.fieldTitle = v; });
 
-		const makeCell = (row: HTMLElement, label: string, right = false): HTMLElement => {
-			const cell = row.createDiv({
-				cls: right ? 'wl-modal-pair-cell wl-modal-pair-cell-right' : 'wl-modal-pair-cell',
-			});
-			cell.createSpan({ cls: 'wl-modal-label', text: label });
-			return cell;
-		};
-
-		const titleRow = makeRow('Title');
-		const titleInput = titleRow.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'Game title' },
+		const devPubRow = form.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
+		textInput(makeCell(devPubRow, 'Developer'), {
+			value: this.fieldDeveloper,
+			placeholder: 'Developer',
+			onInput: (v) => { this.fieldDeveloper = v; },
 		});
-		titleInput.value = this.fieldTitle;
-		titleInput.addEventListener('input', () => { this.fieldTitle = titleInput.value; });
-
-		const devPubRow = this.formEl.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
-		const devCell = makeCell(devPubRow, 'Developer');
-		const devInput = devCell.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'Developer' },
+		textInput(makeCell(devPubRow, 'Publisher', true), {
+			value: this.fieldPublisher,
+			placeholder: 'Publisher',
+			onInput: (v) => { this.fieldPublisher = v; },
 		});
-		devInput.value = this.fieldDeveloper;
-		devInput.addEventListener('input', () => { this.fieldDeveloper = devInput.value; });
-
-		const pubCell = makeCell(devPubRow, 'Publisher', true);
-		const pubInput = pubCell.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'Publisher' },
-		});
-		pubInput.value = this.fieldPublisher;
-		pubInput.addEventListener('input', () => { this.fieldPublisher = pubInput.value; });
 
 		const settings = this.gameData.getSettings();
-		const genrePriRow = this.formEl.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
-		const genreCell = makeCell(genrePriRow, 'Genre');
-		const genreSelect = genreCell.createEl('select', { cls: 'wl-select' });
-		for (const t of settings.types) {
-			const opt = genreSelect.createEl('option', { text: t.name, value: t.name });
-			if (t.name === this.fieldGenre) opt.selected = true;
-		}
-		genreSelect.addEventListener('change', () => { this.fieldGenre = genreSelect.value; });
-
-		const priCell = makeCell(genrePriRow, 'Priority', true);
-		const priSelect = priCell.createEl('select', { cls: 'wl-select' });
-		priSelect.createEl('option', { text: '— none —', value: '' });
-		for (const p of this.plugin.settings.priorities) {
-			const opt = priSelect.createEl('option', { text: p.name, value: p.name });
-			if (p.name === this.fieldPriority) opt.selected = true;
-		}
-		priSelect.addEventListener('change', () => { this.fieldPriority = priSelect.value; });
+		const genrePriRow = form.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
+		nameSelect(makeCell(genrePriRow, 'Genre'), settings.types.map((t) => t.name), this.fieldGenre,
+			(v) => { this.fieldGenre = v; });
+		nameSelect(makeCell(genrePriRow, 'Priority', true), this.plugin.settings.priorities.map((p) => p.name),
+			this.fieldPriority, (v) => { this.fieldPriority = v; }, true);
 
 		// status + date started paired 50/50 (the auto "To be released" is excluded — it follows the
 		// release date)
-		const statusStartRow = this.formEl.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
-		const statusCell = makeCell(statusStartRow, 'Status');
-		const statusSelect = statusCell.createEl('select', { cls: 'wl-select' });
-		for (const s of settings.statuses.filter((s) => s.name !== GAME_AUTO_STATUS)) {
-			const opt = statusSelect.createEl('option', { text: s.name, value: s.name });
-			if (s.name === this.fieldStatus) opt.selected = true;
-		}
-		statusSelect.addEventListener('change', () => { this.fieldStatus = statusSelect.value; });
+		const statusStartRow = form.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
+		const statuses = settings.statuses.filter((s) => s.name !== GAME_AUTO_STATUS);
+		nameSelect(makeCell(statusStartRow, 'Status'), statuses.map((s) => s.name), this.fieldStatus,
+			(v) => { this.fieldStatus = v; });
 
 		const startCell = makeCell(statusStartRow, 'Date started', true);
 		createDatePicker({
@@ -357,16 +227,7 @@ export class AddGameModal extends Modal {
 			onChange: (iso) => { this.fieldDateStarted = iso ?? ''; },
 		});
 
-		// the picker refuses to commit unparsable text, so the field can't store a raw non-ISO string
-		const relRow = makeRow('Release date');
-		const relStack = relRow.createDiv({ cls: 'wl-modal-input-stack' });
-		createDatePicker({
-			parent: relStack,
-			inputCls: 'wl-modal-input',
-			value: this.fieldReleaseDate || null,
-			lenient: true,
-			onChange: (iso) => { this.fieldReleaseDate = iso ?? ''; },
-		});
+		releaseDateField(form, this.fieldReleaseDate, (v) => { this.fieldReleaseDate = v; });
 
 		const storeRow = makeRow('Store link');
 		const storeInput = storeRow.createEl('input', {
@@ -392,21 +253,14 @@ export class AddGameModal extends Modal {
 			if (url) window.open(url, '_blank');
 		});
 
-		const linkRow = makeRow('External link');
-		const linkInput = linkRow.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'url', placeholder: 'https://example.com' },
-		});
-		linkInput.value = this.fieldLink;
-		linkInput.addEventListener('input', () => { this.fieldLink = linkInput.value; });
+		linkField(form, this.fieldLink, 'https://example.com', (v) => { this.fieldLink = v; });
 
-		const coverRow = makeRow('Cover URL');
-		const coverInput = coverRow.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'url', placeholder: 'https://…' },
+		textInput(makeRow('Cover URL'), {
+			value: this.fieldCoverUrl,
+			type: 'url',
+			placeholder: 'https://…',
+			onInput: (v) => { this.fieldCoverUrl = v; },
 		});
-		coverInput.value = this.fieldCoverUrl;
-		coverInput.addEventListener('input', () => { this.fieldCoverUrl = coverInput.value; });
 
 		const modesRow = makeRow('Modes');
 		renderModePill(
@@ -432,71 +286,12 @@ export class AddGameModal extends Modal {
 			onToggle: (sel) => { this.fieldPlatforms = sel; },
 		});
 
-		// group fields (mutually exclusive — the AddTitleModal pattern)
-		const groups = this.gameData.getGroups();
-		const addToGroupRow = makeRow('Add to group');
-		const groupSelect = addToGroupRow.createEl('select', { cls: 'wl-select' });
-		groupSelect.createEl('option', { text: '— none —', value: '' });
-		for (const g of groups) {
-			const opt = groupSelect.createEl('option', { text: g.name, value: g.id });
-			if (g.id === this.selectedGroupId) opt.selected = true;
-		}
+		// group fields (mutually exclusive, the AddTitleModal pattern)
+		renderGroupPicker(form, this.gameData.getGroups(), this.group);
 
-		const newGroupRow = makeRow('Or create new group');
-		const newGroupInput = newGroupRow.createEl('input', {
-			cls: 'wl-modal-input',
-			attr: { type: 'text', placeholder: 'New group name...' },
-		});
-		newGroupInput.value = this.newGroupName;
-
-		groupSelect.addEventListener('change', () => {
-			this.selectedGroupId = groupSelect.value;
-			if (this.selectedGroupId) {
-				this.newGroupName = '';
-				newGroupInput.value = '';
-				newGroupInput.disabled = true;
-			} else {
-				newGroupInput.disabled = false;
-			}
-		});
-
-		newGroupInput.addEventListener('input', () => {
-			this.newGroupName = newGroupInput.value;
-			if (this.newGroupName.trim()) {
-				this.selectedGroupId = '';
-				groupSelect.value = '';
-				groupSelect.disabled = true;
-			} else {
-				groupSelect.disabled = false;
-			}
-		});
-
-		if (this.selectedGroupId) newGroupInput.disabled = true;
-		if (this.newGroupName.trim()) groupSelect.disabled = true;
-
-		const btnRow = this.formEl.createDiv({ cls: 'wl-modal-btn-row' });
+		const btnRow = form.createDiv({ cls: 'wl-modal-btn-row' });
 		const addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add to games' });
 		addBtn.addEventListener('click', () => void this.addGame());
-	}
-
-	private showDuplicateWarning(titleName: string, btnRow: HTMLElement): void {
-		if (this.duplicateWarningEl) return;
-		const warn = btnRow.createDiv({ cls: 'wl-duplicate-warning' });
-		this.duplicateWarningEl = warn;
-		warn.createSpan({ text: `"${titleName}" already exists. Add anyway?` });
-		const continueBtn = warn.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Continue' });
-		const cancelBtn = warn.createEl('button', { cls: 'wl-btn', text: 'Cancel' });
-		continueBtn.addEventListener('click', () => {
-			this.skipDuplicateCheck = true;
-			warn.remove();
-			this.duplicateWarningEl = null;
-			void this.addGame();
-		});
-		cancelBtn.addEventListener('click', () => {
-			warn.remove();
-			this.duplicateWarningEl = null;
-			this.skipDuplicateCheck = false;
-		});
 	}
 
 	private async addGame(): Promise<void> {
@@ -506,17 +301,16 @@ export class AddGameModal extends Modal {
 			return;
 		}
 
-		if (!this.skipDuplicateCheck) {
-			const duplicate = this.gameData.getGames().find(
-				(g) => g.title.toLowerCase() === titleName.toLowerCase(),
-			);
-			if (duplicate) {
-				const btnRow = this.contentEl.querySelector<HTMLElement>('.wl-modal-btn-row');
-				if (btnRow) this.showDuplicateWarning(titleName, btnRow);
-				return;
-			}
-		}
-		this.skipDuplicateCheck = false;
+		const isDuplicate = this.gameData.getGames().some(
+			(g) => g.title.toLowerCase() === titleName.toLowerCase(),
+		);
+		const blocked = blockDuplicate(this.contentEl, this.duplicates, {
+			name: titleName,
+			isDuplicate,
+			verb: 'Add',
+			retry: () => void this.addGame(),
+		});
+		if (blocked) return;
 
 		const now = new Date().toISOString();
 		const game: Game = {
@@ -557,10 +351,10 @@ export class AddGameModal extends Modal {
 
 		await this.gameData.addGame(game);
 
-		if (this.selectedGroupId) {
-			await this.gameData.addGameToGroup(this.selectedGroupId, game.id);
-		} else if (this.newGroupName.trim()) {
-			const name = this.newGroupName.trim();
+		if (this.group.selectedGroupId) {
+			await this.gameData.addGameToGroup(this.group.selectedGroupId, game.id);
+		} else if (this.group.newGroupName.trim()) {
+			const name = this.group.newGroupName.trim();
 			const group: GameGroup = {
 				id: this.gameData.generateGroupId(name),
 				name,

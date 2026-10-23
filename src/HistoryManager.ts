@@ -75,11 +75,6 @@ export class HistoryManager {
 		this.listeners.forEach((cb) => cb());
 	}
 
-	/** Re-read after an external change. */
-	async adoptExternalChange(): Promise<void> {
-		await this.load();
-	}
-
 	onChange(cb: () => void): void {
 		this.listeners.push(cb);
 	}

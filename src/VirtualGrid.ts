@@ -24,7 +24,7 @@ const OVERSCAN_ROWS = 2;
  * step down). Spaced ~15% apart so each step reliably changes the column count — cards stretch to
  * fill their column, so a smaller nudge would often change nothing.
  */
-export const CARD_SIZE_WIDTHS = [100, 120, 140, 160, 185, 215, 250] as const;
+const CARD_SIZE_WIDTHS = [100, 120, 140, 160, 185, 215, 250] as const;
 
 /** Resolve a stored card-size step (may be missing/out-of-range) to its minimum card width. */
 export function cardSizeToMinWidth(step: number | undefined): number {
