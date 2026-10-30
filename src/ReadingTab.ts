@@ -218,12 +218,13 @@ export class ReadingTab {
 	private renderToolbar(): void {
 		const toolbar = this.container.createDiv({ cls: 'wl-reading-toolbar' });
 
-		// on mobile the search input and the action buttons crossfade inside one slot behind a chevron
+		// on mobile the search input and the action buttons crossfade inside one slot behind a toggle
 		// (shared with the Watchlist toolbar); desktop renders both inline
 		renderToolbarWithMobileToggle({
 			controls: toolbar,
 			renderSearch: (parent) => this.renderReadingSearch(parent),
 			renderActions: (parent) => this.renderReadingActions(parent),
+			renderAdd: (parent) => this.renderReadingAddButton(parent),
 			expanded: this.toolbarExpanded,
 			onToggleChange: (expanded) => { this.toolbarExpanded = expanded; },
 		});
@@ -365,12 +366,15 @@ export class ReadingTab {
 			text: '⚙',
 		});
 		manageBtn.addEventListener('click', () => this.openManageColumns());
+	}
 
-		const addBtn = right.createEl('button', {
+	private renderReadingAddButton(parent: HTMLElement): HTMLButtonElement {
+		const addBtn = parent.createEl('button', {
 			cls: 'wl-reading-add-btn wl-btn-success',
 			text: this.activeSubTab === 'books' ? '+ Add book' : '+ Add manga',
 		});
 		addBtn.addEventListener('click', () => this.openAddModal());
+		return addBtn;
 	}
 
 	private renderSelectionActionBar(parent: HTMLElement): void {
