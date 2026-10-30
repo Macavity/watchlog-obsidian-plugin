@@ -3,6 +3,13 @@
 All notable changes to WatchLog Sync are documented here. Versions up to 3.1.2 are the upstream
 [WatchLog](https://github.com/Shynkro/watchlog-obsidian-plugin) by BogdanS.
 
+## [4.1.0] - 2026-10-30
+
+##### Changed
+
+* Mobile and tablet toolbar (Watchlist, Reading, Games): the add button is always visible as a `+` icon next to the toggle instead of hiding behind it.
+* The toolbar toggle shows a filter icon (and a search icon when expanded) instead of a chevron, so it is clear that filters, sorting and selection live there.
+
 ## [4.0.0] - 2026-10-23
 
 Fork as **WatchLog Sync** (plugin id `watchlog-sync`).

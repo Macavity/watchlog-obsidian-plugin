@@ -1,6 +1,6 @@
 {
 	"name": "watchlog-sync-plugin",
-	"version": "4.0.0",
+	"version": "4.1.0",
 	"description": "Track anime, movies, TV shows, books, manga and games as notes in your vault, synced across devices. Fork of WatchLog by BogdanS.",
 	"main": "main.js",
 	"type": "module",
