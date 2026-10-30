@@ -3567,6 +3567,22 @@ button.wl-api-action-btn {
   padding: 0;
 }
 
+/* Mobile: icon-only add button between the slot and the toggle, always visible.
+   `.wl-view button` outranks the per-tab add padding and the narrow-screen toolbar rule. */
+.wl-view button.wl-toolbar-add-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
+.wl-header-controls > .wl-add-btn-wrap {
+  flex-shrink: 0;
+}
+
 /* Active (selected) state for the selection mode toggle button */
 .wl-btn.is-active {
   background: var(--interactive-accent);
@@ -11309,6 +11325,7 @@ body.is-tablet button.wl-reading-col-color-dot,
 body.is-tablet button.wl-reading-col-palette-swatch,
 body.is-tablet button.wl-search-clear,
 body.is-tablet button.wl-search-help-btn,
+body.is-tablet button.wl-toolbar-add-btn,
 body.is-tablet button.wl-toolbar-toggle-btn,
 body.is-tablet .wl-game-modal-actions button.wl-store-btn {
   padding: 0;
