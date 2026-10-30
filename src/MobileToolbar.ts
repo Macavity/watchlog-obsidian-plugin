@@ -49,9 +49,9 @@ export function renderToolbarWithMobileToggle(options: MobileToolbarOptions): vo
 	};
 	applyState();
 
-	// icon-only add button; its text label moves to the accessible name
+	// icon-only add button; its text label (minus the "+" glyph) moves to the accessible name
 	const addBtn = renderAdd(controls);
-	const addLabel = addBtn.textContent ?? '';
+	const addLabel = (addBtn.textContent ?? '').replace(/^\+\s*/, '');
 	setIcon(addBtn, 'plus');
 	addBtn.setAttr('aria-label', addLabel);
 	addBtn.addClass('wl-toolbar-add-btn');
@@ -60,6 +60,7 @@ export function renderToolbarWithMobileToggle(options: MobileToolbarOptions): vo
 	const applyIcon = (): void => {
 		setIcon(toggleBtn, expanded ? 'search' : 'sliders-horizontal');
 		toggleBtn.setAttr('aria-label', expanded ? 'Show search' : 'Show filters and actions');
+		toggleBtn.setAttr('aria-expanded', String(expanded));
 	};
 	applyIcon();
 	toggleBtn.addEventListener('click', () => {

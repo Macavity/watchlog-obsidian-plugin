@@ -34,7 +34,7 @@ describe('renderToolbarWithMobileToggle', () => {
 			.toEqual(['wl-toolbar-slot', 'add', 'wl-btn']);
 		expect(controls.find('wl-toolbar-slot')!.find('wl-add-btn')).toBeUndefined();
 		expect(addBtn.has('wl-toolbar-add-btn')).toBe(true);
-		expect(addBtn.attr['aria-label']).toBe('+ add');
+		expect(addBtn.attr['aria-label']).toBe('add');
 		expect(addBtn.attr['data-icon']).toBe('plus');
 	});
 
@@ -46,6 +46,7 @@ describe('renderToolbarWithMobileToggle', () => {
 		toggle.fire('click');
 		expect(toggle.attr['data-icon']).toBe('search');
 		expect(toggle.attr['aria-label']).toBe('Show search');
+		expect(toggle.attr['aria-expanded']).toBe('true');
 		expect(onToggleChange).toHaveBeenCalledWith(true);
 	});
 
