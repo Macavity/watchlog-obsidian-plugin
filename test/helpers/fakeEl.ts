@@ -29,6 +29,10 @@ export interface FakeDom {
 	empty(): void;
 	addClass(...cs: string[]): void;
 	removeClass(c: string): void;
+	toggleClass(c: string, on: boolean): void;
+	setAttr(k: string, v: string): void;
+	setAttribute(k: string, v: string): void;
+	readonly textContent: string;
 	scrollTo(): void;
 	querySelector(selector: string): El | null;
 }
@@ -91,6 +95,10 @@ export class El implements FakeDom {
 	empty(): void { for (const c of this.children) c.parent = null; this.children = []; }
 	addClass(...cs: string[]): void { for (const c of cs) this.classes.add(c); }
 	removeClass(c: string): void { this.classes.delete(c); }
+	toggleClass(c: string, on: boolean): void { if (on) this.classes.add(c); else this.classes.delete(c); }
+	setAttr(k: string, v: string): void { this.attr[k] = v; }
+	setAttribute(k: string, v: string): void { this.attr[k] = v; }
+	get textContent(): string { return this.text; }
 	scrollTo(): void { this.scrolled = true; }
 	has(c: string): boolean { return this.classes.has(c); }
 	find(c: string): El | undefined {

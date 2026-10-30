@@ -11,11 +11,11 @@ import { inferHistoryAction, inferHistorySource } from './HistoryManager';
 import { AddTitleModal } from './AddTitleModal';
 import { AddFromUrlModal } from './AddFromUrlModal';
 import { AddTitleChoiceModal } from './AddTitleChoiceModal';
-import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown, renderViewDropdown, type SortFields } from './ui/TabToolbar';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderSortingDropdown, renderViewDropdown, type SortFields } from './ui/TabToolbar';
 import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
 import { renderGroupCard } from './ui/GroupCard';
 import { PRIORITY_ORDER, pickRandom, compareUnsetLast, comparePriority, isRecentlyReleased } from './ui/TabHelpers';
-import { renderToolbarWithMobileToggle } from './MobileToolbar';
+import { renderHeaderToolbar } from './MobileToolbar';
 import { EditTitleModal } from './EditTitleModal';
 import { ConfirmModal } from './ConfirmModal';
 import { TitleDetailModal, GroupDetailModal, renderCreditsRows, renderCreditsRefreshButton } from './TitleDetailModal';
@@ -967,17 +967,14 @@ export class ListTab {
 			cancelBtn.addEventListener('click', () => cancel());
 		}
 
-		const controls = header.createDiv({ cls: 'wl-header-controls' });
-
-		renderToolbarWithMobileToggle({
-			controls,
+		renderHeaderToolbar(header, {
 			renderSearch: (parent) => this.renderSearch(parent),
-			renderActions: (parent) => {
-				// display: contents — children stay in the flex row, buttons rebuild in isolation
-				const wrap = parent.createDiv({ cls: 'wl-toolbar-actions' });
+			renderActions: (wrap) => {
 				this.toolbarActionsEl = wrap;
 				this.renderToolbarActions(wrap);
 			},
+			// add button, far right — opens the chooser modal
+			onAdd: () => this.openAddTitleChooser(),
 			expanded: this.toolbarExpanded,
 			onToggleChange: (expanded) => { this.toolbarExpanded = expanded; },
 		});
@@ -1100,9 +1097,6 @@ export class ListTab {
 		const rightGroup = controls.createDiv({ cls: 'wl-header-controls-right' });
 
 		this.renderViewDropdown(rightGroup);
-
-		// add button, far right — opens the chooser modal
-		renderAddButton(rightGroup, () => this.openAddTitleChooser());
 	}
 
 	private openAddTitleChooser(): void {

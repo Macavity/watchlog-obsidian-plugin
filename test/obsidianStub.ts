@@ -53,3 +53,10 @@ export class Modal {
 }
 
 export const Platform = { isMobile: false, isDesktop: true };
+
+/** Records the icon name as `data-icon` so tests can assert which icon was set. */
+export function setIcon(el: El, icon: string): void {
+	el.empty();
+	el.text = '';
+	el.attr['data-icon'] = icon;
+}

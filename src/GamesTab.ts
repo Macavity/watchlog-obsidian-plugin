@@ -14,11 +14,11 @@ import { VirtualScroller } from './VirtualScroller';
 import { LazyCardObserver } from './LazyCardObserver';
 import { buildPosterCard, POSTER_CARD_TEXT_H } from './PosterCard';
 import { renderShelf, renderShelfTitle, type ShelfSelect } from './RowsView';
-import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderAddButton, renderSortingDropdown, type SortFields } from './ui/TabToolbar';
+import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderSortingDropdown, type SortFields } from './ui/TabToolbar';
 import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
 import { renderGroupCard } from './ui/GroupCard';
 import { PRIORITY_ORDER, pickRandom, compareUnsetLast, comparePriority, isRecentlyReleased } from './ui/TabHelpers';
-import { renderToolbarWithMobileToggle } from './MobileToolbar';
+import { renderHeaderToolbar } from './MobileToolbar';
 import { rawgResizedCover } from './ApiService';
 import { resolveGameCover, type GameCover } from './coverRefresh';
 import { renderFiltersDropdown, buildFilterSections, buildRatingOpts } from './ui/TabFilters';
@@ -511,18 +511,16 @@ export class GamesTab {
 		this.container.addClass('wl-games-tab');
 
 		// header — the Watchlist toolbar structure (search + action buttons, crossfading behind a
-		// chevron on mobile)
+		// toggle on mobile)
 		const header = this.container.createDiv({ cls: 'wl-list-header' });
-		const controls = header.createDiv({ cls: 'wl-header-controls' });
-		renderToolbarWithMobileToggle({
-			controls,
+		renderHeaderToolbar(header, {
 			renderSearch: (parent) => this.renderSearch(parent),
-			renderActions: (parent) => {
-				// display: contents — children stay in the flex row, buttons rebuild in isolation
-				const wrap = parent.createDiv({ cls: 'wl-toolbar-actions' });
+			renderActions: (wrap) => {
 				this.toolbarActionsEl = wrap;
 				this.renderToolbarActions(wrap);
 			},
+			// add button, far right on the toolbar row
+			onAdd: () => this.openAddPrompt(),
 			expanded: this.toolbarExpanded,
 			onToggleChange: (expanded) => { this.toolbarExpanded = expanded; },
 		});
@@ -949,10 +947,6 @@ export class GamesTab {
 				onToggleMode: () => this.setSelectionMode(!this.selectionMode),
 			},
 		});
-
-		// add button, far right on the toolbar row
-		const rightGroup = controls.createDiv({ cls: 'wl-header-controls-right' });
-		renderAddButton(rightGroup, () => this.openAddPrompt());
 	}
 
 	private renderFiltersDropdown(parent: HTMLElement): void {
