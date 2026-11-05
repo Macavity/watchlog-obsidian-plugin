@@ -9291,8 +9291,9 @@ input.wl-settings-count-input {
   flex-shrink: 0;
 }
 
-/* the modal is a capped flex column; a scroll container's auto min-height is 0, so this panel got
-   squashed instead of keeping its 400px. Don't shrink: let the modal scroll, like the other add modals */
+/* the add modals are capped flex columns (on phones too); a scroll container's auto min-height is 0,
+   so the results panel got squashed instead of keeping its 400px. Don't shrink: let the modal scroll */
+.wl-add-modal > .wl-modal-results,
 .wl-reading-modal > .wl-modal-results {
   flex-shrink: 0;
 }
