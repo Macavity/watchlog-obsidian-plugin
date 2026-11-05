@@ -71,7 +71,7 @@ this.addCommand({
 In this repo `data.json` is not a plain settings object: it also holds the schema version, API cache, drafts and UI state. Never call `this.saveData(this.settings)` directly; that replaces the record, and `LocalStore.load()` treats it as empty on the next start. Change a setting, then call the plugin's `saveSettings()` (`src/main.ts`), which splits local and shared keys (`src/settingsSplit.ts`) and writes through `LocalStore` and `SharedConfigStore`.
 
 ```ts
-this.plugin.settings.enabled = value;
+this.plugin.settings.autoCompleteOnLastEpisode = value;
 await this.plugin.saveSettings();
 ```
 
