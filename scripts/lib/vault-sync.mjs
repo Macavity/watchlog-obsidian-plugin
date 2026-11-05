@@ -1,6 +1,6 @@
 // Mirrors the versioned fixtures of one checkout into the registered test vault, keeping Obsidian's local state.
 import { cpSync, existsSync, readdirSync, realpathSync, rmSync } from "node:fs";
-import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 
 /** Paths inside the vault that belong to the running Obsidian, never to the fixtures (mirrors .gitignore). */
 function isLocalState(rel) {
@@ -22,22 +22,14 @@ function removeStale(vault) {
 	}
 }
 
-/** True when `child` lies below `parent`. */
-function isInside(child, parent) {
-	const rel = relative(parent, child);
-	return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
-}
-
 /** Makes `vault` contain exactly the files of `fixtures`, except local state. Both must be a `watchlog-test-vault` directory. */
 export function syncVault(fixtures, vault) {
 	for (const dir of [fixtures, vault]) {
 		if (basename(dir) !== "watchlog-test-vault") throw new Error(`refusing to sync ${dir}: not a watchlog-test-vault directory`);
 		if (!existsSync(dir)) throw new Error(`${dir} does not exist`);
 	}
-	// the same directory on both sides, or one inside the other, would delete the fixtures before copying them
-	const [from, to] = [realpathSync(fixtures), realpathSync(vault)];
-	if (from === to) return;
-	if (isInside(from, to) || isInside(to, from)) throw new Error(`refusing to sync: ${fixtures} and ${vault} are nested`);
+	// the same directory on both sides would delete the fixtures before copying them
+	if (realpathSync(fixtures) === realpathSync(vault)) return;
 	removeStale(vault);
 	cpSync(fixtures, vault, { recursive: true, filter: (src) => !isLocalState(relative(fixtures, src)) });
 }
