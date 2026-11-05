@@ -23,6 +23,7 @@ describe('settings split', () => {
 		const settings = composeSettings(local.data.settings, shared.get().settings);
 		settings.tmdbApiKey = 'SECRET';
 		settings.jikanBaseUrl = 'https://jikan.example.org/v4';
+		settings.jikanPassword = 'NASPW';
 		settings.statuses = [{ name: 'Rewatch', color: '#123456' }];
 		await persistSettings(settings, local, shared);
 		await local.flush();
@@ -31,6 +32,8 @@ describe('settings split', () => {
 		expect(JSON.stringify(f.plugin.data)).toContain('SECRET');
 		expect(f.files.get('W/WatchLog.base')).not.toContain('jikan.example.org');
 		expect(JSON.stringify(f.plugin.data)).toContain('jikan.example.org');
+		expect(f.files.get('W/WatchLog.base')).not.toContain('NASPW');
+		expect(JSON.stringify(f.plugin.data)).toContain('NASPW');
 		expect(JSON.stringify(f.plugin.data)).not.toContain('Rewatch');
 	});
 

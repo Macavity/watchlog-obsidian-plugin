@@ -69,7 +69,8 @@ Go to **Settings → WatchLog Sync → API**. Each library is a card:
 
 - **Movies & TV shows** — pick OMDb *or* TMDB, paste the key.
 - **Anime** — pick MyAnimeList or AniList. No key needed either way. MyAnimeList data comes through a
-  Jikan-compatible API: [Tenrai](https://tenrai.org/) by default, or your own Jikan instance (https only).
+  Jikan-compatible API: [Tenrai](https://tenrai.org/) by default, or your own Jikan instance (https only,
+  optionally behind basic auth with username and password).
 - **Books & manga** — paste a Google Books key for books; manga always uses MyAnimeList through the same
   endpoint as anime (no key).
 - **Games** — pick RAWG *or* IGDB. Steam is optional and runs alongside, for library sync.

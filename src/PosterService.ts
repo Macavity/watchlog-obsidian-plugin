@@ -1,9 +1,10 @@
+import type { RequestUrlParam } from 'obsidian';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogPluginSettings } from './types';
 import { getApiGroupForType } from './types';
 import { httpsOrEmpty } from './httpsUrl';
-import { apiSourceFromUrl, jsonPost, requestJson } from './ApiService';
-import { resolveJikanBase } from './jikanBase';
+import { jsonPost, requestVia } from './ApiService';
+import { resolveJikanEndpoint, type JikanEndpoint } from './jikanBase';
 
 const OMDB_BASE = 'https://www.omdbapi.com';
 const TMDB_BASE = 'https://api.themoviedb.org/3';
@@ -92,8 +93,8 @@ export class PosterService {
 	}
 
 	/** Read per request so a settings change applies without a reload. */
-	private jikanBase(): string {
-		return resolveJikanBase(this.getSettings().jikanBaseUrl);
+	private jikan(): JikanEndpoint {
+		return resolveJikanEndpoint(this.getSettings());
 	}
 
 	destroy(): void {
@@ -203,13 +204,13 @@ export class PosterService {
 			return httpsOrEmpty(cover?.large ?? cover?.medium) || null;
 		}
 		if (title.malId) {
-			const url = `${this.jikanBase()}/anime/${title.malId}`;
+			const url = `${this.jikan().base}/anime/${title.malId}`;
 			const data = (await this.fetchJson(url)) as JikanImagesShape | null;
 			const jpg = data?.data?.images?.jpg;
 			return httpsOrEmpty(jpg?.large_image_url ?? jpg?.image_url) || null;
 		}
 		const q = encodeURIComponent(this.cleanTitleForSearch(title.title));
-		const url = `${this.jikanBase()}/anime?q=${q}&limit=1`;
+		const url = `${this.jikan().base}/anime?q=${q}&limit=1`;
 		const data = (await this.fetchJson(url)) as JikanSearchShape | null;
 		const first = data?.data?.[0];
 		const jpg = first?.images?.jpg;
@@ -357,10 +358,14 @@ export class PosterService {
 
 	/** throw:false + the shared classifier, so processQueue can tell a real failure from "no poster". */
 	private fetchJson(url: string, headers?: Record<string, string>): Promise<unknown> {
-		return requestJson(apiSourceFromUrl(url, this.jikanBase()), { url, headers });
+		return this.request({ url, headers });
 	}
 
 	private postJson(url: string, body: unknown, headers?: Record<string, string>): Promise<unknown> {
-		return requestJson(apiSourceFromUrl(url, this.jikanBase()), jsonPost(url, body, headers));
+		return this.request(jsonPost(url, body, headers));
+	}
+
+	private request(params: RequestUrlParam): Promise<unknown> {
+		return requestVia(this.jikan(), params);
 	}
 }

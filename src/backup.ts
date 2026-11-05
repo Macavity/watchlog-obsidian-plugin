@@ -61,9 +61,9 @@ export function buildBackup(m: BackupManagers): BackupFile {
 
 /** keys a JSON file must never plant on a plain object */
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-const SECRET_KEY = /api.?key|secret|client.?id|steam.?id|token/i;
+const SECRET_KEY = /api.?key|secret|client.?id|steam.?id|token|user.?name|password/i;
 
-/** The same backup without API keys and ids: for a copy that is written into the (synced) vault. */
+/** The same backup without API keys, ids and logins: for a copy that is written into the (synced) vault. */
 export function withoutSecrets(b: BackupFile): BackupFile {
 	const local: Record<string, unknown> = {};
 	for (const [k, v] of Object.entries(b.local)) if (!SECRET_KEY.test(k)) local[k] = v;

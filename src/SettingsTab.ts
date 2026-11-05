@@ -115,7 +115,7 @@ import { CustomListManager, DefaultColumnsModal } from './CustomListsTab';
 import { ConfirmModal } from './ConfirmModal';
 import { refreshAllCovers } from './coverRefresh';
 import { apiErrorMessage, apiErrorShort } from './ApiService';
-import { TENRAI_BASE, parseJikanBase } from './jikanBase';
+import { TENRAI_BASE, parseJikanBase, resolveJikanEndpoint } from './jikanBase';
 import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup, withoutSecrets } from './backup';
 
 /** Chip for the MyAnimeList endpoint field: default, custom, or rejected and falling back. */
@@ -1263,10 +1263,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		});
 
 		let endpointInput: HTMLInputElement | null = null;
-		const setEndpoint = (v: string): void => {
-			s.jikanBaseUrl = v;
+		const setJikan = (patch: Partial<Pick<typeof s, 'jikanBaseUrl' | 'jikanUsername' | 'jikanPassword'>>): void => {
+			Object.assign(s, patch);
 			void this.plugin.saveSettings();
-			this.plugin.apiService.setJikanBase(v);
+			this.plugin.apiService.setJikanEndpoint(resolveJikanEndpoint(s));
 		};
 		jikan = this.apiProvider(anime.body, {
 			name: 'MyAnimeList',
@@ -1276,8 +1276,19 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				label: 'Endpoint',
 				placeholder: TENRAI_BASE,
 				get: () => s.jikanBaseUrl ?? '',
-				set: setEndpoint,
+				set: (v) => setJikan({ jikanBaseUrl: v }),
 				onInput: (el) => { endpointInput = el; },
+			}, {
+				label: 'Username',
+				placeholder: 'Only for a protected own instance',
+				get: () => s.jikanUsername ?? '',
+				set: (v) => setJikan({ jikanUsername: v }),
+			}, {
+				label: 'Password',
+				placeholder: 'Only for a protected own instance',
+				secret: true,
+				get: () => s.jikanPassword ?? '',
+				set: (v) => setJikan({ jikanPassword: v }),
 			}],
 			status: () => jikanEndpointStatus(s.jikanBaseUrl ?? ''),
 			test: async () => {
@@ -1292,8 +1303,9 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			help:
 				'Anime and manga data from MyAnimeList, fetched through any API that follows the ' +
 				'Jikan v4 schema. Tenrai is the default since the public Jikan API shut down; enter ' +
-				'your own Jikan instance here if you run one. Only https addresses are used, and the ' +
-				'endpoint is stored on this device only.',
+				'your own Jikan instance here if you run one. Only https addresses are used. Username ' +
+				'and password are sent as basic auth, and only to your own endpoint, never to Tenrai. ' +
+				'All three are stored on this device only and left out of backups saved to the vault.',
 			extra: (card) => {
 				const row = card.createDiv({ cls: 'wl-api-presets' });
 				const btn = row.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Use Tenrai' });

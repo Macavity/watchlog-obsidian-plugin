@@ -85,10 +85,11 @@ describe('history actions', () => {
 
 	it('drops secrets for a copy written into the vault and ignores prototype keys on restore', async () => {
 		const a = await setupBackup({});
-		a.local.data.settings = { tmdbApiKey: 'SECRET', igdbClientSecret: 'S2', steamId: '42', dateFormat: 'dmy' };
+		a.local.data.settings = { tmdbApiKey: 'SECRET', igdbClientSecret: 'S2', steamId: '42', jikanUsername: 'u', jikanPassword: 'PW', dateFormat: 'dmy' };
 		const copy = withoutSecrets(buildBackup(a));
 		expect(copy.local).toEqual({ dateFormat: 'dmy' });
 		expect(JSON.stringify(copy)).not.toContain('SECRET');
+		expect(JSON.stringify(copy)).not.toContain('PW');
 
 		const b = await setupBackup({});
 		const parsed = parseBackup(JSON.stringify(buildBackup(a)).replace('"dateFormat"', '"__proto__":{"polluted":1},"dateFormat"'));

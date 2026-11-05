@@ -11,7 +11,7 @@ All notable changes to WatchLog Sync are documented here. Versions up to 3.1.2 a
 
 ##### Added
 
-* Settings → API → Anime: an endpoint field for any Jikan-compatible API, for example your own Jikan instance (https only, stored per device), with a reset button for Tenrai and a Test button.
+* Settings → API → Anime: an endpoint field for any Jikan-compatible API, for example your own Jikan instance (https only, stored per device), with optional username and password for basic auth, a reset button for Tenrai and a Test button. The login is sent only to your own endpoint and is left out of backups saved to the vault.
 
 ##### Changed
 

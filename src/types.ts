@@ -427,6 +427,9 @@ export interface WatchLogPluginSettings {
 	animeApiSource: 'jikan' | 'anilist';
 	/** Jikan-v4-compatible endpoint for anime and manga; '' = Tenrai. Device-local. */
 	jikanBaseUrl: string;
+	/** Basic auth for a protected own Jikan instance; sent only to that endpoint. Device-local, never in vault backups. */
+	jikanUsername: string;
+	jikanPassword: string;
 	/** Which API new games are searched on (existing games keep their data). */
 	gamesApiSource: 'rawg' | 'igdb';
 	rawgApiKey: string;
@@ -1059,6 +1062,8 @@ export const DEFAULT_SETTINGS: WatchLogPluginSettings = {
 	activeApi: 'OMDb',
 	animeApiSource: 'jikan',
 	jikanBaseUrl: '',
+	jikanUsername: '',
+	jikanPassword: '',
 	gamesApiSource: 'rawg',
 	rawgApiKey: '',
 	igdbClientId: '',
