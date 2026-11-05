@@ -15,7 +15,7 @@ pnpm lint                             # eslint, fails on warnings (--max-warning
 pnpm test                             # vitest run
 pnpm vitest run test/DataManager.test.ts        # single file
 pnpm vitest run -t "pattern"                    # single test by name
-pnpm run deploy -- <vault-name>       # build + copy into a vault; "run" needed, "pnpm deploy" is a builtin
+pnpm run deploy <vault-name>          # build + copy into a vault; "run" needed, "pnpm deploy" is a builtin
 pnpm version <patch|minor|major>      # bumps manifest.json + versions.json, commits, tags
 pnpm fallow:audit                     # code-health gate for changed files, run before every commit
 pnpm fallow:report                    # whole-repo fallow report + health score, never a gate

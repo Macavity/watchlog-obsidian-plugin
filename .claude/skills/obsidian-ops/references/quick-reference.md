@@ -16,7 +16,7 @@ One-page cheat sheet for this plugin.
 | Lint | `pnpm lint` / `pnpm eslint . --fix` |
 | Test | `pnpm test` |
 | Code health | `pnpm fallow:audit` (gate) / `pnpm fallow:report` |
-| Deploy to a vault | `pnpm run deploy -- <vault-name>` |
+| Deploy to a vault | `pnpm run deploy <vault-name>` |
 | Bump version | `pnpm version patch\|minor\|major --no-git-tag-version` on a `release/<version>` branch (updates `package.json`, `manifest.json`, `versions.json`) |
 | Look up API | search `node_modules/obsidian/obsidian.d.ts` |
 

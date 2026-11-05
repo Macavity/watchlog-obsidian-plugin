@@ -23,7 +23,7 @@ pnpm lint     # check code style, fails on warnings
 pnpm test     # unit tests (vitest)
 ```
 
-`main.js` is built at the repo root and is not tracked. `pnpm run deploy -- <vault-name>` builds and copies `main.js`, `manifest.json` and `styles.css` into a registered vault. Use a test vault, not your working vault.
+`main.js` is built at the repo root and is not tracked. `pnpm run deploy <vault-name>` builds and copies `main.js`, `manifest.json` and `styles.css` into a registered vault. Use a test vault, not your working vault.
 
 ## Code quality
 
