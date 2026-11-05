@@ -43,7 +43,7 @@ export default defineConfig(
 					'Drafts', 'Custom', 'Lists', 'Books', 'Manga', 'Games',
 					'Notes', 'Quotes', 'Regenerate', 'Settings', 'Add', 'Last',
 					// External services / acronyms not in the rule defaults
-					'Google', 'MAL', 'TSV', 'URLs', 'APIs', 'Steam',
+					'Google', 'MAL', 'TSV', 'URLs', 'APIs', 'Steam', 'Tenrai',
 				],
 				ignoreRegex: [
 					'^DD/MM/YYYY$',            // date format mask

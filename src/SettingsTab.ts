@@ -115,15 +115,14 @@ import { CustomListManager, DefaultColumnsModal } from './CustomListsTab';
 import { ConfirmModal } from './ConfirmModal';
 import { refreshAllCovers } from './coverRefresh';
 import { apiErrorMessage, apiErrorShort } from './ApiService';
-import { JIKAN_PUBLIC_BASE, TENRAI_BASE, resolveJikanBase } from './jikanBase';
+import { TENRAI_BASE, parseJikanBase } from './jikanBase';
 import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup, withoutSecrets } from './backup';
 
 /** Chip for the MyAnimeList endpoint field: default, custom, or rejected and falling back. */
 function jikanEndpointStatus(raw: string): ChipStatus {
-	const trimmed = raw.trim().replace(/\/+$/, '');
-	const resolved = resolveJikanBase(raw);
-	if (resolved !== TENRAI_BASE) return { text: 'Custom endpoint', tone: 'ok' };
-	if (trimmed === '' || trimmed === TENRAI_BASE) return { text: 'Using Tenrai (default)', tone: 'ok' };
+	const parsed = parseJikanBase(raw);
+	if (parsed && parsed !== TENRAI_BASE) return { text: 'Custom endpoint', tone: 'ok' };
+	if (parsed || raw.trim() === '') return { text: 'Using Tenrai (default)', tone: 'ok' };
 	return { text: 'Invalid address, using Tenrai', tone: 'warn' };
 }
 
@@ -1297,15 +1296,13 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				'endpoint is stored on this device only.',
 			extra: (card) => {
 				const row = card.createDiv({ cls: 'wl-api-presets' });
-				for (const [label, value] of [['Use Tenrai', ''], ['Use Jikan', JIKAN_PUBLIC_BASE]] as const) {
-					const btn = row.createEl('button', { cls: 'wl-btn wl-btn-sm', text: label });
-					btn.addEventListener('click', () => {
-						if (!endpointInput) return;
-						endpointInput.value = value;
-						// the field's own listener saves, updates the service and the chip
-						endpointInput.dispatchEvent(new Event('input'));
-					});
-				}
+				const btn = row.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Use Tenrai' });
+				btn.addEventListener('click', () => {
+					if (!endpointInput) return;
+					endpointInput.value = '';
+					// the field's own listener saves, updates the service and the chip
+					endpointInput.dispatchEvent(new Event('input'));
+				});
 			},
 		});
 
