@@ -16,8 +16,8 @@ export function parseJikanEndpoint(raw: string | undefined): JikanEndpoint | nul
 	let u: URL;
 	try { u = new URL((raw ?? '').trim()); } catch { return null; }
 	if (u.protocol !== 'https:' || u.search || u.hash) return null;
-	const user = decodeURIComponent(u.username);
-	const pass = decodeURIComponent(u.password);
+	const user = decodeLogin(u.username);
+	const pass = decodeLogin(u.password);
 	u.username = '';
 	u.password = '';
 	const base = u.toString().replace(/\/+$/, '');
@@ -31,14 +31,23 @@ export function resolveJikanEndpoint(raw: string | undefined): JikanEndpoint {
 	return custom && custom.base !== TENRAI_BASE ? custom : { base: TENRAI_BASE, headers: {} };
 }
 
-/** The address without user and password, for copies that leave the device (vault backups). */
-export function withoutCredentials(raw: string): string {
+/**
+ * The address without user and password, for copies that leave the device (vault backups);
+ * null when it cannot be parsed, since a login could then not be removed reliably.
+ */
+export function withoutCredentials(raw: string): string | null {
+	if (raw.trim() === '') return raw;
 	let u: URL;
-	try { u = new URL(raw); } catch { return raw; }
+	try { u = new URL(raw); } catch { return null; }
 	if (!u.username && !u.password) return raw;
 	u.username = '';
 	u.password = '';
 	return u.toString();
+}
+
+/** A login typed with a bare '%' (`50%off`) is not percent-encoding; take it as written. */
+function decodeLogin(part: string): string {
+	try { return decodeURIComponent(part); } catch { return part; }
 }
 
 function utf8Base64(text: string): string {

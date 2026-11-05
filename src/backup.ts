@@ -68,7 +68,11 @@ const SECRET_KEY = /api.?key|secret|client.?id|steam.?id|token/i;
 export function withoutSecrets(b: BackupFile): BackupFile {
 	const local: Record<string, unknown> = {};
 	for (const [k, v] of Object.entries(b.local)) if (!SECRET_KEY.test(k)) local[k] = v;
-	if (typeof local['jikanBaseUrl'] === 'string') local['jikanBaseUrl'] = withoutCredentials(local['jikanBaseUrl']);
+	if (typeof local['jikanBaseUrl'] === 'string') {
+		const endpoint = withoutCredentials(local['jikanBaseUrl']);
+		if (endpoint === null) delete local['jikanBaseUrl'];
+		else local['jikanBaseUrl'] = endpoint;
+	}
 	return { ...b, local };
 }
 

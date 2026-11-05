@@ -31,6 +31,11 @@ describe('resolveJikanEndpoint basic auth', () => {
 		expect(ep.base).toBe('https://nas.example.org/jikan/v4');
 		expect(decode(ep.headers['Authorization']!)).toBe('alex:päss@wort');
 	});
+	it('takes a login that is not valid percent-encoding literally instead of failing', () => {
+		const ep = resolveJikanEndpoint('https://alex:50%off@nas.example.org/v4');
+		expect(ep.base).toBe('https://nas.example.org/v4');
+		expect(decode(ep.headers['Authorization']!)).toBe('alex:50%off');
+	});
 	it('sends no header without credentials', () => {
 		expect(resolveJikanEndpoint('https://nas.example.org/v4').headers).toEqual({});
 	});
@@ -53,7 +58,10 @@ describe('withoutCredentials', () => {
 		expect(withoutCredentials('https://alex:secret@nas.example.org/v4')).toBe('https://nas.example.org/v4');
 		expect(withoutCredentials('http://alex:secret@nas')).not.toContain('secret');
 		expect(withoutCredentials('https://nas.example.org/v4')).toBe('https://nas.example.org/v4');
+	});
+	it('gives up on an address it cannot parse, so no login can slip through', () => {
+		expect(withoutCredentials('https://alex:secret@')).toBeNull();
+		expect(withoutCredentials('not a url')).toBeNull();
 		expect(withoutCredentials('')).toBe('');
-		expect(withoutCredentials('not a url')).toBe('not a url');
 	});
 });

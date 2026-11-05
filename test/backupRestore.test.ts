@@ -90,6 +90,8 @@ describe('history actions', () => {
 		expect(copy.local).toEqual({ jikanBaseUrl: 'https://nas.example.org/v4', dateFormat: 'dmy' });
 		expect(JSON.stringify(copy)).not.toContain('SECRET');
 		expect(JSON.stringify(copy)).not.toContain('PW');
+		a.local.data.settings = { jikanBaseUrl: 'https://u:HALF@', dateFormat: 'dmy' };
+		expect(withoutSecrets(buildBackup(a)).local).toEqual({ dateFormat: 'dmy' });
 
 		const b = await setupBackup({});
 		const parsed = parseBackup(JSON.stringify(buildBackup(a)).replace('"dateFormat"', '"__proto__":{"polluted":1},"dateFormat"'));
