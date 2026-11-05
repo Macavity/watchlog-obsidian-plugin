@@ -19,6 +19,10 @@ pnpm run deploy <vault-name>          # build + copy into a vault; "run" needed,
 pnpm version <patch|minor|major>      # bumps manifest.json + versions.json, commits, tags
 pnpm fallow:audit                     # code-health gate for changed files, run before every commit
 pnpm fallow:report                    # whole-repo fallow report + health score, never a gate
+pnpm vault:open                       # sync fixtures into the test vault and open it in Obsidian
+pnpm vault:reset                      # restore the test vault fixtures from HEAD
+pnpm reload                           # reload the plugin in the test vault
+pnpm mobile:smoke                     # tablet/phone smoke of the add title modal, with screenshots
 ```
 
 `main.js` is build output and not tracked. CI runs lint, test and build on every push and PR,
@@ -26,8 +30,9 @@ plus `fallow audit` on PRs.
 
 ## Git
 
-`git push`, opening a PR and merging into `main` each need the user's explicit go-ahead in the
-conversation. Never commit on `main`: create a feature branch first, commits there are fine.
+Pushing a feature branch, pushing PR screenshots to the `screenshots` branch and opening a PR are
+fine. Pushing to or merging into `main` needs the user's explicit go-ahead in the conversation.
+Never commit on `main`: create a feature branch first, commits there are fine.
 Commit in logical groups (one concern per commit, not one big commit at the end) using
 Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`, `ci:`, with an
 optional scope such as `fix(storage):`). Never chain a push with other commands.
@@ -35,6 +40,25 @@ Never post comments on GitHub (PRs, issues, reviews) on the user's behalf; every
 there goes through the user's account and must come from them. Review threads whose finding you
 fixed and pushed are resolved, without a reply; threads you rejected or did not touch stay open.
 When in doubt about any other outward action through their account, ask first.
+
+## Pull requests
+
+Body sections: **What changed**, **Why** (with `Fixes #<issue>`), **Screenshot** for anything
+visible. Screenshots come from the test vault (`obsidian vault=watchlog-test-vault dev:screenshot
+path=...` or the smoke output), are committed as `pr-<branch>.png` (slashes as `-`) to the orphan
+branch `screenshots` and embedded via
+`https://raw.githubusercontent.com/Macavity/watchlog-obsidian-plugin/screenshots/pr-<branch>.png`.
+
+## Test vault
+
+`watchlog-test-vault/` holds tracked fixtures. The vault Obsidian opens lives outside git at
+`../watchlog-test-vault` next to the main checkout (`$WATCHLOG_TEST_VAULT` overrides it), so it
+survives worktrees and never blocks a pull; `pnpm vault:open` and `pnpm vault:reset` mirror the
+fixtures of the current checkout into it. One-time setup: `pnpm vault:open`, "Open folder as
+vault" on that path, turn on community plugins, `pnpm run deploy watchlog-test-vault`. Scripts in
+`scripts/lib/cli.mjs` only ever talk to that vault. Run `pnpm mobile:smoke` after deploy and
+reload for every `styles.css` change that can affect modals or mobile layout; it is local only,
+not part of CI.
 
 ## Memory
 
