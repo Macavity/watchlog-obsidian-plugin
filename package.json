@@ -15,6 +15,7 @@
 		"vault:open": "node scripts/vault-open.mjs",
 		"vault:reset": "node scripts/vault-reset.mjs",
 		"reload": "node scripts/reload.mjs",
+		"mobile:smoke": "node scripts/mobile-smoke.mjs",
 		"fallow:audit": "fallow audit --no-cache",
 		"fallow:report": "fallow --score --no-cache"
 	},
