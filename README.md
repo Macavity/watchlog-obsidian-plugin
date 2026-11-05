@@ -68,8 +68,10 @@ posters, covers, episode counts, release dates and ratings for you.
 Go to **Settings → WatchLog Sync → API**. Each library is a card:
 
 - **Movies & TV shows** — pick OMDb *or* TMDB, paste the key.
-- **Anime** — pick Jikan or AniList. No key needed either way.
-- **Books & manga** — paste a Google Books key for books; manga always uses Jikan (no key).
+- **Anime** — pick MyAnimeList or AniList. No key needed either way. MyAnimeList data comes through a
+  Jikan-compatible API: [Tenrai](https://tenrai.org/) by default, or your own Jikan instance (https only).
+- **Books & manga** — paste a Google Books key for books; manga always uses MyAnimeList through the same
+  endpoint as anime (no key).
 - **Games** — pick RAWG *or* IGDB. Steam is optional and runs alongside, for library sync.
 
 Each card has a **Get a key ↗** link, a **(?)** for the full instructions and a **Test** button — use
@@ -129,8 +131,8 @@ any note also queues it up in the Drafts tab.
 
 | Service | Used for | Key |
 |---|---|---|
-| [Jikan](https://jikan.moe/) (MyAnimeList) | Anime + manga search, airing schedules, scores | Not needed |
-| [AniList](https://anilist.co/) | Anime alternative to Jikan | Not needed |
+| [Tenrai](https://tenrai.org/) (MyAnimeList, Jikan-compatible) | Anime + manga search, airing schedules, scores; endpoint can be switched to any Jikan v4 instance | Not needed |
+| [AniList](https://anilist.co/) | Anime alternative to MyAnimeList | Not needed |
 | [OMDb](https://www.omdbapi.com/apikey.aspx) | Movies & TV, season episode counts, IMDb ratings | Free key |
 | [TMDB](https://www.themoviedb.org/settings/api) | Movies & TV, posters, cast, studios, collections | Free read token |
 | [Google Books](https://console.cloud.google.com/apis/credentials) | Book search, authors, page counts, covers | Free key |
