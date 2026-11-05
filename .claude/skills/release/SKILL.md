@@ -79,7 +79,7 @@ Only after the user confirmed version, CHANGELOG section and README changes. Wor
 ```bash
 git switch -c release/<version>
 git add CHANGELOG.md README.md
-git commit -m "docs: changelog for <version>"
+git diff --cached --quiet || git commit -m "docs: changelog for <version>"   # skipped for an approved hotfix without changelog or README change
 pnpm version <patch|minor|major> --no-git-tag-version
 git add package.json manifest.json versions.json
 git commit -m "chore(release): <version>"
@@ -99,13 +99,18 @@ git push -u origin release/<version>
 gh pr create --base main --title "chore(release): <version>" --body "<the CHANGELOG section>"
 ```
 
-After the user merged the PR (or told you to merge it), tag the merge result on `main`. Tagging is not a commit on `main`:
+After the user merged the PR (or told you to merge it), tag the PR's merge commit, not whatever `main` points at now. Another PR may have merged in between; its changes are not in the approved notes or the gate. Tagging is not a commit on `main`:
 
 ```bash
 git switch main && git pull --ff-only
-jq -r .version manifest.json   # must equal <version>
-git tag <version>
+MERGE=$(gh pr view release/<version> --json mergeCommit -q .mergeCommit.oid)
+git rev-parse HEAD                      # compare with $MERGE
+git log --oneline "$MERGE"..HEAD        # commits merged after the release PR
+git show "$MERGE":manifest.json | jq -r .version   # must equal <version>
+git tag <version> "$MERGE"
 ```
+
+When `main` has moved past `$MERGE`, still tag `$MERGE`: it is the tree the gate and notes cover. Tell the user which commits are not part of the release. If the release must include them, stop: update the CHANGELOG and rerun the gate on a new release branch.
 
 Pushing the tag publishes the release; ask once more, then push it on its own:
 
@@ -132,7 +137,7 @@ Report the release URL and the asset list to the user.
 - "It's a hotfix, skip the changelog." Only when the user says so; one `##### Fixed` line takes a minute.
 - "The README was touched in the PR, it's current." Read the sections named in step 4 against the change.
 - "It's only the version bump, I'll commit it on `main`." Never; release branch and PR.
-- "I'll tag the release branch, it has everything." Tags go on `main` after the merge.
+- "I'll tag the release branch, it has everything." Tags go on the release PR's merge commit on `main`.
 - "The user said release, that covers the push." Version, CHANGELOG and README are confirmed first; the push is confirmed separately.
 - "CI was green on the PR." The merge commit is a different tree; run the gate on `main`.
 
