@@ -13,9 +13,7 @@ Comprehensive code patterns for common Obsidian plugin development tasks. **Alwa
 
 ## Settings tabs
 
-Settings tabs are covered by the dedicated **`settings` skill** — use it for authoring or migrating any `PluginSettingTab`. It is the authoritative reference for the declarative `getSettingDefinitions()` API (Obsidian 1.13+), the control/render/validate/visible patterns, mutable lists, sub-pages, and the optional `display()` fallback for older app versions.
-
-`SettingGroup` is always available at these projects' `minAppVersion` (1.11+) — use it directly, with no `requireApiVersion()` guards or pre-1.11 fallbacks. Sentence case for all UI text (names, descriptions, headings).
+This repo targets `minAppVersion` 1.11.0, so `SettingGroup` is available without version guards, but the declarative `getSettingDefinitions()` API (Obsidian 1.13+) is not. Settings tabs implement `display()` (see `src/SettingsTab.ts`). Add `getSettingDefinitions()` only together with a `minAppVersion` bump to 1.13, or keep `display()` as the required fallback. Sentence case for all UI text (names, descriptions, headings); headings via `setHeading()`.
 
 ## Modal with Form Input
 
@@ -214,16 +212,16 @@ export default class MyPlugin extends Plugin {
     let leaf = workspace.getLeavesOfType(VIEW_TYPE_MY_VIEW)[0];
 
     if (!leaf) {
-      leaf = workspace.getRightLeaf(false);
-      await leaf.setViewState({ type: VIEW_TYPE_MY_VIEW, active: true });
+      const rightLeaf = workspace.getRightLeaf(false);
+      if (!rightLeaf) return;
+      await rightLeaf.setViewState({ type: VIEW_TYPE_MY_VIEW, active: true });
+      leaf = rightLeaf;
     }
 
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
   }
 
-  async onunload() {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE_MY_VIEW);
-  }
+  // No onunload detach: open leaves reinitialize in place after a plugin update.
 }
 ```
 

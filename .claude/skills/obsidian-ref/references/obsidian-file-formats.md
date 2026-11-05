@@ -569,12 +569,12 @@ summaries:
 
 # Define one or more views
 views:
-  - type: table | cards | list | map
+  - type: table                  # or cards, list, map
     name: "View Name"
     limit: 10                    # Optional: limit results
     groupBy:                     # Optional: group results
       property: property_name
-      direction: ASC | DESC
+      direction: ASC             # or DESC
     filters:                     # View-specific filters
       and: []
     order:                       # Properties to display in order

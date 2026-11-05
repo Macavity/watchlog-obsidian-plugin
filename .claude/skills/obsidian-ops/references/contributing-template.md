@@ -29,7 +29,7 @@ Do not customize the issue link — the relative `../../issues` form resolves co
 
 ## Template
 
-```markdown
+````markdown
 # Contributing
 
 Thanks for your interest in contributing. This document describes how to report issues, propose changes, and get a local development environment running.
@@ -47,17 +47,17 @@ Requirements:
 - [Node.js](https://nodejs.org/) (LTS recommended)
 - [pnpm](https://pnpm.io/). This repo pins a specific version via `packageManager` in `package.json`.
 
-`​`​`bash
+```bash
 pnpm install
 pnpm dev      # watch mode build
 pnpm build    # production build
 pnpm lint     # check code style
 pnpm lint:fix # auto-fix where possible
-`​`​`
+```
 
 Build artifacts (`main.js`, `manifest.json`, `styles.css`) are produced at the repo root.
 
-To test against a real vault, point the build output at `<vault>/.obsidian/plugins/<plugin-id>/` (symlink the three files, or use a tool like [hot-reload](https://github.com/pjeby/hot-reload)).
+To test against a real vault, symlink or copy the three files into `<vault>/.obsidian/plugins/<plugin-id>/`. Optionally install [Hot Reload](https://github.com/pjeby/hot-reload) in that vault to reload the plugin when the files change.
 
 ## Pull requests
 
@@ -80,7 +80,7 @@ Maintainers cut releases by bumping the version in `manifest.json`, `package.jso
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
-```
+````
 
 ## Style notes
 

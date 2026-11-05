@@ -49,9 +49,11 @@ When the user requests "Summarize" or "Summarize for release", use these workflo
 - Use present tense (e.g., "Add feature" not "Added feature")
 - Group related changes together
 
+- Subject line is a Conventional Commit (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `ci:`, optional scope), as `CLAUDE.md` requires
+
 **Example**:
 ```
-Reorganize agent instructions into structured directory
+docs(agents): reorganize agent instructions into structured directory
 - Split AGENTS.md into topic-based files in .agents/
 - Add build workflow documentation
 - Add release skill with changelog step

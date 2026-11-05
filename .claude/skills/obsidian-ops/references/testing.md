@@ -6,8 +6,8 @@ Source: https://github.com/obsidianmd/obsidian-sample-plugin, https://docs.obsid
 
 ## Desktop
 
-1. Symlink the repo to `<Vault>/.obsidian/plugins/<plugin-id>/` (or copy `main.js`, `manifest.json`, `styles.css`).
-2. Run `pnpm dev`.
+1. Symlink the repo to `<Vault>/.obsidian/plugins/<plugin-id>/`, or copy `main.js`, `manifest.json`, `styles.css` with `pnpm run deploy <vault-name>`.
+2. Run `pnpm dev`. With copied files, `pnpm dev` only rebuilds the repo's `main.js`; run `pnpm run deploy <vault-name>` again after each change.
 3. Enable the plugin in **Settings → Community plugins**. Reload after changes (command "Reload app without saving"), or use [Hot Reload](https://github.com/pjeby/hot-reload).
 4. Use a dedicated test vault, never a production vault.
 

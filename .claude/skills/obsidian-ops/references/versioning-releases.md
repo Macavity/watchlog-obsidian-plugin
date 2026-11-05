@@ -44,5 +44,5 @@ gh api repos/:owner/:repo/actions/permissions/workflow
 If `gh api .../runs` is empty for the tag, the trigger was dropped. Recovery options:
 
 - **Run the workflow from the Actions tab** (`workflow_dispatch`) and pick the **tag** as the ref; branch refs are rejected by the first step.
-- **Re-push the tag**: `git push origin :refs/tags/0.1.0 && git push origin 0.1.0`.
+- **Re-push the tag**: `git push origin :refs/tags/<version>`, then `git push origin <version>` in a separate command.
 - **Manually create the release** in the GitHub UI. The release will exist but it will not have the build provenance attestation, which costs scorecard points until the next release.

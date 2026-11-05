@@ -88,13 +88,13 @@ this.registerInterval(window.setInterval(() => { /* ... */ }, 1000));
 
 ## Settings tab implementation
 
-For settings tabs, use the dedicated **`settings` skill** — it covers the declarative `getSettingDefinitions()` API (Obsidian 1.13+) and the optional `display()` fallback. `SettingGroup` is always available (`minAppVersion` 1.11+); use it directly with no version guards.
+This repo targets `minAppVersion` 1.11.0, so `SettingGroup` is available without version guards, but the declarative `getSettingDefinitions()` API (Obsidian 1.13+) is not. Settings tabs implement `display()` (see `src/SettingsTab.ts`). Add `getSettingDefinitions()` only together with a `minAppVersion` bump to 1.13, or keep `display()` as the required fallback. Sentence case for all UI text (names, descriptions, headings); headings via `setHeading()`.
 
 ## Secret Storage
 
 **Source**: Based on [SecretStorage and SecretComponent guide](https://docs.obsidian.md/plugins/guides/secret-storage) (available since Obsidian 1.11.4)
 
-**Important**: Always use `SecretStorage` and `SecretComponent` for storing sensitive data like API keys, tokens, or passwords. Never store secrets directly in your plugin's `data.json` file.
+**Version gate**: `SecretStorage` needs Obsidian 1.11.4, this repo's `minAppVersion` is 1.11.0. This repo keeps API keys in the device-local `data.json` (`src/storage/LocalStore.ts`), never in the vault. Moving them to `SecretStorage` requires raising `minAppVersion` to 1.11.4 first, plus a migration of the existing keys.
 
 ### Using SecretComponent in Settings
 
@@ -126,7 +126,7 @@ export class MySettingTab extends PluginSettingTab {
         new SecretComponent(this.app, el)
           .setValue(this.plugin.settings.apiKeySecretId)
           .onChange(async (value) => {
-            this.plugin.settings.apiKeySecretId = value;
+            this.plugin.settings.apiKeySecretId = value ?? ""; // null when the selection is cleared
             await this.plugin.saveSettings();
           })
       );
@@ -208,7 +208,7 @@ Modal with user input:
 import { App, Modal, Setting } from "obsidian";
 
 class InputModal extends Modal {
-  result: string;
+  result = "";
   onSubmit: (result: string) => void;
 
   constructor(app: App, onSubmit: (result: string) => void) {
@@ -292,16 +292,16 @@ async activateView() {
   let leaf = workspace.getLeavesOfType(VIEW_TYPE_MY_VIEW)[0];
   
   if (!leaf) {
-    leaf = workspace.getRightLeaf(false);
-    await leaf.setViewState({ type: VIEW_TYPE_MY_VIEW, active: true });
+    const rightLeaf = workspace.getRightLeaf(false);
+    if (!rightLeaf) return;
+    await rightLeaf.setViewState({ type: VIEW_TYPE_MY_VIEW, active: true });
+    leaf = rightLeaf;
   }
-  
-  workspace.revealLeaf(leaf);
+
+  await workspace.revealLeaf(leaf);
 }
 
-async onunload() {
-  this.app.workspace.detachLeavesOfType(VIEW_TYPE_MY_VIEW);
-}
+// No onunload detach: open leaves reinitialize in place after a plugin update.
 ```
 
 **Warning**: Never store references to views. Use `getLeavesOfType()` to access view instances.

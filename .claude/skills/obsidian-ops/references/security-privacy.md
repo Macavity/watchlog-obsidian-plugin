@@ -40,7 +40,7 @@ Follow Obsidian's [Developer policies](https://docs.obsidian.md/community-direct
 
 The community scorecard scans the lockfile and flags any package with a known advisory, even if the package is dev-only and never ships in `main.js`. Common offenders are transitives pulled in by `eslint`, `eslint-plugin-obsidianmd`, and `@typescript-eslint/*`: `minimatch`, `picomatch`, `brace-expansion`, `ajv`, `flatted`, `fast-uri`, `yaml`.
 
-Use `overrides` in `pnpm-workspace.yaml` (this repo; older setups use `pnpm.overrides` in `package.json`) to force patched versions of vulnerable transitives without changing direct dependencies. Major-version-scoped ranges avoid breaking consumers that depend on a specific major:
+Use `pnpm.overrides` in `package.json` (this repo; in `pnpm-workspace.yaml` the same map sits at the root as `overrides`) to force patched versions of vulnerable transitives without changing direct dependencies. Major-version-scoped ranges avoid breaking consumers that depend on a specific major:
 
 ```json
 {
