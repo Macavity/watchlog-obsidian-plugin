@@ -655,14 +655,23 @@ async function requestJson(
 }
 
 /** requestJson for any API; requests to the Jikan endpoint carry its headers (Basic auth). */
-export function requestVia(
+export async function requestVia(
 	jikan: JikanEndpoint,
 	params: RequestUrlParam,
 	check?: (source: ApiSource, data: unknown) => void,
 ): Promise<unknown> {
 	const source = apiSourceFromUrl(params.url, jikan.base);
 	const sent = source === 'jikan' ? { ...params, headers: { ...jikan.headers, ...params.headers } } : params;
-	return requestJson(source, sent, check && ((data) => check(source, data)));
+	try {
+		return await requestJson(source, sent, check && ((data) => check(source, data)));
+	} catch (err) {
+		// keyless Jikan reads 401/403 as an outage; with a login sent, it is the login being rejected
+		const loginSent = source === 'jikan' && !!sent.headers?.['Authorization'];
+		if (loginSent && err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+			throw new ApiError(source, 'auth', err.message, err.status, err.detail, err.providerMessage);
+		}
+		throw err;
+	}
 }
 
 /** Request params for a JSON POST. */

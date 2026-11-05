@@ -55,6 +55,17 @@ describe('ApiService Jikan endpoint', () => {
 		await svc.fetchWithTimeout('https://www.omdbapi.com/?i=tt1');
 		expect((sent.mock.calls[1]![0] as { headers?: Record<string, string> }).headers?.Authorization).toBeUndefined();
 	});
+	it('reports a rejected basic auth login as a credential error, not an outage', async () => {
+		sent.mockResolvedValue({ status: 401, text: 'Unauthorized', json: null } as never);
+		const svc = new ApiService('') as any;
+		svc.setJikanEndpoint(resolveJikanEndpoint('https://a:wrong@nas.example.org/v4'));
+		await expect(svc.pingJikan()).rejects.toMatchObject({ reason: 'auth', status: 401 });
+		svc.setJikanEndpoint(resolveJikanEndpoint(''));
+		await expect(svc.pingJikan()).rejects.toMatchObject({ reason: 'server', status: 401 });
+		sent.mockResolvedValue({ status: 503, text: 'down', json: null } as never);
+		svc.setJikanEndpoint(resolveJikanEndpoint('https://a:b@nas.example.org/v4'));
+		await expect(svc.pingJikan()).rejects.toMatchObject({ reason: 'server', status: 503 });
+	});
 	it('classifies responses from the configured base as jikan', () => {
 		expect(apiSourceFromUrl(`${TENRAI_BASE}/anime/1`, TENRAI_BASE)).toBe('jikan');
 		expect(apiSourceFromUrl('https://jikan.example.org/v4/manga/1', 'https://jikan.example.org/v4')).toBe('jikan');
