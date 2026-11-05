@@ -1,5 +1,5 @@
 // Mirrors the versioned fixtures of one checkout into the registered test vault, keeping Obsidian's local state.
-import { cpSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 
 /** Paths inside the vault that belong to the running Obsidian, never to the fixtures (mirrors .gitignore). */
@@ -28,6 +28,8 @@ export function syncVault(fixtures, vault) {
 		if (basename(dir) !== "watchlog-test-vault") throw new Error(`refusing to sync ${dir}: not a watchlog-test-vault directory`);
 		if (!existsSync(dir)) throw new Error(`${dir} does not exist`);
 	}
+	// the same directory on both sides would delete the fixtures before copying them
+	if (realpathSync(fixtures) === realpathSync(vault)) return;
 	removeStale(vault);
 	cpSync(fixtures, vault, { recursive: true, filter: (src) => !isLocalState(relative(fixtures, src)) });
 }
