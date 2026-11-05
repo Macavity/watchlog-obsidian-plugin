@@ -86,14 +86,13 @@ body:
     attributes:
       label: Debug Information
       description: |
-        Please provide debug information from the Developer Console:
-        1. Open Settings → Advanced → Developer Tools
-        2. Go to the Console tab
-        3. Copy any error messages or warnings related to this plugin
-        4. Paste them here
+        Optional. Error messages or warnings from the developer console, if any:
+        1. Desktop: open the console with Ctrl+Shift+I (Cmd+Option+I on macOS)
+        2. Go to the Console tab and copy messages related to this plugin
+        Mobile has no console; leave this empty or describe any error notice instead.
       placeholder: Paste console errors/warnings here...
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: additional-context
