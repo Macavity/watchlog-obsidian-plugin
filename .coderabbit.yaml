@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+tone_instructions: "Report real bugs, data-loss risks and Obsidian guideline violations. Keep code simple and clean. Skip nitpicks that ESLint or fallow already cover."
+knowledge_base:
+  code_guidelines:
+    filePatterns:
+      - ".claude/skills/obsidian-dev/references/plugin-guidelines.md"
+      - ".claude/skills/obsidian-dev/references/coding-conventions.md"
+reviews:
+  profile: chill
+  path_filters:
+    - "!watchlog-test-vault/**"
+    - "!screenshots/**"
+  path_instructions:
+    - path: "src/**"
+      instructions: |
+        User data lives in vault notes that several devices edit through sync. Treat any path
+        that can lose or corrupt a note, its properties, History.md or WatchLog.base as a
+        blocking bug: concurrent edits from another device, malformed YAML, files appearing or
+        disappearing mid-operation, keys dropped on re-encode. Also report mobile-only breakage
+        (no Node or Electron APIs, layout below 600px). Prefer simple, readable fixes.
+    - path: "scripts/**"
+      instructions: |
+        Local dev tooling, run only by the maintainer on own machine.
+        Not shipped, not in CI. Only report bugs that break the normal
+        happy path. No security or filesystem-hardening findings.
+    - path: "CLAUDE.md"
+      instructions: "Agent instructions. Do not review policy content."
+    - path: ".claude/**"
+      instructions: "Agent skill docs, maintained by hand. Do not review."
+  pre_merge_checks:
+    docstrings:
+      mode: "off"

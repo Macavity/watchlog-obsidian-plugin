@@ -33,3 +33,10 @@ history.json
 
 # Built output
 main.js
+
+# Test vault: Obsidian's local state
+watchlog-test-vault/.obsidian/plugins/
+watchlog-test-vault/.obsidian/themes/
+watchlog-test-vault/.obsidian/workspace*.json
+watchlog-test-vault/.obsidian/cache
+watchlog-test-vault/.trash/

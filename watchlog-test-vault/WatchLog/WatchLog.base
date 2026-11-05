@@ -1,0 +1,50 @@
+filters:
+  and:
+    - file.inFolder("WatchLog")
+views:
+  - type: table
+    name: All
+watchlog:
+  version: 1
+  types:
+    - name: Anime
+      color: "#1D9E75"
+    - name: Movie
+      color: "#378ADD"
+    - name: TV Show
+      color: "#BA7517"
+    - name: Korean TV Show
+      color: "#7F77DD"
+    - name: Animation
+      color: "#D85A30"
+  statuses:
+    - name: Watching
+      color: "#1D9E75"
+    - name: Plan to watch
+      color: "#00A9A5"
+    - name: Completed
+      color: "#378ADD"
+    - name: To be released
+      color: "#E8873A"
+    - name: Dropped
+      color: "#E24B4A"
+  reviews:
+    - name: Nah
+      color: "#E24B4A"
+    - name: Awesome
+      color: "#1D9E75"
+    - name: Marvelous
+      color: "#7F77DD"
+  priorities:
+    - name: Low
+      color: "#888780"
+    - name: Medium
+      color: "#3b82f6"
+    - name: High
+      color: "#E24B4A"
+  halfStarRatings: false
+  typeApiMapping: {}
+  episodeNumbering: absolute
+  defaultCustomColumns: []
+  autoCompleteOnLastEpisode: true
+  setFinishDateAutomatically: false
