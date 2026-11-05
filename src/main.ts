@@ -469,6 +469,8 @@ export default class WatchLogPlugin extends Plugin {
 		// mirror into types.ts so the pure formatters render in the chosen order without a settings ref
 		setActiveDateFormat(this.settings.dateFormat);
 		this.syncTypeNames();
+		// a restored backup can bring another endpoint; PosterService reads it per request anyway
+		this.apiService.setJikanEndpoint(resolveJikanEndpoint(this.settings.jikanBaseUrl));
 	}
 
 	async saveSettings(): Promise<void> {
