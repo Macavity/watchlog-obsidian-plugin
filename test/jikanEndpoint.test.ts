@@ -23,18 +23,18 @@ describe('ApiService Jikan endpoint', () => {
 		expect(fetch.mock.calls[0]![0]).toMatch(/^https:\/\/api\.tenrai\.org\/v1\/manga\?q=berserk/);
 	});
 	it('uses the endpoint passed to the constructor', async () => {
-		const svc = new ApiService('', '', '', '', '', '', '', '', resolveJikanEndpoint({ jikanBaseUrl: 'https://jikan.example.org/v4' })) as any;
+		const svc = new ApiService('', '', '', '', '', '', '', '', resolveJikanEndpoint('https://jikan.example.org/v4')) as any;
 		const fetch = spyFetch(svc);
 		await svc.searchAnime('frieren');
 		expect(fetch.mock.calls[0]![0]).toMatch(/^https:\/\/jikan\.example\.org\/v4\/anime\?q=frieren/);
 	});
 	it('switches endpoints at runtime via setJikanEndpoint', async () => {
 		const svc = new ApiService('') as any;
-		svc.setJikanEndpoint(resolveJikanEndpoint({ jikanBaseUrl: 'https://jikan.example.org/v4/' }));
+		svc.setJikanEndpoint(resolveJikanEndpoint('https://jikan.example.org/v4/'));
 		const fetch = spyFetch(svc);
 		await svc.searchManga('berserk');
 		expect(fetch.mock.calls[0]![0]).toMatch(/^https:\/\/jikan\.example\.org\/v4\/manga\?q=berserk/);
-		svc.setJikanEndpoint(resolveJikanEndpoint({ jikanBaseUrl: '' }));
+		svc.setJikanEndpoint(resolveJikanEndpoint(''));
 		await svc.searchManga('berserk');
 		expect(fetch.mock.calls[1]![0]).toMatch(/^https:\/\/api\.tenrai\.org\/v1\/manga/);
 	});
@@ -48,7 +48,7 @@ describe('ApiService Jikan endpoint', () => {
 	});
 	it('adds the endpoint auth header to Jikan requests only', async () => {
 		const svc = new ApiService('omdb') as any;
-		svc.setJikanEndpoint(resolveJikanEndpoint({ jikanBaseUrl: 'https://nas.example.org/v4', jikanUsername: 'a', jikanPassword: 'b' }));
+		svc.setJikanEndpoint(resolveJikanEndpoint('https://a:b@nas.example.org/v4'));
 		respond({ data: { mal_id: 1 } });
 		await svc.pingJikan();
 		expect(sent.mock.calls[0]![0]).toMatchObject({ url: 'https://nas.example.org/v4/anime/1', headers: { Authorization: 'Basic YTpi' } });
@@ -71,7 +71,7 @@ describe('PosterService Jikan endpoint', () => {
 		expect(fetch.mock.calls[0]![0]).toBe('https://jikan.example.org/v4/anime/5');
 	});
 	it('sends the auth header with poster requests to the custom endpoint', async () => {
-		const settings = { ...DEFAULT_SETTINGS, jikanBaseUrl: 'https://nas.example.org/v4', jikanUsername: 'a', jikanPassword: 'b' };
+		const settings = { ...DEFAULT_SETTINGS, jikanBaseUrl: 'https://a:b@nas.example.org/v4' };
 		const svc = new PosterService({} as any, () => settings) as any;
 		respond({ data: { images: { jpg: { image_url: 'https://i/1.jpg' } } } });
 		await svc.fetchAnimePoster({ title: 'X', malId: 5 });

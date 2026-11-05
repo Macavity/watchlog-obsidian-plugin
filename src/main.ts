@@ -124,7 +124,7 @@ export default class WatchLogPlugin extends Plugin {
 			this.settings.igdbClientSecret,
 			this.settings.steamApiKey,
 			this.settings.steamId,
-			resolveJikanEndpoint(this.settings),
+			resolveJikanEndpoint(this.settings.jikanBaseUrl),
 		);
 		this.apiKeys = [this.settings.tmdbApiKey, this.settings.omdbApiKey].join('\n');
 		this.dataManager.setHistoryManager(this.historyManager);

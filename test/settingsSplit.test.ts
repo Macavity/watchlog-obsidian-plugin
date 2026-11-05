@@ -22,8 +22,7 @@ describe('settings split', () => {
 		const { f, local, shared } = await setup({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n' });
 		const settings = composeSettings(local.data.settings, shared.get().settings);
 		settings.tmdbApiKey = 'SECRET';
-		settings.jikanBaseUrl = 'https://jikan.example.org/v4';
-		settings.jikanPassword = 'NASPW';
+		settings.jikanBaseUrl = 'https://u:NASPW@jikan.example.org/v4';
 		settings.statuses = [{ name: 'Rewatch', color: '#123456' }];
 		await persistSettings(settings, local, shared);
 		await local.flush();

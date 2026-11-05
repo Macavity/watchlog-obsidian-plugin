@@ -94,7 +94,7 @@ export class PosterService {
 
 	/** Read per request so a settings change applies without a reload. */
 	private jikan(): JikanEndpoint {
-		return resolveJikanEndpoint(this.getSettings());
+		return resolveJikanEndpoint(this.getSettings().jikanBaseUrl);
 	}
 
 	destroy(): void {
