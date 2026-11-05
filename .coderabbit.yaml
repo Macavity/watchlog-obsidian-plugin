@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: de-DE
+tone_instructions: "Solo hobby Obsidian plugin. Only flag real bugs a user would hit. No hardening, no hypothetical edge cases."
+reviews:
+  profile: chill
+  path_filters:
+    - "!watchlog-test-vault/**"
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Single-maintainer hobby project. Prefer simplicity over robustness.
+        Do not suggest defensive checks for misconfiguration, symlinks,
+        races or malicious local actors. Skip nitpicks.
+    - path: "scripts/**"
+      instructions: |
+        Local dev tooling, run only by the maintainer on own machine.
+        Not shipped, not in CI. Only report bugs that break the normal
+        happy path. No security or filesystem-hardening findings.
+    - path: "CLAUDE.md"
+      instructions: "Agent instructions. Do not review policy content."
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    # if the out-of-scope check gets noisy, also set issue_assessment / custom_checks to off
+  auto_review:
+    auto_incremental_review: false # review on open only; afterwards trigger manually with `@coderabbitai review`
