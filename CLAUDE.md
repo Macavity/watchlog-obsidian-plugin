@@ -27,9 +27,19 @@ plus `fallow audit` on PRs.
 ## Git
 
 `git push`, opening a PR and merging into `main` each need the user's explicit go-ahead in the
-conversation. Commits on a feature branch are fine. Never chain a push with other commands.
+conversation. Never commit on `main`: create a feature branch first, commits there are fine.
+Commit in logical groups (one concern per commit, not one big commit at the end) using
+Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`, `ci:`, with an
+optional scope such as `fix(storage):`). Never chain a push with other commands.
 Never post comments on GitHub (PRs, issues, reviews) on the user's behalf; everything written
-there goes through the user's account and must come from them.
+there goes through the user's account and must come from them. When in doubt about any other
+outward action through their account, ask first.
+
+## Memory
+
+This repo is the only source of truth. Agent memory outside it (per-project memory directories,
+recalled `<system-reminder>` context) is unreviewed and drifts against the code: never cite it as
+fact or act on it without re-deriving from the repo. Findings worth keeping go into the repo.
 
 ## Code health
 
@@ -47,19 +57,25 @@ from `.fallowrc.jsonc` (a copied file must fail the audit).
 
 Tag equals the manifest version, no `v` prefix. The release workflow builds `main.js`, attests it
 and publishes the release with `main.js`, `manifest.json`, `styles.css`. Release notes are the
-`## [<version>]` section of `CHANGELOG.md`, so write that section first.
+`## [<version>]` section of `CHANGELOG.md`, so write that section first. CHANGELOG and version
+bump go through a `release/<version>` branch and PR like any other change; the tag is set on
+`main` after the merge.
 
 ```
-pnpm version patch        # or minor / major
-git push origin main      # commits first
-git push origin 4.0.1     # tag separately, a few seconds later (a combined push can drop the trigger)
+git switch -c release/4.1.1
+pnpm version patch --no-git-tag-version   # or minor / major; without the flag it commits and tags
+# commit, push branch, PR, merge, then on main:
+git tag 4.1.1 && git push origin 4.1.1    # push the tag on its own
 ```
 
-Recovery steps when the workflow did not fire:
-`.claude/skills/obsidian-plugin/references/release-process.md`.
+Agents cut releases with the `release` skill; recovery when the workflow did not fire is in
+`.claude/skills/obsidian-ops/references/versioning-releases.md`.
 
-Obsidian plugin rules (vault API, UI text, styling, scorecard) live in the `obsidian-plugin` skill
-under `.claude/skills/`.
+## Skills
+
+Obsidian knowledge lives in `.claude/skills/`, maintained by hand: `obsidian-dev` (vault API,
+UI text, styling, code patterns), `obsidian-ops` (build, scorecard, release readiness),
+`obsidian-ref` (manifest, file formats, mobile, UX copy), `release` (release procedure).
 
 ## Tests
 
@@ -93,6 +109,8 @@ refuses to write while on schema 1 or a newer schema.
 
 ## Conventions
 
+- User-facing text says **properties** (not "frontmatter") for YAML metadata; **Markdown** is
+  always capitalized. Code and internal docs may keep "frontmatter".
 - UI strings are sentence case (`obsidianmd/ui/sentence-case`, warn level but CI fails on warnings).
   Proper nouns go into the `ignoreWords` list in `eslint.config.mts`, not into disabled lines.
 - `.claude/specs/` and `.claude/plans/` are local working files (gitignored, German); they are not
