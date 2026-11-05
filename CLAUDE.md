@@ -49,6 +49,12 @@ path=...` or the smoke output), are committed as `pr-<branch>.png` (slashes as `
 branch `screenshots` and embedded via
 `https://raw.githubusercontent.com/Macavity/watchlog-obsidian-plugin/screenshots/pr-<branch>.png`.
 
+Review feedback (CodeRabbit, Auto-fix events, people) goes through the
+`superpowers-refined:receiving-code-review` skill before any change. Fix a finding only when its
+failure scenario is reachable through this repo's code, scripts or documented configuration;
+scenarios that need a hand-built misconfiguration (a symlink no script creates, a path no script
+or doc sets) are YAGNI, stay unfixed and their threads stay open.
+
 ## Test vault
 
 `watchlog-test-vault/` holds tracked fixtures. The vault Obsidian opens lives outside git at
