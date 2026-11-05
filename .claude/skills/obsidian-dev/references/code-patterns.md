@@ -161,7 +161,7 @@ export class MyView extends ItemView {
   }
 
   async onOpen() {
-    const container = this.containerEl.children[1];
+    const container = this.contentEl;
     container.empty();
     
     container.createEl("h2", { text: "My View" });
@@ -181,8 +181,7 @@ export class MyView extends ItemView {
   }
 
   private updateContent() {
-    const container = this.containerEl.children[1];
-    const contentEl = container.querySelector(".my-view-content");
+    const contentEl = this.contentEl.querySelector(".my-view-content");
     if (contentEl) {
       this.content = "Updated content";
       contentEl.setText(this.content);

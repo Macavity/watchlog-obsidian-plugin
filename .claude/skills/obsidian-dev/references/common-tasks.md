@@ -68,14 +68,11 @@ this.addCommand({
 
 ## Persist settings
 
-```ts
-interface MySettings { enabled: boolean }
-const DEFAULT_SETTINGS: MySettings = { enabled: true };
+In this repo `data.json` is not a plain settings object: it also holds the schema version, API cache, drafts and UI state. Never call `this.saveData(this.settings)` directly; that replaces the record, and `LocalStore.load()` treats it as empty on the next start. Change a setting, then call the plugin's `saveSettings()` (`src/main.ts`), which splits local and shared keys (`src/settingsSplit.ts`) and writes through `LocalStore` and `SharedConfigStore`.
 
-async onload() {
-  this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-  await this.saveData(this.settings);
-}
+```ts
+this.plugin.settings.enabled = value;
+await this.plugin.saveSettings();
 ```
 
 ## Register listeners safely
@@ -269,7 +266,7 @@ export class MyView extends ItemView {
   }
 
   async onOpen() {
-    const container = this.containerEl.children[1];
+    const container = this.contentEl;
     container.empty();
     container.createEl("h4", { text: "My View Content" });
   }

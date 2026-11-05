@@ -544,11 +544,9 @@ Base files use the `.base` extension and contain valid YAML. They can also be em
 ```yaml
 # Global filters apply to ALL views in the base
 filters:
-  # Can be a single filter string
-  # OR a recursive filter object with and/or/not
+  # A single filter string, or an object with exactly one of and / or / not.
+  # Nest objects for combinations. Omit `filters` when no filter is needed.
   and: []
-  or: []
-  not: []
 
 # Define formula properties that can be used across all views
 formulas:
