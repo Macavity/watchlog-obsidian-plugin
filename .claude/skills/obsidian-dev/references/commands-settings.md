@@ -8,7 +8,7 @@ Applicability: Plugin
 
 - Any user-facing commands should be added via `this.addCommand(...)`.
 - If the plugin has configuration, provide a settings tab and sensible defaults.
-- Persist settings using `this.loadData()` / `this.saveData()`.
+- Persist settings with the plugin's `saveSettings()` (`src/main.ts`), never with `this.saveData(this.settings)`: in this repo `data.json` also holds schema version, cache and drafts, and `saveData()` replaces the whole record. See "Persist settings" in [common-tasks.md](common-tasks.md).
 - Use stable command IDs; avoid renaming once released.
 
 ## Settings tabs
