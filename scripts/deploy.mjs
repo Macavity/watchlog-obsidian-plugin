@@ -6,24 +6,16 @@ import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { listVaults } from "./lib/cli.mjs";
 
 const PLUGIN_ID = "watchlog-sync";
 const FILES = ["manifest.json", "main.js", "styles.css"];
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const wanted = process.argv[2];
 
-/** Vaults registered in Obsidian, via its CLI. */
-function listVaults() {
-	return execFileSync("obsidian", ["vaults", "verbose"], { encoding: "utf8" })
-		.split("\n")
-		.map((l) => l.split("\t"))
-		.filter((c) => c.length >= 2)
-		.map(([name, path]) => ({ name, path }));
-}
-
 /** Interactive choice from a numbered list; throws when not on a TTY or aborted. */
 async function askVault(vaults) {
-	if (!process.stdin.isTTY) throw new Error("Pass a vault name: pnpm run deploy -- <name>");
+	if (!process.stdin.isTTY) throw new Error("Pass a vault name: pnpm run deploy <name>");
 	console.log("Registered vaults:");
 	vaults.forEach((v, i) => console.log(`  ${String(i + 1).padStart(2)}  ${v.name}\t${v.path}`));
 	const rl = createInterface({ input: process.stdin, output: process.stdout });

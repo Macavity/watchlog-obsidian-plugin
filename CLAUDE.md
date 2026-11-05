@@ -15,10 +15,14 @@ pnpm lint                             # eslint, fails on warnings (--max-warning
 pnpm test                             # vitest run
 pnpm vitest run test/DataManager.test.ts        # single file
 pnpm vitest run -t "pattern"                    # single test by name
-pnpm run deploy -- <vault-name>       # build + copy into a vault; "run" needed, "pnpm deploy" is a builtin
+pnpm run deploy <vault-name>          # build + copy into a vault; "run" needed, "pnpm deploy" is a builtin
 pnpm version <patch|minor|major>      # bumps manifest.json + versions.json, commits, tags
 pnpm fallow:audit                     # code-health gate for changed files, run before every commit
 pnpm fallow:report                    # whole-repo fallow report + health score, never a gate
+pnpm vault:open                       # sync fixtures into the test vault and open it in Obsidian
+pnpm vault:reset                      # restore the test vault fixtures from HEAD
+pnpm reload                           # reload the plugin in the test vault
+pnpm mobile:smoke                     # tablet/phone smoke of the add title modal, with screenshots
 ```
 
 `main.js` is build output and not tracked. CI runs lint, test and build on every push and PR,
@@ -26,10 +30,47 @@ plus `fallow audit` on PRs.
 
 ## Git
 
-`git push`, opening a PR and merging into `main` each need the user's explicit go-ahead in the
-conversation. Commits on a feature branch are fine. Never chain a push with other commands.
+Pushing a feature branch, pushing PR screenshots to the `screenshots` branch and opening a PR are
+fine. Pushing to or merging into `main` needs the user's explicit go-ahead in the conversation.
+Never commit on `main`: create a feature branch first, commits there are fine.
+Commit in logical groups (one concern per commit, not one big commit at the end) using
+Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`, `ci:`, with an
+optional scope such as `fix(storage):`). Never chain a push with other commands.
 Never post comments on GitHub (PRs, issues, reviews) on the user's behalf; everything written
-there goes through the user's account and must come from them.
+there goes through the user's account and must come from them. Review threads whose finding you
+fixed and pushed are resolved, without a reply; threads you rejected or did not touch stay open.
+When in doubt about any other outward action through their account, ask first.
+
+## Pull requests
+
+Body sections: **What changed**, **Why** (with `Fixes #<issue>`), **Screenshot** for anything
+visible. Screenshots come from the test vault (`obsidian vault=watchlog-test-vault dev:screenshot
+path=...` or the smoke output), are committed as `pr-<branch>.png` (slashes as `-`) to the orphan
+branch `screenshots` and embedded via
+`https://raw.githubusercontent.com/Macavity/watchlog-obsidian-plugin/screenshots/pr-<branch>.png`.
+
+Review feedback (CodeRabbit, Auto-fix events, people) goes through the
+`superpowers-refined:receiving-code-review` skill before any change. Fix a finding only when its
+failure scenario is reachable through this repo's code, scripts or documented configuration;
+scenarios that need a hand-built misconfiguration (a symlink no script creates, a path no script
+or doc sets) are YAGNI, stay unfixed and their threads stay open.
+
+## Test vault
+
+`watchlog-test-vault/` holds tracked fixtures. The vault Obsidian opens lives outside git at
+`../watchlog-test-vault` next to the main checkout (`$WATCHLOG_TEST_VAULT` overrides it), so it
+survives worktrees and never blocks a pull; `pnpm vault:open` and `pnpm vault:reset` mirror the
+fixtures of the current checkout into it. One-time setup: `pnpm vault:open`, "Open folder as
+vault" on that path, turn on community plugins, `pnpm run deploy watchlog-test-vault`. Scripts in
+`scripts/lib/cli.mjs` only ever talk to that vault. Run `pnpm mobile:smoke` after deploy and
+reload for every `styles.css` change that can affect modals or mobile layout; it is local only,
+not part of CI.
+
+## Memory
+
+This repo is the only source of truth. Agent memory outside it (per-project memory directories,
+recalled `<system-reminder>` context) is unreviewed and drifts against the code: never cite it as
+fact or act on it without re-deriving from the repo. Findings worth keeping go into the repo.
 
 ## Code health
 
@@ -47,19 +88,26 @@ from `.fallowrc.jsonc` (a copied file must fail the audit).
 
 Tag equals the manifest version, no `v` prefix. The release workflow builds `main.js`, attests it
 and publishes the release with `main.js`, `manifest.json`, `styles.css`. Release notes are the
-`## [<version>]` section of `CHANGELOG.md`, so write that section first.
+`## [<version>]` section of `CHANGELOG.md`, so write that section first. CHANGELOG and version
+bump go through a `release/<version>` branch and PR like any other change; the tag is set on
+`main` after the merge.
 
 ```
-pnpm version patch        # or minor / major
-git push origin main      # commits first
-git push origin 4.0.1     # tag separately, a few seconds later (a combined push can drop the trigger)
+git switch -c release/4.1.1
+pnpm version patch --no-git-tag-version   # or minor / major; without the flag it commits and tags
+# commit, push branch, PR, merge, then tag the release PR's merge commit:
+git tag 4.1.1 <merge-commit>
+git push origin 4.1.1                     # separate command, after the user's go-ahead
 ```
 
-Recovery steps when the workflow did not fire:
-`.claude/skills/obsidian-plugin/references/release-process.md`.
+Agents cut releases with the `release` skill; recovery when the workflow did not fire is in
+`.claude/skills/obsidian-ops/references/versioning-releases.md`.
 
-Obsidian plugin rules (vault API, UI text, styling, scorecard) live in the `obsidian-plugin` skill
-under `.claude/skills/`.
+## Skills
+
+Obsidian knowledge lives in `.claude/skills/`, maintained by hand: `obsidian-dev` (vault API,
+UI text, styling, code patterns), `obsidian-ops` (build, scorecard, release readiness),
+`obsidian-ref` (manifest, file formats, mobile, UX copy), `release` (release procedure).
 
 ## Tests
 
@@ -93,6 +141,8 @@ refuses to write while on schema 1 or a newer schema.
 
 ## Conventions
 
+- User-facing text says **properties** (not "frontmatter") for YAML metadata; **Markdown** is
+  always capitalized. Code and internal docs may keep "frontmatter".
 - UI strings are sentence case (`obsidianmd/ui/sentence-case`, warn level but CI fails on warnings).
   Proper nouns go into the `ignoreWords` list in `eslint.config.mts`, not into disabled lines.
 - `.claude/specs/` and `.claude/plans/` are local working files (gitignored, German); they are not

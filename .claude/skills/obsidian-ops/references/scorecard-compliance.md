@@ -1,7 +1,7 @@
 <!--
-Source: @davidvkimball/obsidian-dev-skills 1.3.1 (obsidian-ops/references/scorecard-compliance.md), copied 2026-10-23.
-Changes: embedded release.yml replaced by a pointer to this repo's workflow; lint:fix command adapted; related-docs list trimmed to files present here; note on this repo's eslint-plugin-obsidianmd version.
-Re-sync: pnpm pack @davidvkimball/obsidian-dev-skills into a temp dir and diff.
+Source: Obsidian community plugin scorecard (community.obsidian.md/plugins/<id>)
+Update frequency: Check the Obsidian community portal scorecard format for changes
+Applicability: Plugin
 -->
 
 # Community Plugin Scorecard Compliance
@@ -82,7 +82,7 @@ Then run `pnpm install` and `pnpm why <pkg>` to verify the patched version is re
 
 > X release assets are missing a GitHub artifact attestation.
 
-**Fix**: a tag-triggered release workflow that runs `actions/attest-build-provenance` against the release files. This repo already has one at `.github/workflows/release.yml` (tag must equal the manifest version, notes from CHANGELOG.md). Cut releases by pushing a tag, never by uploading files by hand; see [release-process.md](release-process.md).
+**Fix**: a tag-triggered release workflow that runs `actions/attest-build-provenance` against the release files. This repo has one at `.github/workflows/release.yml` (tag must equal the manifest version, notes from `CHANGELOG.md`). Cut releases by pushing a tag, never by uploading files by hand; see [versioning-releases.md](versioning-releases.md) and the `release` skill.
 
 ### Build verification failed (non-reproducible build)
 
@@ -368,5 +368,9 @@ After applying fixes:
 
 ## Related Documentation
 
-- [release-process.md](release-process.md) — this repo's release flow.
-- [plugin-guidelines.md](plugin-guidelines.md) — idiomatic API usage that satisfies obsidianmd rules.
+- [contributing-template.md](contributing-template.md) — canonical CONTRIBUTING.md text.
+- [versioning-releases.md](versioning-releases.md) — release workflow setup.
+- [security-privacy.md](security-privacy.md) — dependency vulnerability handling.
+- [release-readiness.md](release-readiness.md) — broader pre-release checklist.
+- [code-patterns.md](../../obsidian-dev/references/code-patterns.md) — idiomatic API usage that satisfies obsidianmd rules.
+- [ux-copy.md](../../obsidian-ref/references/ux-copy.md) — sentence case and other UI text rules.
