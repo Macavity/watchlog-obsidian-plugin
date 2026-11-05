@@ -54,7 +54,7 @@ Before the release:
 - [ ] Tested on Windows / macOS / Linux as applicable
 - [ ] Tested with a large vault and with other plugins disabled
 - [ ] Mobile and tablet layout checked (the plugin ships a mobile toolbar), or `isDesktopOnly: true`
-- [ ] Tested on Android / iOS: `pnpm run deploy <vault-name>` copies the build into a synced test vault, so a phone or tablet gets it before publication
+- [ ] Tested on Android / iOS: `pnpm run deploy <vault-name>` copies the build into a synced test vault, so a phone or tablet gets it before publication. Obsidian Sync must sync community plugins ("Installed community plugins" in the Sync settings) on both devices; wait for the sync to finish, then restart Obsidian on the phone and check the plugin version in its settings
 
 After the release:
 

@@ -100,6 +100,8 @@ git push -u origin release/<version>
 gh pr create --base main --title "chore(release): <version>" --body "<the CHANGELOG section>"
 ```
 
+Merge the release PR as a **squash merge** (`gh pr merge --squash`, or "Squash and merge" in the UI). The repo also allows rebase merges, which put each release commit on `main` separately; then `mergeCommit` is the last of them and `$MERGE^1` is the previous release commit, not the old `main`, and the check below fails.
+
 After the user merged the PR (or told you to merge it), tag the PR's merge commit, not whatever `main` points at now. Another PR may have merged in between; its changes are not in the approved notes or the gate. Tagging is not a commit on `main`:
 
 ```bash
@@ -108,6 +110,7 @@ MERGE=$(gh pr view release/<version> --json mergeCommit -q .mergeCommit.oid)
 git rev-parse HEAD                      # compare with $MERGE
 git log --oneline <GATED>.."$MERGE"^1   # merged between the gate and the release PR: must be empty
 git log --oneline "$MERGE"..HEAD        # merged after the release PR: not part of this release
+git show --stat "$MERGE"             # one squash commit with the release files only
 git show "$MERGE":manifest.json | jq -r .version   # must equal <version>
 git tag <version> "$MERGE"
 ```
