@@ -12,6 +12,9 @@
 		"lint": "eslint . --max-warnings 0",
 		"test": "vitest run",
 		"deploy": "node scripts/deploy.mjs",
+		"vault:open": "node scripts/vault-open.mjs",
+		"vault:reset": "node scripts/vault-reset.mjs",
+		"reload": "node scripts/reload.mjs",
 		"fallow:audit": "fallow audit --no-cache",
 		"fallow:report": "fallow --score --no-cache"
 	},
