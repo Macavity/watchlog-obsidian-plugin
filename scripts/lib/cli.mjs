@@ -12,6 +12,7 @@ export const FIXTURES = join(REPO, "watchlog-test-vault");
  * fixtures into it, so it survives worktrees and never blocks a pull), or $WATCHLOG_TEST_VAULT. */
 export const VAULT_PATH = process.env.WATCHLOG_TEST_VAULT ? resolve(process.env.WATCHLOG_TEST_VAULT) : join(dirname(mainCheckout()), "watchlog-test-vault");
 
+/** The main checkout of this repository (the parent of the shared .git dir); this checkout when git fails. */
 function mainCheckout() {
 	try {
 		const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: REPO, encoding: "utf8" }).trim();
@@ -23,6 +24,7 @@ function mainCheckout() {
 
 const CLI_TIMEOUT_MS = 30000;
 
+/** Runs the Obsidian CLI with `args` and returns its stdout; a timeout goes through `afterTimeout`. */
 function run(args) {
 	try {
 		return execFileSync("obsidian", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: CLI_TIMEOUT_MS, killSignal: "SIGKILL" });
@@ -51,6 +53,7 @@ export function obs(cmd, args = {}) {
 	return out;
 }
 
+/** Evaluates `code` in the test vault and returns the printed result without the "=> " prefix. */
 export function evalJs(code) {
 	return obs("eval", { code }).trim().replace(/^=> ?/, ""); // eval prints "=> <result>"
 }
@@ -78,10 +81,12 @@ export function screenshot(path) {
 	}
 }
 
+/** Throws "Assertion failed: <msg>" unless `cond` is truthy. */
 export function assert(cond, msg) {
 	if (!cond) throw new Error(`Assertion failed: ${msg}`);
 }
 
+/** Polls `fn` until it returns a truthy value and returns it; throws with the last result or error after `timeoutMs`. */
 export async function waitFor(fn, timeoutMs = 10000, intervalMs = 250) {
 	const end = Date.now() + timeoutMs;
 	let last;
