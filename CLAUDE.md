@@ -64,8 +64,9 @@ bump go through a `release/<version>` branch and PR like any other change; the t
 ```
 git switch -c release/4.1.1
 pnpm version patch --no-git-tag-version   # or minor / major; without the flag it commits and tags
-# commit, push branch, PR, merge, then on main:
-git tag 4.1.1 && git push origin 4.1.1    # push the tag on its own
+# commit, push branch, PR, merge, then tag the release PR's merge commit:
+git tag 4.1.1 <merge-commit>
+git push origin 4.1.1                     # separate command, after the user's go-ahead
 ```
 
 Agents cut releases with the `release` skill; recovery when the workflow did not fire is in

@@ -53,6 +53,7 @@ Present the version with the two or three changes that justify it, and wait for 
 All of it, every release, no matter how small the diff. CI ran on the PR, but the merge commit on `main` is a different tree.
 
 ```bash
+git rev-parse HEAD            # note this as GATED: the tree the gate and notes cover
 pnpm install --frozen-lockfile
 pnpm lint
 pnpm test
@@ -60,7 +61,7 @@ pnpm build
 pnpm fallow:report            # informational, not a gate
 ```
 
-Then the automated section of `.claude/skills/obsidian-ops/references/release-readiness.md`: files at root, manifest consistent, no stray console output, README disclosures (network use: the services in the README's APIs table). Report each item as pass or fail with a concrete fix. The interactive pre-release items (desktop platforms, large vault, mobile/tablet layout) are a question to the user, not assumed. Real-device mobile testing comes after the release.
+Then the automated section of `.claude/skills/obsidian-ops/references/release-readiness.md`: files at root, manifest consistent, no stray console output, README disclosures (network use: the services in the README's APIs table). Report each item as pass or fail with a concrete fix. The interactive pre-release items (desktop platforms, large vault, mobile/tablet layout, a real phone or tablet via a synced test vault) are a question to the user, not assumed.
 
 A gate failure is fixed in its own `fix:` branch and PR before the release, or the release is called off.
 
@@ -105,12 +106,13 @@ After the user merged the PR (or told you to merge it), tag the PR's merge commi
 git switch main && git pull --ff-only
 MERGE=$(gh pr view release/<version> --json mergeCommit -q .mergeCommit.oid)
 git rev-parse HEAD                      # compare with $MERGE
-git log --oneline "$MERGE"..HEAD        # commits merged after the release PR
+git log --oneline <GATED>.."$MERGE"^1   # merged between the gate and the release PR: must be empty
+git log --oneline "$MERGE"..HEAD        # merged after the release PR: not part of this release
 git show "$MERGE":manifest.json | jq -r .version   # must equal <version>
 git tag <version> "$MERGE"
 ```
 
-When `main` has moved past `$MERGE`, still tag `$MERGE`: it is the tree the gate and notes cover. Tell the user which commits are not part of the release. If the release must include them, stop: update the CHANGELOG and rerun the gate on a new release branch.
+`$MERGE^1` is `main` just before the release PR landed, so the first list holds commits that reached `main` after the gate and are inside `$MERGE`, but were neither gated nor described. If it is not empty, stop: tell the user, update the CHANGELOG and rerun the gate on a new release branch. Commits in the second list came after `$MERGE`; tag `$MERGE` anyway and tell the user they are not part of this release.
 
 Pushing the tag publishes the release; ask once more, then push it on its own:
 

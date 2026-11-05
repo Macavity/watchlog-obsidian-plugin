@@ -54,11 +54,12 @@ Before the release:
 - [ ] Tested on Windows / macOS / Linux as applicable
 - [ ] Tested with a large vault and with other plugins disabled
 - [ ] Mobile and tablet layout checked (the plugin ships a mobile toolbar), or `isDesktopOnly: true`
+- [ ] Tested on Android / iOS: `pnpm run deploy <vault-name>` copies the build into a synced test vault, so a phone or tablet gets it before publication
 
-After the release (a mobile device installs plugins only from a published release, through BRAT or the directory, so this cannot be a precondition):
+After the release:
 
 - [ ] Release created with tag = version, assets `main.js`, `manifest.json`, `styles.css` attached individually
-- [ ] Tested on Android / iOS from that release; a regression found there gets a patch release
+- [ ] Installed from the release on one device to confirm the published assets; a regression found there gets a patch release
 
 ## Agent workflow
 
