@@ -1,16 +1,14 @@
-import { requestUrl } from 'obsidian';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogPluginSettings } from './types';
 import { getApiGroupForType } from './types';
 import { httpsOrEmpty } from './httpsUrl';
-import { ApiError, apiSourceFromUrl, readApiResponse } from './ApiService';
+import { apiSourceFromUrl, jsonPost, requestJson } from './ApiService';
+import { resolveJikanBase } from './jikanBase';
 
-const JIKAN_BASE = 'https://api.jikan.moe/v4';
 const OMDB_BASE = 'https://www.omdbapi.com';
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMG_BASE = 'https://image.tmdb.org/t/p/w300';
 const ANILIST_ENDPOINT = 'https://graphql.anilist.co';
-const API_TIMEOUT_MS = 8000;
 
 // rate-limit delays between consecutive queued requests
 const JIKAN_DELAY_MS = 400; // ≈2.5 req/sec (Jikan caps at 3/sec)
@@ -91,6 +89,11 @@ export class PosterService {
 	) {
 		this.dataManager = dataManager;
 		this.getSettings = getSettings;
+	}
+
+	/** Read per request so a settings change applies without a reload. */
+	private jikanBase(): string {
+		return resolveJikanBase(this.getSettings().jikanBaseUrl);
 	}
 
 	destroy(): void {
@@ -200,13 +203,13 @@ export class PosterService {
 			return httpsOrEmpty(cover?.large ?? cover?.medium) || null;
 		}
 		if (title.malId) {
-			const url = `${JIKAN_BASE}/anime/${title.malId}`;
+			const url = `${this.jikanBase()}/anime/${title.malId}`;
 			const data = (await this.fetchJson(url)) as JikanImagesShape | null;
 			const jpg = data?.data?.images?.jpg;
 			return httpsOrEmpty(jpg?.large_image_url ?? jpg?.image_url) || null;
 		}
 		const q = encodeURIComponent(this.cleanTitleForSearch(title.title));
-		const url = `${JIKAN_BASE}/anime?q=${q}&limit=1`;
+		const url = `${this.jikanBase()}/anime?q=${q}&limit=1`;
 		const data = (await this.fetchJson(url)) as JikanSearchShape | null;
 		const first = data?.data?.[0];
 		const jpg = first?.images?.jpg;
@@ -353,50 +356,11 @@ export class PosterService {
 	}
 
 	/** throw:false + the shared classifier, so processQueue can tell a real failure from "no poster". */
-	private async fetchJson(
-		url: string,
-		headers?: Record<string, string>,
-	): Promise<unknown> {
-		const source = apiSourceFromUrl(url);
-		let timer: number | null = null;
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new ApiError(source, 'network', 'Request timed out')), API_TIMEOUT_MS);
-		});
-		try {
-			const fetchPromise = requestUrl({ url, headers, throw: false }).then((r) => readApiResponse(source, r));
-			return await Promise.race([fetchPromise, timeoutPromise]);
-		} catch (err) {
-			if (err instanceof ApiError) throw err;
-			throw new ApiError(source, 'network', (err as Error)?.message ?? 'Network error');
-		} finally {
-			if (timer !== null) window.clearTimeout(timer);
-		}
+	private fetchJson(url: string, headers?: Record<string, string>): Promise<unknown> {
+		return requestJson(apiSourceFromUrl(url, this.jikanBase()), { url, headers });
 	}
 
-	private async postJson(
-		url: string,
-		body: unknown,
-		headers?: Record<string, string>,
-	): Promise<unknown> {
-		const source = apiSourceFromUrl(url);
-		let timer: number | null = null;
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new ApiError(source, 'network', 'Request timed out')), API_TIMEOUT_MS);
-		});
-		try {
-			const fetchPromise = requestUrl({
-				url,
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
-				body: JSON.stringify(body),
-				throw: false,
-			}).then((r) => readApiResponse(source, r));
-			return await Promise.race([fetchPromise, timeoutPromise]);
-		} catch (err) {
-			if (err instanceof ApiError) throw err;
-			throw new ApiError(source, 'network', (err as Error)?.message ?? 'Network error');
-		} finally {
-			if (timer !== null) window.clearTimeout(timer);
-		}
+	private postJson(url: string, body: unknown, headers?: Record<string, string>): Promise<unknown> {
+		return requestJson(apiSourceFromUrl(url, this.jikanBase()), jsonPost(url, body, headers));
 	}
 }

@@ -425,6 +425,8 @@ export interface WatchLogPluginSettings {
 	googleBooksApiKey: string;
 	activeApi: 'OMDb' | 'TMDB';
 	animeApiSource: 'jikan' | 'anilist';
+	/** Jikan-v4-compatible endpoint for anime and manga; '' = Tenrai. Device-local. */
+	jikanBaseUrl: string;
 	/** Which API new games are searched on (existing games keep their data). */
 	gamesApiSource: 'rawg' | 'igdb';
 	rawgApiKey: string;
@@ -1056,6 +1058,7 @@ export const DEFAULT_SETTINGS: WatchLogPluginSettings = {
 	googleBooksApiKey: '',
 	activeApi: 'OMDb',
 	animeApiSource: 'jikan',
+	jikanBaseUrl: '',
 	gamesApiSource: 'rawg',
 	rawgApiKey: '',
 	igdbClientId: '',

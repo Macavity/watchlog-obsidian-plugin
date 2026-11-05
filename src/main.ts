@@ -26,6 +26,7 @@ import { loadOwnOrOriginal, ORIGINAL_PLUGIN_ID } from './storage/legacyPlugin';
 import type { BackupManagers } from './backup';
 import { composeSettings, persistSettings } from './settingsSplit';
 import { runAirtimeScheduler } from './airtimeScheduler';
+import { resolveJikanBase } from './jikanBase';
 
 /** Root folder created on a fresh install (no `.base` with a `watchlog:` key found). */
 const DEFAULT_ROOT = 'WatchLog';
@@ -123,6 +124,7 @@ export default class WatchLogPlugin extends Plugin {
 			this.settings.igdbClientSecret,
 			this.settings.steamApiKey,
 			this.settings.steamId,
+			resolveJikanBase(this.settings.jikanBaseUrl),
 		);
 		this.apiKeys = [this.settings.tmdbApiKey, this.settings.omdbApiKey].join('\n');
 		this.dataManager.setHistoryManager(this.historyManager);

@@ -1,5 +1,7 @@
 import { requestUrl } from 'obsidian';
+import type { RequestUrlParam } from 'obsidian';
 import { httpsOrEmpty } from './httpsUrl';
+import { TENRAI_BASE } from './jikanBase';
 import type {
 	AnimeSearchResult,
 	MediaSearchResult,
@@ -30,7 +32,6 @@ import type { EntryCache } from './storage/storageTypes';
 
 type Airing = NonNullable<EntryCache['airing']>;
 
-const JIKAN_BASE = 'https://api.jikan.moe/v4';
 const OMDB_BASE = 'https://www.omdbapi.com';
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const ANILIST_ENDPOINT = 'https://graphql.anilist.co';
@@ -378,10 +379,10 @@ interface JikanMangaItem {
 export type ApiSource = 'tmdb' | 'omdb' | 'jikan' | 'anilist' | 'googleBooks' | 'rawg' | 'igdb' | 'twitch' | 'unknown';
 
 /** Why it failed. 'no-key' = none set; 'auth' = the credential was rejected. */
-export type ApiErrorReason =
+type ApiErrorReason =
 	| 'no-key' | 'auth' | 'not-enabled' | 'rate-limited' | 'not-found' | 'server' | 'http' | 'parse' | 'network';
 
-export class ApiError extends Error {
+class ApiError extends Error {
 	source: ApiSource;
 	reason: ApiErrorReason;
 	status?: number;
@@ -413,7 +414,7 @@ const KEYLESS_SOURCES: ReadonlySet<ApiSource> = new Set<ApiSource>(['jikan', 'an
 const API_LABELS: Record<ApiSource, string> = {
 	tmdb: 'TMDB',
 	omdb: 'OMDb',
-	jikan: 'MyAnimeList (Jikan)',
+	jikan: 'MyAnimeList',
 	anilist: 'AniList',
 	googleBooks: 'Google Books',
 	rawg: 'RAWG',
@@ -422,11 +423,14 @@ const API_LABELS: Record<ApiSource, string> = {
 	unknown: 'The API',
 };
 
-/** Source from the request URL — every base is a distinct host, so no call site has to say. */
-export function apiSourceFromUrl(url: string): ApiSource {
+/**
+ * Source from the request URL — every base is a distinct host, so no call site has to say. The
+ * Jikan base is user-configurable, so callers pass the one they request against.
+ */
+export function apiSourceFromUrl(url: string, jikanBase: string): ApiSource {
 	if (url.startsWith(TMDB_BASE)) return 'tmdb';
 	if (url.startsWith(OMDB_BASE)) return 'omdb';
-	if (url.startsWith(JIKAN_BASE)) return 'jikan';
+	if (url.startsWith(jikanBase)) return 'jikan';
 	if (url.startsWith(ANILIST_ENDPOINT)) return 'anilist';
 	if (url.startsWith(GOOGLE_BOOKS_BASE)) return 'googleBooks';
 	if (url.startsWith(RAWG_BASE)) return 'rawg';
@@ -520,7 +524,7 @@ export function apiErrorMessage(err: unknown): string {
 				case 'omdb':
 					return 'OMDb daily request limit reached (1,000 per day on the free tier). It resets at midnight UTC.';
 				case 'jikan':
-					return 'MyAnimeList (Jikan) is rate-limiting requests; wait a few seconds and search again.';
+					return 'MyAnimeList API is rate-limiting requests; wait a few seconds and search again.';
 				case 'anilist':
 					return 'AniList is rate-limiting requests; wait a moment and search again.';
 				case 'googleBooks':
@@ -584,7 +588,7 @@ function outcomeOfError(err: unknown): { status: 'transient' | 'nokey' | 'notfou
 }
 
 /** Status check + JSON parse for a throw:false response. Throws ApiError on either failure. */
-export function readApiResponse(source: ApiSource, r: { status: number; text: string; json: unknown }): unknown {
+function readApiResponse(source: ApiSource, r: { status: number; text: string; json: unknown }): unknown {
 	if (r.status < 200 || r.status >= 300) {
 		throw new ApiError(
 			source,
@@ -621,6 +625,45 @@ function rethrowAuth(err: unknown): void {
 	if (isAuthFailure(err)) throw err;
 }
 
+/**
+ * One request with the shared timeout and error classifier. throw:false so the status survives —
+ * requestUrl's default collapses every 4xx into one opaque Error, which is why a rejected key used
+ * to look identical to "no results". `check` inspects a parsed 200 body (GraphQL errors).
+ */
+export async function requestJson(
+	source: ApiSource,
+	params: RequestUrlParam,
+	check?: (data: unknown) => void,
+): Promise<unknown> {
+	let timer: number | null = null;
+	const timeoutPromise = new Promise<never>((_, reject) => {
+		timer = window.setTimeout(() => reject(new ApiError(source, 'network', 'Request timed out')), API_TIMEOUT_MS);
+	});
+	try {
+		const fetchPromise = requestUrl({ ...params, throw: false }).then((r) => {
+			const data = readApiResponse(source, r);
+			check?.(data);
+			return data;
+		});
+		return await Promise.race([fetchPromise, timeoutPromise]);
+	} catch (err) {
+		if (err instanceof ApiError) throw err;
+		throw new ApiError(source, 'network', (err as Error)?.message ?? 'Network error');
+	} finally {
+		if (timer !== null) window.clearTimeout(timer);
+	}
+}
+
+/** Request params for a JSON POST. */
+export function jsonPost(url: string, body: unknown, headers?: Record<string, string>): RequestUrlParam {
+	return {
+		url,
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
+		body: JSON.stringify(body),
+	};
+}
+
 /** GraphQL reports failures in a 200 body — AniList rate limits arrive this way. */
 function assertNoGraphqlErrors(source: ApiSource, data: unknown): void {
 	const errors = (data as { errors?: Array<{ message?: string }> } | null)?.errors;
@@ -646,6 +689,8 @@ export class ApiService {
 	private anilistQueue: Promise<void> = Promise.resolve();
 	private jikanLastRequest = 0;
 	private jikanQueue: Promise<void> = Promise.resolve();
+	/** Resolved Jikan-v4-compatible endpoint (Tenrai unless the user set another). */
+	private jikanBase: string;
 
 	private throttleJikan<T>(task: () => Promise<T>): Promise<T> {
 		const run = async (): Promise<T> => {
@@ -671,6 +716,7 @@ export class ApiService {
 		igdbClientSecret = '',
 		steamApiKey = '',
 		steamId = '',
+		jikanBase = TENRAI_BASE,
 	) {
 		this.omdbApiKey = omdbApiKey;
 		this.tmdbApiKey = tmdbApiKey;
@@ -680,6 +726,7 @@ export class ApiService {
 		this.igdbClientSecret = igdbClientSecret;
 		this.steamApiKey = steamApiKey;
 		this.steamId = steamId;
+		this.jikanBase = jikanBase;
 	}
 
 	setOmdbKey(key: string): void {
@@ -724,56 +771,13 @@ export class ApiService {
 		return { 'Authorization': `Bearer ${this.tmdbApiKey}` };
 	}
 
-	/**
-	 * throw:false so the status survives — requestUrl's default collapses every 4xx into one
-	 * opaque Error, which is why a rejected key used to look identical to "no results".
-	 */
-	private async fetchWithTimeout(url: string, headers?: Record<string, string>): Promise<unknown> {
-		const source = apiSourceFromUrl(url);
-		let timer: number | null = null;
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new ApiError(source, 'network', 'Request timed out')), API_TIMEOUT_MS);
-		});
-		try {
-			const fetchPromise = requestUrl({ url, headers, throw: false }).then((r) => readApiResponse(source, r));
-			return await Promise.race([fetchPromise, timeoutPromise]);
-		} catch (err) {
-			if (err instanceof ApiError) throw err;
-			throw new ApiError(source, 'network', (err as Error)?.message ?? 'Network error');
-		} finally {
-			if (timer !== null) window.clearTimeout(timer);
-		}
+	private fetchWithTimeout(url: string, headers?: Record<string, string>): Promise<unknown> {
+		return requestJson(apiSourceFromUrl(url, this.jikanBase), { url, headers });
 	}
 
-	private async postJsonWithTimeout(
-		url: string,
-		body: unknown,
-		headers?: Record<string, string>,
-	): Promise<unknown> {
-		const source = apiSourceFromUrl(url);
-		let timer: number | null = null;
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			timer = window.setTimeout(() => reject(new ApiError(source, 'network', 'Request timed out')), API_TIMEOUT_MS);
-		});
-		try {
-			const fetchPromise = requestUrl({
-				url,
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
-				body: JSON.stringify(body),
-				throw: false,
-			}).then((r) => {
-				const data = readApiResponse(source, r);
-				assertNoGraphqlErrors(source, data);
-				return data;
-			});
-			return await Promise.race([fetchPromise, timeoutPromise]);
-		} catch (err) {
-			if (err instanceof ApiError) throw err;
-			throw new ApiError(source, 'network', (err as Error)?.message ?? 'Network error');
-		} finally {
-			if (timer !== null) window.clearTimeout(timer);
-		}
+	private postJsonWithTimeout(url: string, body: unknown, headers?: Record<string, string>): Promise<unknown> {
+		const source = apiSourceFromUrl(url, this.jikanBase);
+		return requestJson(source, jsonPost(url, body, headers), (data) => assertNoGraphqlErrors(source, data));
 	}
 
 	// AniList (GraphQL)
@@ -925,7 +929,7 @@ export class ApiService {
 		// Jikan has no year param; a whole-year window is the equivalent
 		const yr = searchYear(year);
 		const base =
-			`${JIKAN_BASE}/anime?q=${encodeURIComponent(query)}&limit=${JIKAN_PAGE_SIZE}&sfw=false` +
+			`${this.jikanBase}/anime?q=${encodeURIComponent(query)}&limit=${JIKAN_PAGE_SIZE}&sfw=false` +
 			(yr ? `&start_date=${yr}-01-01&end_date=${yr}-12-31` : '');
 		const items: JikanAnime[] = [];
 		const maxPages = Math.ceil(limit / JIKAN_PAGE_SIZE);
@@ -1096,7 +1100,7 @@ export class ApiService {
 		malId: number,
 	): Promise<{ dayOfWeek: number; time: string } | null> {
 		try {
-			const url = `${JIKAN_BASE}/anime/${malId}`;
+			const url = `${this.jikanBase}/anime/${malId}`;
 			const data = (await this.fetchWithTimeout(url)) as {
 				data?: { broadcast?: { day?: string | null; time?: string | null } };
 			};
@@ -1118,7 +1122,7 @@ export class ApiService {
 	/** Trailer lookup for one anime (Jikan /anime/{mal_id}). Returns a URL or 'none'. */
 	async getJikanTrailerByMalId(malId: number): Promise<string> {
 		try {
-			const url = `${JIKAN_BASE}/anime/${malId}`;
+			const url = `${this.jikanBase}/anime/${malId}`;
 			const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanAnime };
 			return this.jikanTrailerUrl(data.data?.trailer);
 		} catch {
@@ -1300,7 +1304,7 @@ export class ApiService {
 		try {
 			if (title.anilistId !== undefined) return single((await this.queryAniListById(title.anilistId))?.episodes);
 			if (title.malId !== undefined) {
-				const url = `${JIKAN_BASE}/anime/${title.malId}`;
+				const url = `${this.jikanBase}/anime/${title.malId}`;
 				const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanAnime };
 				return single(data.data?.episodes);
 			}
@@ -1413,7 +1417,7 @@ export class ApiService {
 		}
 		if (title.malId) {
 			try {
-				const url = `${JIKAN_BASE}/anime/${title.malId}`;
+				const url = `${this.jikanBase}/anime/${title.malId}`;
 				const res = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as {
 					data?: JikanAnime;
 				};
@@ -1565,7 +1569,7 @@ export class ApiService {
 
 	private async fetchMalRating(malId: number): Promise<{ rating: number; votes: number } | null> {
 		try {
-			const url = `${JIKAN_BASE}/anime/${malId}`;
+			const url = `${this.jikanBase}/anime/${malId}`;
 			const data = (await this.fetchWithTimeout(url)) as {
 				data?: { score?: number | null; scored_by?: number | null };
 			};
@@ -1923,7 +1927,7 @@ export class ApiService {
 
 	/** throws ApiError */
 	async searchManga(query: string): Promise<MangaSearchResult[]> {
-		const url = `${JIKAN_BASE}/manga?q=${encodeURIComponent(query)}&limit=10`;
+		const url = `${this.jikanBase}/manga?q=${encodeURIComponent(query)}&limit=10`;
 		const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanMangaItem[] };
 		return (data.data ?? []).map((m) => this.mapJikanManga(m));
 	}
@@ -1934,7 +1938,7 @@ export class ApiService {
 	 * the Jikan throttle.
 	 */
 	async getMangaByMalId(malId: number): Promise<MangaSearchResult | null> {
-		const url = `${JIKAN_BASE}/manga/${malId}`;
+		const url = `${this.jikanBase}/manga/${malId}`;
 		try {
 			const data = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: JikanMangaItem };
 			if (!data.data) return null;
