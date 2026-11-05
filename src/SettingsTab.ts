@@ -115,7 +115,17 @@ import { CustomListManager, DefaultColumnsModal } from './CustomListsTab';
 import { ConfirmModal } from './ConfirmModal';
 import { refreshAllCovers } from './coverRefresh';
 import { apiErrorMessage, apiErrorShort } from './ApiService';
+import { JIKAN_PUBLIC_BASE, TENRAI_BASE, resolveJikanBase } from './jikanBase';
 import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup, withoutSecrets } from './backup';
+
+/** Chip for the MyAnimeList endpoint field: default, custom, or rejected and falling back. */
+function jikanEndpointStatus(raw: string): ChipStatus {
+	const trimmed = raw.trim().replace(/\/+$/, '');
+	const resolved = resolveJikanBase(raw);
+	if (resolved !== TENRAI_BASE) return { text: 'Custom endpoint', tone: 'ok' };
+	if (trimmed === '' || trimmed === TENRAI_BASE) return { text: 'Using Tenrai (default)', tone: 'ok' };
+	return { text: 'Invalid address, using Tenrai', tone: 'warn' };
+}
 
 type SettingsSection = 'general' | 'api' | 'customize' | 'watchlist' | 'drafts' | 'custom-lists' | 'reading' | 'widgets' | 'quick-info';
 
@@ -1244,7 +1254,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		this.apiSegmented(anime.body, {
 			label: 'Active API',
-			options: [{ value: 'jikan', label: 'Jikan' }, { value: 'anilist', label: 'AniList' }],
+			options: [{ value: 'jikan', label: 'MyAnimeList' }, { value: 'anilist', label: 'AniList' }],
 			value: s.animeApiSource ?? 'jikan',
 			onChange: (v) => {
 				s.animeApiSource = v as 'jikan' | 'anilist';
@@ -1253,12 +1263,50 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			},
 		});
 
+		let endpointInput: HTMLInputElement | null = null;
+		const setEndpoint = (v: string): void => {
+			s.jikanBaseUrl = v;
+			void this.plugin.saveSettings();
+			this.plugin.apiService.setJikanBase(v);
+		};
 		jikan = this.apiProvider(anime.body, {
-			name: 'Jikan',
-			initials: 'J',
-			note: 'MyAnimeList\'s database, the larger catalogue',
-			status: () => ({ text: 'No key needed', tone: 'ok' }),
-			help: 'Jikan is the unofficial MyAnimeList API. It is rate-limited but needs no account.',
+			name: 'MyAnimeList',
+			initials: 'M',
+			note: 'Jikan-compatible API, Tenrai by default',
+			fields: [{
+				label: 'Endpoint',
+				placeholder: TENRAI_BASE,
+				get: () => s.jikanBaseUrl ?? '',
+				set: setEndpoint,
+				onInput: (el) => { endpointInput = el; },
+			}],
+			status: () => jikanEndpointStatus(s.jikanBaseUrl ?? ''),
+			test: async () => {
+				try {
+					return (await this.plugin.apiService.pingJikan())
+						? { text: 'Connected', tone: 'ok' as const }
+						: { text: 'Not a Jikan-compatible API', tone: 'error' as const };
+				} catch (err) {
+					return this.testFailure(err);
+				}
+			},
+			help:
+				'Anime and manga data from MyAnimeList, fetched through any API that follows the ' +
+				'Jikan v4 schema. Tenrai is the default since the public Jikan API shut down; enter ' +
+				'your own Jikan instance here if you run one. Only https addresses are used, and the ' +
+				'endpoint is stored on this device only.',
+			extra: (card) => {
+				const row = card.createDiv({ cls: 'wl-api-presets' });
+				for (const [label, value] of [['Use Tenrai', ''], ['Use Jikan', JIKAN_PUBLIC_BASE]] as const) {
+					const btn = row.createEl('button', { cls: 'wl-btn wl-btn-sm', text: label });
+					btn.addEventListener('click', () => {
+						if (!endpointInput) return;
+						endpointInput.value = value;
+						// the field's own listener saves, updates the service and the chip
+						endpointInput.dispatchEvent(new Event('input'));
+					});
+				}
+			},
 		});
 
 		anilist = this.apiProvider(anime.body, {
@@ -1329,14 +1377,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		syncBooks();
 
 		this.apiProvider(books.body, {
-			name: 'Jikan',
-			initials: 'J',
+			name: 'MyAnimeList',
+			initials: 'M',
 			note: 'Manga search, chapters, volumes and covers',
 			badge: 'Manga',
 			status: () => ({ text: 'No key needed', tone: 'ok' }),
 			help:
-				'Manga always goes through Jikan (MyAnimeList), whatever the anime API above ' +
-				'is set to. No account or key is involved.',
+				'Manga always goes through MyAnimeList, using the same endpoint as the anime ' +
+				'card above, whatever the anime API is set to. No account or key is involved.',
 		});
 
 		// 4. Games

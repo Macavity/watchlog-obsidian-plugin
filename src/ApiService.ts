@@ -1,7 +1,7 @@
 import { requestUrl } from 'obsidian';
 import type { RequestUrlParam } from 'obsidian';
 import { httpsOrEmpty } from './httpsUrl';
-import { TENRAI_BASE } from './jikanBase';
+import { TENRAI_BASE, resolveJikanBase } from './jikanBase';
 import type {
 	AnimeSearchResult,
 	MediaSearchResult,
@@ -727,6 +727,17 @@ export class ApiService {
 		this.steamApiKey = steamApiKey;
 		this.steamId = steamId;
 		this.jikanBase = jikanBase;
+	}
+
+	setJikanBase(raw: string): void {
+		this.jikanBase = resolveJikanBase(raw);
+	}
+
+	/** Settings Test: the endpoint answers /anime/1 with MAL id 1. Throws ApiError. */
+	async pingJikan(): Promise<boolean> {
+		const url = `${this.jikanBase}/anime/1`;
+		const res = (await this.throttleJikan(() => this.fetchWithTimeout(url))) as { data?: { mal_id?: number } };
+		return res.data?.mal_id === 1;
 	}
 
 	setOmdbKey(key: string): void {

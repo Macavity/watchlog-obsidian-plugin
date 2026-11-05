@@ -21,6 +21,24 @@ describe('ApiService Jikan endpoint', () => {
 		await svc.searchAnime('frieren');
 		expect(fetch.mock.calls[0]![0]).toMatch(/^https:\/\/jikan\.example\.org\/v4\/anime\?q=frieren/);
 	});
+	it('switches endpoints at runtime via setJikanBase', async () => {
+		const svc = new ApiService('') as any;
+		svc.setJikanBase('https://jikan.example.org/v4/');
+		const fetch = spyFetch(svc);
+		await svc.searchManga('berserk');
+		expect(fetch.mock.calls[0]![0]).toMatch(/^https:\/\/jikan\.example\.org\/v4\/manga\?q=berserk/);
+		svc.setJikanBase('');
+		await svc.searchManga('berserk');
+		expect(fetch.mock.calls[1]![0]).toMatch(/^https:\/\/api\.tenrai\.org\/v1\/manga/);
+	});
+	it('pingJikan checks /anime/1 on the configured endpoint', async () => {
+		const svc = new ApiService('') as any;
+		const fetch = spyFetch(svc, { data: { mal_id: 1 } });
+		expect(await svc.pingJikan()).toBe(true);
+		expect(fetch.mock.calls[0]![0]).toBe(`${TENRAI_BASE}/anime/1`);
+		fetch.mockResolvedValue({ data: {} });
+		expect(await svc.pingJikan()).toBe(false);
+	});
 	it('classifies responses from the configured base as jikan', () => {
 		expect(apiSourceFromUrl(`${TENRAI_BASE}/anime/1`, TENRAI_BASE)).toBe('jikan');
 		expect(apiSourceFromUrl('https://jikan.example.org/v4/manga/1', 'https://jikan.example.org/v4')).toBe('jikan');
