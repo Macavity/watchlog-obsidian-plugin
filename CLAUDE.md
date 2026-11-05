@@ -32,8 +32,9 @@ Commit in logical groups (one concern per commit, not one big commit at the end)
 Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`, `ci:`, with an
 optional scope such as `fix(storage):`). Never chain a push with other commands.
 Never post comments on GitHub (PRs, issues, reviews) on the user's behalf; everything written
-there goes through the user's account and must come from them. When in doubt about any other
-outward action through their account, ask first.
+there goes through the user's account and must come from them. Review threads whose finding you
+fixed and pushed are resolved, without a reply; threads you rejected or did not touch stay open.
+When in doubt about any other outward action through their account, ask first.
 
 ## Memory
 
