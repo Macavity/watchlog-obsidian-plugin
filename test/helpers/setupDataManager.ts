@@ -7,7 +7,7 @@ import type { WatchLogTitle } from '../../src/types';
 export async function setupDataManager(files: Record<string, string>, extra: Record<string, unknown> = {}) {
 	// ids handed to the poster fetch queue
 	const posterQueue: string[] = [];
-	const { f, plugin, settings, local, layout, shared, index, stores } = await createStores(files, {
+	const { f, plugin, settings, local, layout, shared, index, stores, notices } = await createStores(files, {
 		types: ['Movie', 'TV Show'],
 		pluginExtra: {
 			posterService: {
@@ -18,7 +18,7 @@ export async function setupDataManager(files: Record<string, string>, extra: Rec
 	});
 	const dm = new DataManager(plugin, stores);
 	await dm.init();
-	return { dm, f, local, index, settings, posterQueue, plugin, shared, layout };
+	return { dm, f, local, index, settings, posterQueue, plugin, shared, layout, notices };
 }
 
 export function makeTitle(over: Partial<WatchLogTitle>): WatchLogTitle {

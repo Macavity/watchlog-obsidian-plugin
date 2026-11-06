@@ -1,6 +1,8 @@
-import { App, Modal, Notice } from 'obsidian';
-import { escapeCsvField, parseCSV, parseCsvDate } from './csv/csvCore';
+import type { App } from 'obsidian';
+import { CsvModalBase, rowsToCsv, type CsvExportRow, type CsvFieldDef, type CsvSelectOption } from './CsvModalBase';
 import { safeTypeName } from './storage/VaultLayout';
+import { t } from './i18n';
+import { statusLabel, typeLabel } from './i18n/labels';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle } from './types';
@@ -26,119 +28,39 @@ const CSV_COLUMNS = [
 	'externalLink', 'notes', 'studio',
 ] as const;
 
+
 function titlesToCsv(titles: WatchLogTitle[]): string {
-	const header = CSV_COLUMNS.join(',');
-	const rows = titles.map((t) =>
-		CSV_COLUMNS.map((col) =>
-			escapeCsvField(
-				col === 'studio'
-					? studioToCsv(t)
-					: (t as unknown as Record<string, string | number | null | undefined>)[col],
-			),
-		).join(','),
+	return rowsToCsv(CSV_COLUMNS, titles, (t, col) =>
+		col === 'studio'
+			? studioToCsv(t)
+			: (t as unknown as Record<string, string | number | null | undefined>)[col],
 	);
-	return [header, ...rows].join('\n');
 }
 
 // Field mapping definitions
 
-interface WlFieldDef {
-	key: string;
-	label: string;
-	autoDetect: string[];
-}
-
-const WL_IMPORT_FIELDS: WlFieldDef[] = [
-	{ key: 'title',          label: 'Name',          autoDetect: ['title', 'name'] },
-	{ key: 'type',           label: 'Type',          autoDetect: ['type'] },
-	{ key: 'status',         label: 'Status',        autoDetect: ['status'] },
-	{ key: 'priority',       label: 'Priority',      autoDetect: ['priority'] },
-	{ key: 'rating',         label: 'Rating',        autoDetect: ['rating', 'score'] },
-	{ key: 'totalEpisodes',  label: 'Episodes',      autoDetect: ['episodes', 'totalepisodes', 'total episodes', 'episode count', 'ep count'] },
-	{ key: 'episodeDuration',label: 'Duration (min)',autoDetect: ['duration', 'episodeduration', 'episode duration', 'minutes', 'runtime'] },
-	{ key: 'dateStarted',    label: 'Date Started',  autoDetect: ['started', 'datestarted', 'date started', 'date_started', 'start date'] },
-	{ key: 'dateFinished',   label: 'Date Finished', autoDetect: ['finished', 'datefinished', 'date finished', 'date_finished', 'end date', 'finish date', 'completed date'] },
-	{ key: 'releaseDate',    label: 'Release Date',  autoDetect: ['releasedate', 'release date', 'release_date', 'air date', 'airdate'] },
-	{ key: 'externalLink',   label: 'Link',          autoDetect: ['link', 'externallink', 'external link', 'external_link', 'url'] },
-	{ key: 'notes',          label: 'Notes',         autoDetect: ['notes', 'note', 'comment', 'comments'] },
-	{ key: 'studio',         label: 'Studio',        autoDetect: ['studio', 'studios', 'network', 'production', 'production company'] },
+const WL_IMPORT_FIELDS: CsvFieldDef[] = [
+	{ key: 'title',          labelKey: 'csv.fields.name',          coercion: 'string', autoDetect: ['title', 'name'] },
+	{ key: 'type',           labelKey: 'csv.fields.type',          coercion: 'string', autoDetect: ['type'] },
+	{ key: 'status',         labelKey: 'csv.fields.status',        coercion: 'string', autoDetect: ['status'] },
+	{ key: 'priority',       labelKey: 'csv.fields.priority',      coercion: 'string', autoDetect: ['priority'] },
+	{ key: 'rating',         labelKey: 'csv.fields.rating',        coercion: 'rating', autoDetect: ['rating', 'score'] },
+	{ key: 'totalEpisodes',  labelKey: 'csv.fields.episodes',      coercion: 'int', autoDetect: ['episodes', 'totalepisodes', 'total episodes', 'episode count', 'ep count'] },
+	{ key: 'episodeDuration',labelKey: 'csv.fields.duration',coercion: 'int', autoDetect: ['duration', 'episodeduration', 'episode duration', 'minutes', 'runtime'] },
+	{ key: 'dateStarted',    labelKey: 'csv.fields.dateStarted',  coercion: 'date', autoDetect: ['started', 'datestarted', 'date started', 'date_started', 'start date'] },
+	{ key: 'dateFinished',   labelKey: 'csv.fields.dateFinished', coercion: 'date', autoDetect: ['finished', 'datefinished', 'date finished', 'date_finished', 'end date', 'finish date', 'completed date'] },
+	{ key: 'releaseDate',    labelKey: 'csv.fields.releaseDate',  coercion: 'date', autoDetect: ['releasedate', 'release date', 'release_date', 'air date', 'airdate'] },
+	{ key: 'externalLink',   labelKey: 'csv.fields.link',          coercion: 'string', autoDetect: ['link', 'externallink', 'external link', 'external_link', 'url'] },
+	{ key: 'notes',          labelKey: 'csv.fields.notes',         coercion: 'string', autoDetect: ['notes', 'note', 'comment', 'comments'] },
+	{ key: 'studio',         labelKey: 'csv.fields.studio',        coercion: 'none', autoDetect: ['studio', 'studios', 'network', 'production', 'production company'] },
 ];
 
-function autoMap(headers: string[]): Record<string, string> {
-	const mapping: Record<string, string> = {};
-	for (const field of WL_IMPORT_FIELDS) {
-		const match = headers.find((h) => field.autoDetect.includes(h.toLowerCase()));
-		mapping[field.key] = match ?? '';
-	}
-	return mapping;
-}
 
-function applyMapping(
-	rows: string[][],
-	mapping: Record<string, string>,
-	dataManager: DataManager,
-): { entry: Partial<WatchLogTitle>; isDuplicate: boolean }[] {
-	if (rows.length < 2) return [];
-	const headers = (rows[0] ?? []).map((h) => h.trim());
-	const existingTitles = dataManager.getTitles();
-
-	return rows.slice(1)
-		.filter((r) => r.some((c) => c.trim()))
-		.map((values) => {
-			const get = (fieldKey: string): string => {
-				const colName = mapping[fieldKey];
-				if (!colName) return '';
-				const idx = headers.indexOf(colName);
-				return idx >= 0 ? (values[idx] ?? '').trim() : '';
-			};
-
-			const entry: Partial<WatchLogTitle> = {};
-
-			const titleVal = get('title');
-			if (titleVal) entry.title = titleVal;
-			const typeVal = get('type');
-			if (typeVal) entry.type = typeVal;
-			const statusVal = get('status');
-			if (statusVal) entry.status = statusVal;
-			const priorityVal = get('priority');
-			if (priorityVal) entry.priority = priorityVal;
-			const ratingVal = get('rating');
-			if (ratingVal) {
-				const r = parseFloat(ratingVal) || 0;
-				entry.rating = Math.max(0, Math.min(5, r));
-			}
-			const epsVal = get('totalEpisodes');
-			if (epsVal) entry.totalEpisodes = parseInt(epsVal, 10) || 0;
-			const durVal = get('episodeDuration');
-			if (durVal) entry.episodeDuration = parseInt(durVal, 10) || 0;
-			const startedRaw = get('dateStarted');
-			if (startedRaw) { const d = parseCsvDate(startedRaw); if (d) entry.dateStarted = d; }
-			const finishedRaw = get('dateFinished');
-			if (finishedRaw) { const d = parseCsvDate(finishedRaw); if (d) entry.dateFinished = d; }
-			const releaseDateRaw = get('releaseDate');
-			if (releaseDateRaw) { const d = parseCsvDate(releaseDateRaw); if (d) entry.releaseDate = d; }
-			const linkVal = get('externalLink');
-			if (linkVal) entry.externalLink = linkVal;
-			const notesVal = get('notes');
-			if (notesVal) entry.notes = notesVal;
-			// imported studios are user data — the manual slot, so a later fetch still runs
-			const studioVal = studioFromCsv(get('studio'));
-			if (studioVal.length > 0) entry.manualStudio = studioVal;
-
-			// skip rows where all mapped fields resolved to empty
-			const isEmpty = !entry.title?.trim() && !entry.type && !entry.status
-				&& !entry.rating && !entry.totalEpisodes && !entry.episodeDuration
-				&& !entry.dateStarted && !entry.dateFinished && !entry.releaseDate && !entry.externalLink
-				&& !entry.notes && !entry.manualStudio;
-			if (isEmpty) return null;
-
-			const isDuplicate = !!existingTitles.find(
-				(t) => t.title.toLowerCase() === (entry.title ?? '').toLowerCase()
-			);
-			return { entry, isDuplicate };
-		})
-		.filter((r): r is { entry: Partial<WatchLogTitle>; isDuplicate: boolean } => r !== null);
-}
+// fields that make an imported row non-empty (priority alone does not)
+const NON_EMPTY_KEYS = [
+	'type', 'status', 'rating', 'totalEpisodes', 'episodeDuration',
+	'dateStarted', 'dateFinished', 'releaseDate', 'externalLink', 'notes',
+] as const;
 
 // sentinel for "create new type" in value mapping
 const CREATE_NEW_TYPE = '__create__';
@@ -155,578 +77,204 @@ function randomAutoColor(theme: string): string {
 	return palette[Math.floor(Math.random() * palette.length)] ?? '#888780';
 }
 
+
+/** Complete title from a mapped CSV entry; a Completed status marks all episodes watched. */
+export function buildImportedTitle(entry: Partial<WatchLogTitle>, id: string, defaultType: string | undefined): WatchLogTitle {
+	const titleName = entry.title!.trim();
+	const result: WatchLogTitle = {
+		id,
+		title: titleName,
+		type: entry.type?.trim() || defaultType || 'Anime',
+		status: entry.status || 'Plan to watch',
+		priority: entry.priority || 'Medium',
+		review: '',
+		rating: entry.rating ?? 0,
+		notes: entry.notes ?? '',
+		dateStarted: entry.dateStarted ?? null,
+		dateFinished: entry.dateFinished ?? null,
+		dateAdded: new Date().toISOString(),
+		dateModified: new Date().toISOString(),
+		totalEpisodes: entry.totalEpisodes ?? 0,
+		episodeDuration: entry.episodeDuration ?? 0,
+		releaseDate: entry.releaseDate ?? null,
+		externalLink: entry.externalLink ?? '',
+		seasons: [],
+		watchedEpisodes: [],
+		favorite: false,
+	};
+	if (entry.manualStudio?.length) result.manualStudio = entry.manualStudio;
+	if (result.status === 'Completed' && result.totalEpisodes > 0) {
+		result.watchedEpisodes = Array.from({ length: result.totalEpisodes }, (_, k) => k + 1);
+	}
+	return result;
+}
+
+/** Type names the import must create: unknown entry types plus those the value map marks for creation. */
+export function missingTypeNames(
+	entries: { type?: string }[],
+	existingTypes: string[],
+	typeValueMap: Record<string, string>,
+): Set<string> {
+	const existing = new Set(existingTypes.map((n) => n.toLowerCase()));
+	const missing = new Set<string>();
+	for (const e of entries) {
+		const typeName = e.type?.trim();
+		if (typeName && !existing.has(typeName.toLowerCase())) missing.add(typeName);
+	}
+	for (const [orig, resolved] of Object.entries(typeValueMap)) {
+		const name = safeTypeName(orig);
+		if (resolved === CREATE_NEW_TYPE && !existing.has(name.toLowerCase())) missing.add(name);
+	}
+	return missing;
+}
+
 // Modal
 
-export class CsvModal extends Modal {
-	private plugin: WatchLogPlugin;
-	private dataManager: DataManager;
-	private mode: 'export' | 'import';
-
-	private selectedIds = new Set<string>();
-
-	private csvRows: string[][] = [];
-	private csvHeaders: string[] = [];
-	private columnMapping: Record<string, string> = {};
-	private importRows: { entry: Partial<WatchLogTitle>; isDuplicate: boolean; selected: boolean }[] = [];
-
-	private statusValueMap: Record<string, string> = {};  // csvValue → resolved status ('' = leave blank)
-	private typeValueMap: Record<string, string> = {};    // csvValue → resolved type ('' = blank, CREATE_NEW_TYPE = create)
-	private ratingValueMap: Record<string, string> = {};  // csvValue → '1'–'5' or '' (leave blank)
-
-	private stepUpload: HTMLElement | null = null;
-	private stepMapping: HTMLElement | null = null;
-	private stepValueMap: HTMLElement | null = null;
-	private stepPreview: HTMLElement | null = null;
-	private importBtn: HTMLButtonElement | null = null;
-	private cancelBtn: HTMLButtonElement | null = null;
-
-	private isImporting = false;
-	private importCancelled = false;
-	private progressWrap: HTMLElement | null = null;
-	private progressBarFill: HTMLElement | null = null;
-	private progressText: HTMLElement | null = null;
-
+export class CsvModal extends CsvModalBase<Partial<WatchLogTitle>> {
 	constructor(
 		app: App,
 		plugin: WatchLogPlugin,
-		dataManager: DataManager,
+		private dataManager: DataManager,
 		mode: 'export' | 'import',
 	) {
-		super(app);
-		this.plugin = plugin;
-		this.dataManager = dataManager;
-		this.mode = mode;
-	}
-
-	onOpen(): void {
-		const { contentEl } = this;
-		contentEl.empty();
-		contentEl.addClass('wl-csv-modal');
-
-		if (this.mode === 'export') {
-			this.renderExport(contentEl);
-		} else {
-			this.renderImport(contentEl);
-		}
-	}
-
-	onClose(): void {
-		this.contentEl.empty();
+		super(app, plugin, mode);
 	}
 
 	// Export
 
-	private renderExport(el: HTMLElement): void {
-		el.createEl('h2', { cls: 'wl-modal-title', text: 'Export to CSV' });
-
-		const titles = this.dataManager.getTitles();
-		titles.forEach((t) => this.selectedIds.add(t.id));
-
-		const ctrlRow = el.createDiv({ cls: 'wl-csv-ctrl-row' });
-		const selectAllBtn = ctrlRow.createEl('button', { cls: 'wl-btn', text: 'Select all' });
-		const selectNoneBtn = ctrlRow.createEl('button', { cls: 'wl-btn', text: 'Select none' });
-		const countEl = ctrlRow.createSpan({ cls: 'wl-csv-count', text: `${titles.length} selected` });
-
-		const listEl = el.createDiv({ cls: 'wl-csv-list' });
-		const checkboxes: HTMLInputElement[] = [];
-
-		const updateCount = (): void => {
-			countEl.textContent = `${this.selectedIds.size} selected`;
-		};
-
-		for (const title of titles) {
-			const row = listEl.createDiv({ cls: 'wl-csv-row' });
-			const cb = row.createEl('input', { attr: { type: 'checkbox' } });
-			cb.checked = true;
-			checkboxes.push(cb);
-			row.createSpan({ cls: 'wl-csv-row-title', text: title.title });
-			row.createSpan({ cls: 'wl-csv-row-meta', text: `${title.type} · ${title.status}` });
-
-			cb.addEventListener('change', () => {
-				if (cb.checked) this.selectedIds.add(title.id);
-				else this.selectedIds.delete(title.id);
-				updateCount();
-			});
-		}
-
-		selectAllBtn.addEventListener('click', () => {
-			titles.forEach((t) => this.selectedIds.add(t.id));
-			checkboxes.forEach((cb) => { cb.checked = true; });
-			updateCount();
-		});
-
-		selectNoneBtn.addEventListener('click', () => {
-			this.selectedIds.clear();
-			checkboxes.forEach((cb) => { cb.checked = false; });
-			updateCount();
-		});
-
-		const btnRow = el.createDiv({ cls: 'wl-modal-btn-row wl-csv-btn-row' });
-		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn', text: 'Cancel' });
-		const exportBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Export CSV' });
-
-		cancelBtn.addEventListener('click', () => this.close());
-		exportBtn.addEventListener('click', () => {
-			const toExport = titles.filter((t) => this.selectedIds.has(t.id));
-			if (toExport.length === 0) {
-				new Notice('No titles selected.');
-				return;
-			}
-			const csv = titlesToCsv(toExport);
-			const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-			const url = URL.createObjectURL(blob);
-			const a = createEl('a');
-			const today = new Date();
-			const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-			a.href = url;
-			a.download = `watchlog-export-${dateStr}.csv`;
-			a.click();
-			URL.revokeObjectURL(url);
-			new Notice(`Exported ${toExport.length} titles.`);
-			this.close();
-		});
+	protected exportHeading(): string {
+		return t('csv.exportTitle');
 	}
 
-	// Import
-
-	private renderImport(el: HTMLElement): void {
-		el.createEl('h2', { cls: 'wl-modal-title', text: 'Import from CSV' });
-
-		this.stepUpload = el.createDiv({ cls: 'wl-csv-step' });
-		const dropZone = this.stepUpload.createDiv({ cls: 'wl-csv-drop-zone' });
-		dropZone.createDiv({ cls: 'wl-csv-drop-label', text: 'Select a CSV file to import' });
-		const fileInput = dropZone.createEl('input', {
-			attr: { type: 'file', accept: '.csv' },
-			cls: 'wl-csv-file-input',
-		});
-
-		this.stepMapping = el.createDiv({ cls: 'wl-csv-step' });
-		this.stepMapping.hide();
-
-		this.stepValueMap = el.createDiv({ cls: 'wl-csv-step' });
-		this.stepValueMap.hide();
-
-		this.stepPreview = el.createDiv({ cls: 'wl-csv-step' });
-		this.stepPreview.hide();
-
-		const btnRow = el.createDiv({ cls: 'wl-modal-btn-row wl-csv-btn-row' });
-
-		// background-import note (hidden until the import starts)
-		this.progressWrap = btnRow.createDiv({ cls: 'wl-csv-progress-wrap' });
-		this.progressWrap.hide();
-		this.progressWrap.createSpan({ cls: 'wl-csv-bg-note', text: 'You can close this window; import will continue in the background.' });
-		const progressTrack = this.progressWrap.createDiv({ cls: 'wl-csv-progress-track' });
-		this.progressBarFill = progressTrack.createDiv({ cls: 'wl-csv-progress-fill' });
-		this.progressText = this.progressWrap.createSpan({ cls: 'wl-csv-progress-text', text: '0 / 0' });
-
-		this.cancelBtn = btnRow.createEl('button', { cls: 'wl-btn', text: 'Cancel' });
-		this.importBtn = btnRow.createEl('button', {
-			cls: 'wl-btn wl-btn-primary',
-			text: 'Import selected',
-		});
-		this.importBtn.disabled = true;
-		this.importBtn.hide();
-
-		this.cancelBtn.addEventListener('click', () => {
-			if (this.isImporting) {
-				this.importCancelled = true;
-				if (this.cancelBtn) {
-					this.cancelBtn.disabled = true;
-					this.cancelBtn.textContent = 'Cancelling…';
-				}
-			} else {
-				this.close();
-			}
-		});
-		this.importBtn.addEventListener('click', () => void this.doImport());
-
-		fileInput.addEventListener('change', () => {
-			const file = fileInput.files?.[0];
-			if (!file) return;
-			const reader = new FileReader();
-			reader.onload = (ev) => {
-				const text = ev.target?.result as string;
-				this.csvRows = parseCSV(text);
-				this.csvHeaders = (this.csvRows[0] ?? []).map((h) => h.trim());
-				this.columnMapping = autoMap(this.csvHeaders);
-				this.showMappingStep();
-			};
-			reader.readAsText(file);
-		});
+	protected exportRows(): CsvExportRow[] {
+		return this.dataManager.getTitles().map((title) => ({
+			id: title.id,
+			title: title.title,
+			meta: `${typeLabel(title.type)} · ${statusLabel(title.status)}`,
+		}));
 	}
 
-	// Step: column mapping
-
-	private showMappingStep(): void {
-		if (!this.stepUpload || !this.stepMapping) return;
-		this.stepUpload.hide();
-		this.stepMapping.show();
-		this.renderMappingStep(this.stepMapping);
+	protected exportSelection(ids: Set<string>): { csv: string; count: number } {
+		const toExport = this.dataManager.getTitles().filter((t) => ids.has(t.id));
+		return { csv: titlesToCsv(toExport), count: toExport.length };
 	}
 
-	private renderMappingStep(el: HTMLElement): void {
-		el.empty();
-		el.createDiv({ cls: 'wl-csv-step-title', text: 'Map your columns' });
-		el.createDiv({
-			cls: 'wl-csv-step-desc',
-			text: 'Match each WatchLog field to a column from your CSV. Select "Skip" to leave a field empty.',
-		});
-		el.createDiv({
-			cls: 'wl-csv-info-note',
-			text: 'Rows with empty fields will be skipped automatically. If you see missing titles, check that your CSV has no empty rows at the top.',
-		});
-
-		const SKIP_VALUE = '';
-		const grid = el.createDiv({ cls: 'wl-csv-map-grid' });
-		const selectEls: Record<string, HTMLSelectElement> = {};
-
-		for (const field of WL_IMPORT_FIELDS) {
-			const row = grid.createDiv({ cls: 'wl-csv-map-row' });
-			row.createSpan({ cls: 'wl-csv-map-label', text: field.label });
-			const sel = row.createEl('select', { cls: 'wl-select wl-csv-map-select' });
-			selectEls[field.key] = sel;
-			sel.createEl('option', { value: SKIP_VALUE, text: '— skip —' });
-			for (const col of this.csvHeaders) {
-				sel.createEl('option', { value: col, text: col });
-			}
-			sel.value = this.columnMapping[field.key] ?? SKIP_VALUE;
-		}
-
-		const previewBtn = el.createEl('button', {
-			cls: 'wl-btn wl-btn-primary wl-csv-preview-btn',
-			text: 'Next →',
-		});
-		previewBtn.addEventListener('click', () => {
-			for (const field of WL_IMPORT_FIELDS) {
-				this.columnMapping[field.key] = selectEls[field.key]?.value ?? '';
-			}
-			// parse rows with the current column mapping
-			this.importRows = applyMapping(this.csvRows, this.columnMapping, this.dataManager)
-				.map((r) => ({ ...r, selected: !r.isDuplicate }));
-
-			// unknown status/type values and non-numeric ratings
-			const existingStatusNames = new Set(this.plugin.settings.statuses.map((s) => s.name));
-			const existingTypeNames = new Set(this.plugin.settings.types.map((t) => t.name));
-
-			const unknownStatuses: string[] = [];
-			const unknownTypes: string[] = [];
-			const unknownRatings: string[] = [];
-			const seenStatuses = new Set<string>();
-			const seenTypes = new Set<string>();
-			const seenRatings = new Set<string>();
-
-			for (const r of this.importRows) {
-				const sv = r.entry.status?.trim();
-				if (sv && !existingStatusNames.has(sv) && !seenStatuses.has(sv)) {
-					unknownStatuses.push(sv);
-					seenStatuses.add(sv);
-				}
-				const tv = r.entry.type?.trim();
-				if (tv && !existingTypeNames.has(tv) && !seenTypes.has(tv)) {
-					unknownTypes.push(tv);
-					seenTypes.add(tv);
-				}
-				// non-numeric ratings: parseFloat leaves r.entry.rating at 0
-				const ratingColName = this.columnMapping['rating'];
-				if (ratingColName) {
-					const headers = (this.csvRows[0] ?? []).map((h) => h.trim());
-					const ratingIdx = headers.indexOf(ratingColName);
-					if (ratingIdx >= 0) {
-						const lineIdx = this.importRows.indexOf(r);
-						const rawValues = this.csvRows[lineIdx + 1] ?? [];
-						const rawRating = (rawValues[ratingIdx] ?? '').trim();
-						if (rawRating && isNaN(parseFloat(rawRating)) && !seenRatings.has(rawRating)) {
-							unknownRatings.push(rawRating);
-							seenRatings.add(rawRating);
-						}
-					}
-				}
-			}
-
-			if (unknownStatuses.length > 0 || unknownTypes.length > 0 || unknownRatings.length > 0) {
-				this.showValueMapStep(unknownStatuses, unknownTypes, unknownRatings);
-			} else {
-				this.showPreviewStep();
-			}
-		});
+	protected exportFilePrefix(): string {
+		return 'watchlog';
 	}
 
-	// Step: value mapping
-
-	private showValueMapStep(unknownStatuses: string[], unknownTypes: string[], unknownRatings: string[] = []): void {
-		if (!this.stepMapping || !this.stepValueMap) return;
-		this.stepMapping.hide();
-		this.stepValueMap.show();
-		this.renderValueMapStep(this.stepValueMap, unknownStatuses, unknownTypes, unknownRatings);
+	protected noneSelectedNotice(): string {
+		return t('csv.notice.noTitlesSelected');
 	}
 
-	private renderValueMapStep(el: HTMLElement, unknownStatuses: string[], unknownTypes: string[], unknownRatings: string[] = []): void {
-		el.empty();
-		el.createDiv({ cls: 'wl-csv-step-title', text: 'Map unknown values' });
-		el.createDiv({
-			cls: 'wl-csv-step-desc',
-			text: 'Some values in your CSV were not recognized. Map each to an existing value, or choose how to handle it.',
-		});
-
-		const existingStatuses = this.plugin.settings.statuses.map((s) => s.name);
-		const existingTypes = this.plugin.settings.types.map((t) => t.name);
-		const statusSelects: Record<string, HTMLSelectElement> = {};
-		const typeSelects: Record<string, HTMLSelectElement> = {};
-		const ratingSelects: Record<string, HTMLSelectElement> = {};
-
-		if (unknownStatuses.length > 0) {
-			el.createDiv({ cls: 'wl-csv-valmap-section-title', text: 'Status' });
-			for (const sv of unknownStatuses) {
-				const row = el.createDiv({ cls: 'wl-csv-valmap-row' });
-				row.createSpan({ cls: 'wl-csv-valmap-orig', text: `"${sv}"` });
-				row.createSpan({ cls: 'wl-csv-valmap-arrow', text: '→' });
-				const sel = row.createEl('select', { cls: 'wl-select wl-csv-valmap-select' });
-				statusSelects[sv] = sel;
-				sel.createEl('option', { value: '', text: '— leave blank —' });
-				for (const name of existingStatuses) {
-					sel.createEl('option', { value: name, text: name });
-				}
-				// pre-fill with the closest match (case-insensitive)
-				const lc = sv.toLowerCase();
-				const match = existingStatuses.find((s) => s.toLowerCase() === lc);
-				if (match) sel.value = match;
-			}
-		}
-
-		if (unknownTypes.length > 0) {
-			el.createDiv({ cls: 'wl-csv-valmap-section-title', text: 'Type' });
-			for (const tv of unknownTypes) {
-				const row = el.createDiv({ cls: 'wl-csv-valmap-row' });
-				row.createSpan({ cls: 'wl-csv-valmap-orig', text: `"${tv}"` });
-				row.createSpan({ cls: 'wl-csv-valmap-arrow', text: '→' });
-				const sel = row.createEl('select', { cls: 'wl-select wl-csv-valmap-select' });
-				typeSelects[tv] = sel;
-				sel.createEl('option', { value: '', text: '— leave blank —' });
-				for (const name of existingTypes) {
-					sel.createEl('option', { value: name, text: name });
-				}
-				sel.createEl('option', { value: CREATE_NEW_TYPE, text: '+ create new type' });
-				const lc = tv.toLowerCase();
-				const match = existingTypes.find((t) => t.toLowerCase() === lc);
-				if (match) sel.value = match;
-				else sel.value = CREATE_NEW_TYPE;
-			}
-		}
-
-		if (unknownRatings.length > 0) {
-			el.createDiv({ cls: 'wl-csv-valmap-section-title', text: 'Rating' });
-			for (const rv of unknownRatings) {
-				const row = el.createDiv({ cls: 'wl-csv-valmap-row' });
-				row.createSpan({ cls: 'wl-csv-valmap-orig', text: `"${rv}"` });
-				row.createSpan({ cls: 'wl-csv-valmap-arrow', text: '→' });
-				const sel = row.createEl('select', { cls: 'wl-select wl-csv-valmap-select' });
-				ratingSelects[rv] = sel;
-				sel.createEl('option', { value: '', text: '— leave blank —' });
-				for (let i = 1; i <= 5; i++) {
-					sel.createEl('option', { value: String(i), text: `${i}/5` });
-				}
-			}
-		}
-
-		const btnRow = el.createDiv({ cls: 'wl-csv-valmap-btn-row' });
-		const backBtn = btnRow.createEl('button', { cls: 'wl-btn', text: '← back' });
-		const confirmBtn = btnRow.createEl('button', {
-			cls: 'wl-btn wl-btn-primary',
-			text: 'Preview →',
-		});
-
-		backBtn.addEventListener('click', () => {
-			if (!this.stepValueMap || !this.stepMapping) return;
-			this.stepValueMap.hide();
-			this.stepMapping.show();
-		});
-
-		confirmBtn.addEventListener('click', () => {
-			this.statusValueMap = {};
-			for (const sv of unknownStatuses) {
-				this.statusValueMap[sv] = statusSelects[sv]?.value ?? '';
-			}
-			this.typeValueMap = {};
-			for (const tv of unknownTypes) {
-				this.typeValueMap[tv] = typeSelects[tv]?.value ?? '';
-			}
-			this.ratingValueMap = {};
-			for (const rv of unknownRatings) {
-				this.ratingValueMap[rv] = ratingSelects[rv]?.value ?? '';
-			}
-			// apply the value maps to importRows
-			this.applyValueMapsToRows();
-			this.showPreviewStep();
-		});
+	protected exportedNotice(count: number): string {
+		return t('csv.notice.exportedTitles', { count });
 	}
 
-	private applyValueMapsToRows(): void {
+	// Import schema
+
+	protected importHeading(): string {
+		return t('csv.importTitle');
+	}
+
+	protected importFields(): readonly CsvFieldDef[] {
+		return WL_IMPORT_FIELDS;
+	}
+
+	protected mapDescription(): string {
+		return t('csv.map.descWatch');
+	}
+
+	protected mapNote(): string {
+		return t('csv.map.noteWatch');
+	}
+
+	protected valuesDescription(): string {
+		return t('csv.values.descWatch');
+	}
+
+	protected existingTitles(): { title: string }[] {
+		return this.dataManager.getTitles();
+	}
+
+	protected buildEntry(get: (fieldKey: string) => string): Partial<WatchLogTitle> | null {
+		const entry = this.coerceFields(get) as Partial<WatchLogTitle>;
+		// imported studios are user data — the manual slot, so a later fetch still runs
+		const studioVal = studioFromCsv(get('studio'));
+		if (studioVal.length > 0) entry.manualStudio = studioVal;
+
+		// skip rows where all mapped fields resolved to empty
+		const isEmpty = !entry.title?.trim() && !entry.manualStudio && NON_EMPTY_KEYS.every((k) => !entry[k]);
+		return isEmpty ? null : entry;
+	}
+
+	protected previewMeta(entry: Partial<WatchLogTitle>): string {
+		return [
+			entry.type ? typeLabel(entry.type) : '',
+			entry.status ? statusLabel(entry.status) : '',
+		].filter(Boolean).join(' · ');
+	}
+
+	// Value mapping: statuses and types come from the user's settings
+
+	protected isKnownStatus(status: string): boolean {
+		return this.plugin.settings.statuses.some((s) => s.name === status);
+	}
+
+	protected statusChoices(): CsvSelectOption[] {
+		return this.plugin.settings.statuses.map((s) => ({ value: s.name, label: statusLabel(s.name) }));
+	}
+
+	protected collectUnknownTypes(): string[] {
+		const existing = new Set(this.plugin.settings.types.map((t) => t.name));
+		const unknown: string[] = [];
+		const seen = new Set<string>();
 		for (const r of this.importRows) {
-			const sv = r.entry.status?.trim() ?? '';
-			if (sv && Object.prototype.hasOwnProperty.call(this.statusValueMap, sv)) {
-				const resolved = this.statusValueMap[sv] ?? '';
-				r.entry.status = resolved || undefined;
+			const tv = r.entry.type?.trim();
+			if (tv && !existing.has(tv) && !seen.has(tv)) {
+				unknown.push(tv);
+				seen.add(tv);
 			}
-			// type — keep the CREATE_NEW_TYPE sentinel; doImport handles it
-			const tv = r.entry.type?.trim() ?? '';
-			if (tv && Object.prototype.hasOwnProperty.call(this.typeValueMap, tv)) {
-				const resolved = this.typeValueMap[tv] ?? '';
-				if (resolved === CREATE_NEW_TYPE) {
-					// keep the original value (made folder-safe), mark for creation
-					r.entry.type = safeTypeName(tv);
-				} else {
-					r.entry.type = resolved || undefined;
-				}
-			}
-			// rating — map a non-numeric value to numeric
-			const rawRatingKey = Object.keys(this.ratingValueMap).find((k) => {
-				const ratingColName = this.columnMapping['rating'];
-				if (!ratingColName) return false;
-				const headers = (this.csvRows[0] ?? []).map((h) => h.trim());
-				const ratingIdx = headers.indexOf(ratingColName);
-				if (ratingIdx < 0) return false;
-				const rowIdx = this.importRows.indexOf(r);
-				const rawValues = this.csvRows[rowIdx + 1] ?? [];
-				return (rawValues[ratingIdx] ?? '').trim() === k;
-			});
-			if (rawRatingKey !== undefined) {
-				const resolved = this.ratingValueMap[rawRatingKey] ?? '';
-				r.entry.rating = resolved ? parseInt(resolved, 10) : 0;
-			}
+		}
+		return unknown;
+	}
 
-			// re-check duplicate status after value resolution
-			r.isDuplicate = !!this.dataManager.getTitles().find(
-				(t) => t.title.toLowerCase() === (r.entry.title ?? '').toLowerCase()
-			);
+	protected renderTypeSection(el: HTMLElement, types: string[]): Record<string, HTMLSelectElement> {
+		const existingTypes = this.plugin.settings.types.map((t) => t.name);
+		return this.renderValueSection(el, 'csv.fields.type', types, (sel, tv) => {
+			for (const name of existingTypes) {
+				sel.createEl('option', { value: name, text: typeLabel(name) });
+			}
+			sel.createEl('option', { value: CREATE_NEW_TYPE, text: t('csv.createType') });
+			const lc = tv.toLowerCase();
+			sel.value = existingTypes.find((t) => t.toLowerCase() === lc) ?? CREATE_NEW_TYPE;
+		});
+	}
+
+	protected applyTypeValueMap(entry: Partial<WatchLogTitle>): void {
+		// keep the CREATE_NEW_TYPE sentinel; doImport handles it
+		const tv = entry.type?.trim() ?? '';
+		if (tv && Object.prototype.hasOwnProperty.call(this.typeValueMap, tv)) {
+			const resolved = this.typeValueMap[tv] ?? '';
+			// keep the original value (made folder-safe) for creation, else the picked type
+			entry.type = resolved === CREATE_NEW_TYPE ? safeTypeName(tv) : resolved || undefined;
 		}
 	}
 
-	// Step: preview
-
-	private showPreviewStep(): void {
-		if (!this.stepValueMap || !this.stepMapping || !this.stepPreview || !this.importBtn) return;
-		this.stepValueMap.hide();
-		this.stepMapping.hide();
-		this.stepPreview.show();
-		this.importBtn.show();
-		this.importBtn.disabled = this.importRows.filter((r) => r.selected).length === 0;
-		this.renderPreviewStep(this.stepPreview);
-	}
-
-	private renderPreviewStep(el: HTMLElement): void {
-		el.empty();
-
-		const dupeCount = this.importRows.filter((r) => r.isDuplicate).length;
-		if (dupeCount > 0) {
-			el.createDiv({
-				cls: 'wl-csv-dupe-warning',
-				text: `${dupeCount} duplicate${dupeCount !== 1 ? 's' : ''} found (highlighted). These are deselected by default.`,
-			});
-		}
-
-		const ctrlRow = el.createDiv({ cls: 'wl-csv-ctrl-row' });
-		const backBtn = ctrlRow.createEl('button', { cls: 'wl-btn', text: '← back' });
-		const selectAllBtn = ctrlRow.createEl('button', { cls: 'wl-btn', text: 'Select all' });
-		const selectNoneBtn = ctrlRow.createEl('button', { cls: 'wl-btn', text: 'Select none' });
-		const countEl = ctrlRow.createSpan({ cls: 'wl-csv-count', text: '' });
-
-		backBtn.addEventListener('click', () => {
-			if (!this.stepPreview || !this.stepValueMap || !this.stepMapping || !this.importBtn) return;
-			this.stepPreview.hide();
-			this.importBtn.hide();
-			this.importBtn.disabled = true;
-			// back to the value-map step when it was shown, else column mapping
-			const hadValueMap = Object.keys(this.statusValueMap).length > 0 || Object.keys(this.typeValueMap).length > 0 || Object.keys(this.ratingValueMap).length > 0;
-			if (hadValueMap) {
-				this.stepValueMap.show();
-			} else {
-				this.stepMapping.show();
-			}
-		});
-
-		const listEl = el.createDiv({ cls: 'wl-csv-list' });
-		const checkboxes: HTMLInputElement[] = [];
-
-		const updateCount = (): void => {
-			const sel = this.importRows.filter((r) => r.selected).length;
-			countEl.textContent = `${sel} of ${this.importRows.length} selected`;
-			if (this.importBtn) this.importBtn.disabled = sel === 0;
-		};
-
-		for (let i = 0; i < this.importRows.length; i++) {
-			const r = this.importRows[i]!;
-			const row = listEl.createDiv({
-				cls: `wl-csv-row${r.isDuplicate ? ' wl-csv-row-dupe' : ''}`,
-			});
-			const cb = row.createEl('input', { attr: { type: 'checkbox' } });
-			cb.checked = r.selected;
-			checkboxes.push(cb);
-			row.createSpan({ cls: 'wl-csv-row-title', text: r.entry.title ?? '(no title)' });
-			const metaParts = [r.entry.type, r.entry.status].filter(Boolean).join(' · ');
-			if (metaParts) row.createSpan({ cls: 'wl-csv-row-meta', text: metaParts });
-			if (r.isDuplicate) {
-				row.createSpan({ cls: 'wl-csv-dupe-badge', text: 'duplicate' });
-			}
-			const idx = i;
-			cb.addEventListener('change', () => {
-				this.importRows[idx]!.selected = cb.checked;
-				updateCount();
-			});
-		}
-
-		selectAllBtn.addEventListener('click', () => {
-			this.importRows.forEach((r) => { r.selected = true; });
-			checkboxes.forEach((cb) => { cb.checked = true; });
-			updateCount();
-		});
-
-		selectNoneBtn.addEventListener('click', () => {
-			this.importRows.forEach((r) => { r.selected = false; });
-			checkboxes.forEach((cb) => { cb.checked = false; });
-			updateCount();
-		});
-
-		updateCount();
+	protected afterValueMaps(r: { entry: Partial<WatchLogTitle>; isDuplicate: boolean }): void {
+		// re-check duplicate status after value resolution
+		r.isDuplicate = !!this.dataManager.getTitles().find(
+			(t) => t.title.toLowerCase() === (r.entry.title ?? '').toLowerCase()
+		);
 	}
 
 	// Import
 
-	private async doImport(): Promise<void> {
-		const toImport = this.importRows.filter((r) => r.selected && r.entry.title?.trim());
-		if (toImport.length === 0) {
-			new Notice('No titles selected to import.');
-			return;
-		}
-
-		this.isImporting = true;
-		this.importCancelled = false;
-		if (this.importBtn) this.importBtn.disabled = true;
-		if (this.cancelBtn) this.cancelBtn.textContent = 'Cancel import';
-		if (this.progressWrap) this.progressWrap.show();
-		if (this.progressText) this.progressText.textContent = `0 / ${toImport.length}`;
-		if (this.progressBarFill) this.progressBarFill.style.width = `0%`;
-
-		// expose progress to the Watchlist header
-		const cancelFn = (): void => { this.importCancelled = true; };
-		this.plugin.importProgress = { current: 0, total: toImport.length, cancel: cancelFn };
-
-		// auto-create types marked CREATE_NEW_TYPE or missing from the existing ones
+	/** Creates the types the import introduces (marked CREATE_NEW_TYPE or missing); returns how many. */
+	private async createMissingTypes(toImport: { entry: Partial<WatchLogTitle> }[]): Promise<number> {
 		const theme = this.plugin.settings.colorTheme ?? 'default';
-		const existingTypeNames = new Set(this.plugin.settings.types.map((t) => t.name.toLowerCase()));
-		const typesToCreate = new Set<string>();
-
-		for (const r of toImport) {
-			const typeName = r.entry.type?.trim();
-			if (typeName && !existingTypeNames.has(typeName.toLowerCase())) {
-				typesToCreate.add(typeName);
-			}
-		}
-		for (const [orig, resolved] of Object.entries(this.typeValueMap)) {
-			const name = safeTypeName(orig);
-			if (resolved === CREATE_NEW_TYPE && !existingTypeNames.has(name.toLowerCase())) {
-				typesToCreate.add(name);
-			}
-		}
+		const existing = this.plugin.settings.types.map((t) => t.name);
+		const typesToCreate = missingTypeNames(toImport.map((r) => r.entry), existing, this.typeValueMap);
 
 		if (typesToCreate.size > 0) {
 			for (const typeName of typesToCreate) {
@@ -734,86 +282,46 @@ export class CsvModal extends Modal {
 			}
 			await this.plugin.saveSettings();
 		}
+		return typesToCreate.size;
+	}
 
-		const CHUNK_SIZE = 10;
+	protected async doImport(): Promise<void> {
+		const toImport = this.rowsToImport(t('csv.notice.noTitlesToImport'));
+		if (!toImport) return;
+
+		this.startImportUi(toImport.length);
+
+		// expose progress to the Watchlist header
+		const cancelFn = (): void => { this.importCancelled = true; };
+		this.plugin.importProgress = { current: 0, total: toImport.length, cancel: cancelFn };
+
+		const newTypes = await this.createMissingTypes(toImport);
+
 		let added = 0;
-
 		try {
-			for (let chunkStart = 0; chunkStart < toImport.length; chunkStart += CHUNK_SIZE) {
-				if (this.importCancelled) break;
-
-				const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, toImport.length);
-				const chunkEntries: WatchLogTitle[] = [];
-				for (let i = chunkStart; i < chunkEnd; i++) {
-					if (this.importCancelled) break;
-					const r = toImport[i]!;
-					const titleName = r.entry.title!.trim();
-					const entry: WatchLogTitle = {
-						id: this.dataManager.generateId(titleName),
-						title: titleName,
-						type: r.entry.type?.trim() || this.plugin.settings.types[0]?.name || 'Anime',
-						status: r.entry.status || 'Plan to watch',
-						priority: r.entry.priority || 'Medium',
-						review: '',
-						rating: r.entry.rating ?? 0,
-						notes: r.entry.notes ?? '',
-						dateStarted: r.entry.dateStarted ?? null,
-						dateFinished: r.entry.dateFinished ?? null,
-						dateAdded: new Date().toISOString(),
-						dateModified: new Date().toISOString(),
-						totalEpisodes: r.entry.totalEpisodes ?? 0,
-						episodeDuration: r.entry.episodeDuration ?? 0,
-						releaseDate: r.entry.releaseDate ?? null,
-						externalLink: r.entry.externalLink ?? '',
-						seasons: [],
-						watchedEpisodes: [],
-						favorite: false,
-					};
-					if (r.entry.manualStudio?.length) entry.manualStudio = r.entry.manualStudio;
-					if (entry.status === 'Completed' && entry.totalEpisodes > 0) {
-						entry.watchedEpisodes = Array.from({ length: entry.totalEpisodes }, (_, k) => k + 1);
-					}
-					chunkEntries.push(entry);
-				}
-
-				if (chunkEntries.length === 0) break;
-				await this.dataManager.addTitleBatch(chunkEntries);
-				added += chunkEntries.length;
-
-				this.plugin.importProgress = { current: added, total: toImport.length, cancel: cancelFn };
-				const pct = Math.round((added / toImport.length) * 100);
-				if (this.progressBarFill) this.progressBarFill.style.width = `${pct}%`;
-				if (this.progressText) this.progressText.textContent = `${added} / ${toImport.length}`;
-			}
+			added = await this.importInChunks(
+				toImport,
+				(r) => buildImportedTitle(
+						r.entry,
+						this.dataManager.generateId(r.entry.title!.trim()),
+						this.plugin.settings.types[0]?.name,
+					),
+				(chunk) => this.dataManager.addTitleBatch(chunk),
+				(done) => {
+					this.plugin.importProgress = { current: done, total: toImport.length, cancel: cancelFn };
+				},
+			);
 		} finally {
 			this.isImporting = false;
 			this.plugin.importProgress = null;
 			this.dataManager.notifyChange();
 		}
 
-		const newTypesMsg = typesToCreate.size > 0
-			? ` (${typesToCreate.size} new type${typesToCreate.size !== 1 ? 's' : ''} created)`
-			: '';
-
-		if (this.importCancelled) {
-			if (this.progressText) {
-				this.progressText.textContent = `Cancelled: ${added} / ${toImport.length} imported`;
-			}
-			if (this.cancelBtn) {
-				this.cancelBtn.disabled = false;
-				this.cancelBtn.textContent = 'Close';
-			}
-			new Notice(`Import cancelled. ${added} title${added !== 1 ? 's' : ''} imported.`);
-		} else {
-			if (this.progressText) {
-				this.progressText.textContent = `Done: ${added} imported`;
-			}
-			if (this.cancelBtn) {
-				this.cancelBtn.disabled = false;
-				this.cancelBtn.textContent = 'Close';
-			}
-			new Notice(`Imported ${added} title${added !== 1 ? 's' : ''}${newTypesMsg}.`);
-			this.close();
-		}
+		this.finishImportUi(added, toImport.length, {
+			cancelled: t('csv.notice.importCancelledTitles', { count: added }),
+			done: newTypes > 0
+				? t('csv.notice.importedTitlesNewTypes', { count: added, types: t('csv.notice.newTypes', { count: newTypes }) })
+				: t('csv.notice.importedTitles', { count: added }),
+		});
 	}
 }

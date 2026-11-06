@@ -1,6 +1,7 @@
 import { Modal, setIcon, type App } from 'obsidian';
 import type { ShelfSelect } from '../RowsView';
 import { toggleSortPopover, type SortState } from '../SortPopover';
+import { t } from '../i18n';
 
 export interface SearchBoxOptions {
 	value: string;
@@ -25,7 +26,7 @@ export function renderSearchBox(parent: HTMLElement, opts: SearchBoxOptions): HT
 	opts.help?.(searchWrap);
 	const clearBtn = searchWrap.createEl('button', {
 		cls: 'wl-search-clear',
-		attr: { type: 'button', 'aria-label': 'Clear search' },
+		attr: { type: 'button', 'aria-label': t('ui.toolbar.clearSearch') },
 	});
 	setIcon(clearBtn, 'x');
 	const syncClear = () => clearBtn.toggleClass('is-visible', input.value.length > 0);
@@ -51,10 +52,10 @@ export function renderSearchBox(parent: HTMLElement, opts: SearchBoxOptions): HT
 /** Modal with one text input; Save (or Enter) hands the trimmed name over when it changed. */
 export function openRenameGroupPrompt(app: App, current: string, onSave: (name: string) => void): void {
 	const modal = new Modal(app);
-	modal.titleEl.setText('Rename group');
+	modal.titleEl.setText(t('ui.toolbar.renameGroup'));
 	const input = modal.contentEl.createEl('input', {
 		cls: 'wl-input',
-		attr: { type: 'text', value: current, placeholder: 'Group name' },
+		attr: { type: 'text', value: current, placeholder: t('ui.toolbar.groupName') },
 	});
 	const btnRow = modal.contentEl.createDiv({ cls: 'wl-modal-btn-row' });
 	const submit = (): void => {
@@ -63,10 +64,10 @@ export function openRenameGroupPrompt(app: App, current: string, onSave: (name: 
 		modal.close();
 	};
 	btnRow
-		.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' })
+		.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('common.save') })
 		.addEventListener('click', submit);
 	btnRow
-		.createEl('button', { cls: 'wl-btn', text: 'Cancel' })
+		.createEl('button', { cls: 'wl-btn', text: t('common.cancel') })
 		.addEventListener('click', () => modal.close());
 	input.addEventListener('keydown', (e) => {
 		if (e.key === 'Enter') submit();
@@ -147,7 +148,7 @@ function renderSavedFilterButton(
 ): HTMLButtonElement {
 	const btn = parent.createEl('button', {
 		cls: `wl-btn wl-btn-sm${active ? ' wl-btn-preset-active' : ''}`,
-		text: 'Saved filter',
+		text: t('ui.toolbar.savedFilter'),
 	});
 	btn.addEventListener('click', onClick);
 	return btn;
@@ -161,20 +162,24 @@ export interface SelectionButtonsOptions {
 	onToggleMode: () => void;
 }
 
+/** The All/None button of selection mode: selects all visible, or clears when something is selected. */
+export function renderSelectAllButton(parent: HTMLElement, hasSelection: boolean, onClick: () => void): HTMLButtonElement {
+	const btn = parent.createEl('button', {
+		cls: 'wl-btn wl-btn-sm',
+		text: hasSelection ? t('common.none') : t('ui.toolbar.all'),
+	});
+	btn.title = hasSelection ? t('ui.toolbar.deselectAll') : t('ui.toolbar.selectAllVisible');
+	btn.addEventListener('click', onClick);
+	return btn;
+}
+
 /** In selection mode: the All/None button, then the Select/Cancel button that enters/leaves it. */
 export function renderSelectionButtons(parent: HTMLElement, opts: SelectionButtonsOptions): void {
-	if (opts.selectionMode) {
-		const selAllBtn = parent.createEl('button', {
-			cls: 'wl-btn wl-btn-sm',
-			text: opts.hasSelection ? 'None' : 'All',
-		});
-		selAllBtn.title = opts.hasSelection ? 'Deselect all' : 'Select all visible';
-		selAllBtn.addEventListener('click', opts.onToggleAll);
-	}
+	if (opts.selectionMode) renderSelectAllButton(parent, opts.hasSelection, opts.onToggleAll);
 	// in selection mode the button is the way out: red Cancel
 	const selBtn = parent.createEl('button', {
 		cls: `wl-btn wl-btn-sm${opts.selectionMode ? ' wl-btn-cancel' : ''}`,
-		text: opts.selectionMode ? 'Cancel' : 'Select',
+		text: opts.selectionMode ? t('common.cancel') : t('ui.toolbar.select'),
 	});
 	selBtn.addEventListener('click', opts.onToggleMode);
 }
@@ -207,7 +212,7 @@ export function renderToolbarCore(controls: HTMLElement, opts: ToolbarCoreOption
 /** The green "+ add" button in its wrapper, far right on the toolbar row. */
 export function renderAddButton(parent: HTMLElement, onClick: () => void): HTMLButtonElement {
 	const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-	const btn = wrap.createEl('button', { cls: 'wl-add-btn wl-btn-success', text: '+ add' });
+	const btn = wrap.createEl('button', { cls: 'wl-add-btn wl-btn-success', text: t('ui.toolbar.add') });
 	btn.addEventListener('click', (e) => {
 		e.stopPropagation();
 		onClick();
@@ -258,7 +263,7 @@ export function applySortState(f: SortFields, primary: SortState, secondary: Sor
 /** The "Sorting ▼" button; clicking toggles the shared sort popover under it. */
 export function renderSortingDropdown(parent: HTMLElement, fields: SortFields, opts: SortingDropdownOptions): void {
 	const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-	const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Sorting ▼' });
+	const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('ui.toolbar.sorting') });
 	btn.addEventListener('click', (e) => {
 		e.stopPropagation();
 		toggleSortPopover({
@@ -298,7 +303,7 @@ export function renderViewDropdown<K extends string>(parent: HTMLElement, opts: 
 	const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
 	const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm wl-view-btn' });
 	setIcon(btn, opts.options.find((o) => o.key === opts.current)?.icon ?? 'list');
-	btn.title = 'View';
+	btn.title = t('ui.toolbar.view');
 
 	btn.addEventListener('click', (e) => {
 		e.stopPropagation();

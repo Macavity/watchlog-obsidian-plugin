@@ -2,6 +2,7 @@ import { App, Modal, Notice } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { GameDataManager } from './GameDataManager';
 import { Game, SteamSyncUpdate, GAME_AUTO_STATUS, formatTime } from './types';
+import { t } from './i18n';
 import { steamAppIdFromUrl, steamLibraryCover, type SteamOwnedGame, type SteamFailureReason } from './ApiService';
 
 /**
@@ -57,8 +58,8 @@ export class SteamSyncModal extends Modal {
 	private async loadLibrary(): Promise<void> {
 		const c = this.contentEl;
 		c.empty();
-		c.createEl('h2', { text: 'Sync Steam library' });
-		const status = c.createDiv({ cls: 'wl-steam-status', text: 'Fetching your Steam library…' });
+		c.createEl('h2', { text: t('steam.title') });
+		const status = c.createDiv({ cls: 'wl-steam-status', text: t('steam.fetching') });
 
 		const result = await this.plugin.apiService.getSteamOwnedGames();
 		if (this.cancelled) return;
@@ -117,16 +118,16 @@ export class SteamSyncModal extends Modal {
 	private renderPlan(): void {
 		const c = this.contentEl;
 		c.empty();
-		c.createEl('h2', { text: 'Sync Steam library' });
+		c.createEl('h2', { text: t('steam.title') });
 
 		c.createDiv({
 			cls: 'wl-steam-summary',
-			text: `${this.owned.length} games on Steam · ${this.matches.length} matched in your library · ${this.unmatched.length} not added yet`,
+			text: t('steam.summary', { owned: this.owned.length, matched: this.matches.length, unmatched: this.unmatched.length }),
 		});
 
 		c.createDiv({
 			cls: 'wl-modal-info',
-			text: 'Playtime and achievements are taken from Steam and overwrite what is stored. Status, rating, priority and notes are never changed.',
+			text: t('steam.info'),
 		});
 
 		// achievements opt-out — the only part that scales with library size
@@ -135,11 +136,11 @@ export class SteamSyncModal extends Modal {
 		achBox.checked = this.syncAchievements;
 		// label/for would need a document-unique id; a click handler does the same job without
 		// planting a fixed id in the document (the unmatched rows below use the same pattern)
-		const achLabel = achRow.createEl('label', { text: 'Also sync achievements' });
+		const achLabel = achRow.createEl('label', { text: t('steam.alsoAchievements') });
 		const achCount = this.matches.length + this.selectedNew.size;
 		const achNote = achRow.createSpan({
 			cls: 'wl-steam-option-note',
-			text: `one request per game, about ${achCount} extra`,
+			text: t('steam.requestNote', { count: achCount }),
 		});
 		const setAchievements = (on: boolean): void => {
 			achBox.checked = on;
@@ -152,9 +153,9 @@ export class SteamSyncModal extends Modal {
 		if (this.unmatched.length > 0) this.renderNewGamesPicker(c, achNote);
 
 		const btnRow = c.createDiv({ cls: 'wl-modal-btn-row' });
-		const runBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Sync' });
+		const runBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('steam.sync') });
 		runBtn.addEventListener('click', () => { void this.run(); });
-		btnRow.createEl('button', { cls: 'wl-btn', text: 'Cancel' })
+		btnRow.createEl('button', { cls: 'wl-btn', text: t('common.cancel') })
 			.addEventListener('click', () => this.close());
 
 		if (this.matches.length === 0 && this.unmatched.length === 0) {
@@ -165,17 +166,17 @@ export class SteamSyncModal extends Modal {
 	private renderNewGamesPicker(parent: HTMLElement, achNote: HTMLElement): void {
 		const section = parent.createDiv({ cls: 'wl-steam-section' });
 		const head = section.createDiv({ cls: 'wl-steam-section-head' });
-		head.createSpan({ cls: 'wl-game-modal-label', text: 'Not in your library' });
+		head.createSpan({ cls: 'wl-game-modal-label', text: t('steam.notInLibrary') });
 
 		const countEl = head.createSpan({ cls: 'wl-steam-picked' });
 		const paintCount = (): void => {
-			countEl.textContent = `${this.selectedNew.size} selected`;
-			achNote.textContent = `one request per game, about ${this.matches.length + this.selectedNew.size} extra`;
+			countEl.textContent = t('steam.selected', { count: this.selectedNew.size });
+			achNote.textContent = t('steam.requestNote', { count: this.matches.length + this.selectedNew.size });
 		};
 
 		const actions = head.createDiv({ cls: 'wl-steam-section-actions' });
-		const allBtn = actions.createEl('button', { cls: 'wl-btn wl-btn-mini', text: 'All' });
-		const noneBtn = actions.createEl('button', { cls: 'wl-btn wl-btn-mini', text: 'None' });
+		const allBtn = actions.createEl('button', { cls: 'wl-btn wl-btn-mini', text: t('steam.all') });
+		const noneBtn = actions.createEl('button', { cls: 'wl-btn wl-btn-mini', text: t('steam.none') });
 
 		const list = section.createDiv({ cls: 'wl-steam-list' });
 		const boxes: HTMLInputElement[] = [];
@@ -187,10 +188,10 @@ export class SteamSyncModal extends Modal {
 			boxes.push(box);
 
 			const label = row.createDiv({ cls: 'wl-steam-row-label' });
-			label.createSpan({ cls: 'wl-steam-row-title', text: steam.name || `App ${steam.appId}` });
+			label.createSpan({ cls: 'wl-steam-row-title', text: steam.name || t('steam.appFallback', { id: steam.appId }) });
 			label.createSpan({
 				cls: 'wl-steam-row-time',
-				text: steam.playtimeMinutes > 0 ? formatTime(steam.playtimeMinutes) : 'never played',
+				text: steam.playtimeMinutes > 0 ? formatTime(steam.playtimeMinutes) : t('steam.neverPlayed'),
 			});
 
 			const toggle = (on: boolean): void => {
@@ -235,16 +236,16 @@ export class SteamSyncModal extends Modal {
 
 		const c = this.contentEl;
 		c.empty();
-		c.createEl('h2', { text: 'Syncing…' });
-		const label = c.createDiv({ cls: 'wl-steam-status', text: 'Starting…' });
+		c.createEl('h2', { text: t('steam.syncing') });
+		const label = c.createDiv({ cls: 'wl-steam-status', text: t('steam.starting') });
 		const barWrap = c.createDiv({ cls: 'wl-steam-progress' });
 		const bar = barWrap.createDiv({ cls: 'wl-steam-progress-fill' });
 
 		const btnRow = c.createDiv({ cls: 'wl-modal-btn-row' });
-		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn', text: 'Cancel' });
+		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn', text: t('common.cancel') });
 		cancelBtn.addEventListener('click', () => {
 			this.cancelled = true;
-			label.textContent = 'Finishing the current request…';
+			label.textContent = t('steam.finishing');
 		});
 
 		const newGames = this.unmatched.filter((s) => this.selectedNew.has(s.appId));
@@ -258,7 +259,7 @@ export class SteamSyncModal extends Modal {
 			step++;
 			const pct = totalSteps > 0 ? Math.round((step / totalSteps) * 100) : 100;
 			bar.setCssProps({ '--wl-steam-progress': `${pct}%` });
-			label.textContent = `${text} (${step}/${totalSteps})`;
+			label.textContent = t('steam.step', { text, step, total: totalSteps });
 		};
 
 		// matched games: playtime always, achievements when asked
@@ -267,11 +268,11 @@ export class SteamSyncModal extends Modal {
 		// request, and breaking mid-iteration would bin a round-trip that already came back.
 		for (const { game, steam } of this.matches) {
 			if (this.cancelled) break;
-			tick(`Updating ${game.title}`);
+			tick(t('steam.updating', { title: game.title }));
 			let achievements: { earned: number; total: number } | null = null;
 			if (this.syncAchievements) {
 				achievements = await this.plugin.apiService.getSteamAchievements(steam.appId);
-				tick(`Achievements for ${game.title}`);
+				tick(t('steam.achievementsFor', { title: game.title }));
 			}
 			updates.push({
 				gameId: game.id,
@@ -288,13 +289,13 @@ export class SteamSyncModal extends Modal {
 		let imported = 0;
 		for (const steam of newGames) {
 			if (this.cancelled) break;
-			tick(`Importing ${steam.name}`);
+			tick(t('steam.importing', { title: steam.name }));
 			const details = await this.plugin.apiService.getSteamAppDetails(steam.appId);
 
 			let achievements: { earned: number; total: number } | null = null;
 			if (this.syncAchievements) {
 				achievements = await this.plugin.apiService.getSteamAchievements(steam.appId);
-				tick(`Achievements for ${steam.name}`);
+				tick(t('steam.achievementsFor', { title: steam.name }));
 			}
 
 			await this.gameData.addGame(this.buildGame(steam, details, achievements));
@@ -369,31 +370,31 @@ export class SteamSyncModal extends Modal {
 		// the modal may have been closed mid-run — the work is saved either way, so still report it
 		// as a Notice, but don't paint a summary screen into a detached contentEl
 		if (this.disposed) {
-			new Notice(`Steam sync: ${updated} updated, ${imported} imported.`);
+			new Notice(t('steam.notice', { updated, imported }));
 			return;
 		}
 		const c = this.contentEl;
 		c.empty();
-		c.createEl('h2', { text: cancelled ? 'Sync stopped' : 'Sync complete' });
+		c.createEl('h2', { text: cancelled ? t('steam.stopped') : t('steam.complete') });
 		c.createDiv({
 			cls: 'wl-steam-status',
-			text: `${updated} game${updated === 1 ? '' : 's'} updated · ${imported} imported`,
+			text: t('steam.result', { count: updated, imported }),
 		});
 		if (cancelled) {
 			c.createDiv({
 				cls: 'wl-modal-info',
-				text: 'Everything processed before you stopped has been saved.',
+				text: t('steam.saved'),
 			});
 		}
 		const btnRow = c.createDiv({ cls: 'wl-modal-btn-row' });
-		btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Done' })
+		btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('steam.done') })
 			.addEventListener('click', () => this.close());
-		new Notice(`Steam sync: ${updated} updated, ${imported} imported.`);
+		new Notice(t('steam.notice', { updated, imported }));
 	}
 
 	private renderCloseOnly(): void {
 		const btnRow = this.contentEl.createDiv({ cls: 'wl-modal-btn-row' });
-		btnRow.createEl('button', { cls: 'wl-btn', text: 'Close' })
+		btnRow.createEl('button', { cls: 'wl-btn', text: t('common.close') })
 			.addEventListener('click', () => this.close());
 	}
 }
@@ -414,14 +415,14 @@ function normalizeTitle(raw: string): string {
 function failureMessage(reason: SteamFailureReason): string {
 	switch (reason) {
 		case 'missing':
-			return 'Set your Steam API key and Steam ID under Settings → API → Games first.';
+			return t('steam.failure.missing');
 		case 'badKey':
-			return 'Steam rejected the API key. Check it under Settings → API → Games.';
+			return t('steam.failure.badKey');
 		case 'private':
-			return 'Steam returned no library. Your profile\'s "Game details" privacy setting must be Public; Steam hides owned games otherwise, even from your own API key.';
+			return t('steam.failure.private');
 		case 'empty':
-			return 'Steam reports no games on this account. Check the Steam ID is the right one.';
+			return t('steam.failure.empty');
 		default:
-			return 'Could not reach Steam. Check your connection and try again.';
+			return t('steam.failure.unreachable');
 	}
 }

@@ -1,4 +1,5 @@
 import { App, Modal, setIcon } from 'obsidian';
+import { t, type TranslationKey } from './i18n';
 import type { SearchFieldSpec } from './SearchQuery';
 
 /** A query rendered as coloured parts: v = value, f = field prefix, o = operator. */
@@ -6,38 +7,38 @@ type Part = [kind: 'v' | 'f' | 'o' | 'p', text: string];
 
 interface HelpExample {
 	parts: Part[];
-	says: string;
+	says: TranslationKey;
 }
 
 // deliberately abstract — colour words, never real titles or people
 const EXAMPLES: HelpExample[] = [
 	{
 		parts: [['v', 'red'], ['p', ' '], ['v', 'blue']],
-		says: 'Both must match. They can match different fields; one in cast, one in studio.',
+		says: 'misc.searchHelp.exampleBoth',
 	},
 	{
 		parts: [['o', '"'], ['v', 'red blue'], ['o', '"']],
-		says: 'Exact phrase, kept together, no typo tolerance.',
+		says: 'misc.searchHelp.examplePhrase',
 	},
 	{
 		parts: [['f', 'director:'], ['v', 'red']],
-		says: 'One field only.',
+		says: 'misc.searchHelp.exampleOneField',
 	},
 	{
 		parts: [['v', 'red'], ['p', ' '], ['o', '|'], ['p', ' '], ['v', 'blue']],
-		says: 'Either one. Widens instead of narrowing.',
+		says: 'misc.searchHelp.exampleEither',
 	},
 	{
 		parts: [['v', 'red'], ['p', ' '], ['o', '-'], ['v', 'blue']],
-		says: 'Minus excludes.',
+		says: 'misc.searchHelp.exampleMinus',
 	},
 	{
 		parts: [['f', 'year:'], ['o', '>'], ['v', '2020']],
-		says: 'Ranges: > < >= <= or a plain number.',
+		says: 'misc.searchHelp.exampleRange',
 	},
 	{
 		parts: [['f', 'cast:'], ['v', 'red'], ['p', ' '], ['f', 'studio:'], ['v', 'blue'], ['p', ' '], ['f', 'rating:'], ['o', '>='], ['v', '4']],
-		says: 'Mix freely.',
+		says: 'misc.searchHelp.exampleMix',
 	},
 ];
 
@@ -58,11 +59,11 @@ class SearchHelpModal<T> extends Modal {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass('wl-search-help');
-		this.titleEl.setText('Search tips');
+		this.titleEl.setText(t('misc.searchHelp.title'));
 
 		contentEl.createDiv({
 			cls: 'wl-search-help-intro',
-			text: 'Every word has to match, but they can match different fields.',
+			text: t('misc.searchHelp.intro'),
 		});
 
 		const list = contentEl.createDiv({ cls: 'wl-search-help-list' });
@@ -72,7 +73,7 @@ class SearchHelpModal<T> extends Modal {
 			for (const [kind, text] of ex.parts) {
 				q.createSpan({ cls: `wl-shq-${kind}`, text });
 			}
-			row.createDiv({ cls: 'wl-search-help-says', text: ex.says });
+			row.createDiv({ cls: 'wl-search-help-says', text: t(ex.says) });
 		}
 
 		const textFields = this.fields.filter((f) => f.text);
@@ -80,7 +81,7 @@ class SearchHelpModal<T> extends Modal {
 
 		const fieldsWrap = contentEl.createDiv({ cls: 'wl-search-help-fields' });
 
-		fieldsWrap.createDiv({ cls: 'wl-search-help-fields-title', text: `${this.tabLabel} searches` });
+		fieldsWrap.createDiv({ cls: 'wl-search-help-fields-title', text: t('misc.searchHelp.tabSearches', { tab: this.tabLabel }) });
 		const textRow = fieldsWrap.createDiv({ cls: 'wl-search-help-chips' });
 		for (const f of textFields) {
 			textRow.createSpan({ cls: 'wl-search-help-chip wl-shq-f', text: f.name });
@@ -88,7 +89,7 @@ class SearchHelpModal<T> extends Modal {
 		if (textFields.length === 0) textRow.createSpan({ cls: 'wl-search-help-chip', text: '—' });
 
 		if (numFields.length > 0) {
-			fieldsWrap.createDiv({ cls: 'wl-search-help-fields-title', text: 'Number ranges' });
+			fieldsWrap.createDiv({ cls: 'wl-search-help-fields-title', text: t('misc.searchHelp.numberRanges') });
 			const numRow = fieldsWrap.createDiv({ cls: 'wl-search-help-chips' });
 			for (const f of numFields) {
 				numRow.createSpan({ cls: 'wl-search-help-chip wl-shq-o', text: `${f.name}:` });
@@ -97,7 +98,7 @@ class SearchHelpModal<T> extends Modal {
 
 		contentEl.createDiv({
 			cls: 'wl-search-help-note',
-			text: 'Typos are tolerated. A "+" in a name needs no escaping, and a colon that is not a field above stays part of the search.',
+			text: t('misc.searchHelp.note'),
 		});
 	}
 
@@ -118,7 +119,7 @@ export function renderSearchHelpButton<T>(
 ): HTMLElement {
 	const btn = wrap.createEl('button', {
 		cls: 'wl-search-help-btn',
-		attr: { type: 'button', 'aria-label': 'Search tips' },
+		attr: { type: 'button', 'aria-label': t('misc.searchHelp.title') },
 	});
 	setIcon(btn, 'help-circle');
 	btn.addEventListener('click', () => {

@@ -3,6 +3,16 @@
 All notable changes to WatchLog Sync are documented here. Versions up to 3.1.2 are the upstream
 [WatchLog](https://github.com/Shynkro/watchlog-obsidian-plugin) by BogdanS.
 
+## [Unreleased]
+
+##### Added
+
+* German translation. The plugin UI follows Obsidian's language setting (Settings → General → Language); other languages fall back to English. Status and type names stored in notes stay in English.
+
+##### Changed
+
+* Headings, buttons and labels use sentence case throughout (for example "Recently added", "Time watched", "Backup & restore").
+
 ## [4.1.0] - 2026-11-06
 
 ##### Fixed

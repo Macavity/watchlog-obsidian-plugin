@@ -1,5 +1,6 @@
 import type { App } from 'obsidian';
 import { ConfirmModal } from '../ConfirmModal';
+import { t } from '../i18n';
 
 export interface DeleteSelectedOptions {
 	/** Tooltip on the ✕ button. */
@@ -32,11 +33,12 @@ export function renderBatchStatusSelect(
 	bar: HTMLElement,
 	statusNames: string[],
 	onPick: (status: string) => Promise<void>,
+	formatStatus: (status: string) => string = (s) => s,
 ): void {
 	const statusSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
-	statusSelect.createEl('option', { text: 'Status…', value: '' });
+	statusSelect.createEl('option', { text: t('ui.actionBar.status'), value: '' });
 	for (const name of statusNames) {
-		statusSelect.createEl('option', { text: name, value: name });
+		statusSelect.createEl('option', { text: formatStatus(name), value: name });
 	}
 	statusSelect.addEventListener('change', () => {
 		void (async () => {
@@ -65,13 +67,13 @@ export function renderMoveToGroupSelect(bar: HTMLElement, opts: MoveToGroupOptio
 	const moveSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
 	if (opts.disabled) {
 		moveSelect.disabled = true;
-		moveSelect.title = 'A group is selected; cannot move groups into other groups';
+		moveSelect.title = t('ui.actionBar.groupSelected');
 	}
-	moveSelect.createEl('option', { text: 'Group…', value: '' });
+	moveSelect.createEl('option', { text: t('ui.actionBar.group'), value: '' });
 	for (const g of opts.groups) {
 		moveSelect.createEl('option', { text: g.name, value: g.id });
 	}
-	moveSelect.createEl('option', { text: 'Create new group…', value: '__new__' });
+	moveSelect.createEl('option', { text: t('ui.actionBar.createGroupOption'), value: '__new__' });
 	moveSelect.addEventListener('change', () => {
 		const value = moveSelect.value;
 		if (!value) return;
@@ -89,12 +91,12 @@ export function renderMoveToGroupSelect(bar: HTMLElement, opts: MoveToGroupOptio
 function renderInlineGroupInput(bar: HTMLElement, opts: MoveToGroupOptions): void {
 	const nameInput = bar.createEl('input', {
 		cls: 'wl-modal-input wl-group-name-input',
-		attr: { type: 'text', placeholder: 'Group name…', maxlength: '64' },
+		attr: { type: 'text', placeholder: t('ui.actionBar.groupName'), maxlength: '64' },
 	});
 	const confirmBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✓' });
-	confirmBtn.title = 'Create group';
+	confirmBtn.title = t('ui.actionBar.createGroup');
 	const cancelBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✕' });
-	cancelBtn.title = 'Cancel';
+	cancelBtn.title = t('common.cancel');
 
 	// Enter twice (or Enter + ✓) while onCreate awaits the store would build two identical groups
 	let creating = false;

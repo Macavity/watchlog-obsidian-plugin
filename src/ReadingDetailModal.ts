@@ -18,6 +18,9 @@ import { readingStatusColor, coverFallbackColor } from './readingColors';
 import { openStatusDropdown, renderSegmentedToggle } from './StatusDropdown';
 import { ReadingManageColumnsModal } from './ReadingManageColumnsModal';
 import { pinModalFooter } from './StickyModal';
+import { t } from './i18n';
+import { paintFavoriteButton, renderEditableTitle } from './ui/detailShared';
+import { readingStatusLabel } from './i18n/labels';
 
 interface ParsedQuote {
 	reference: string;
@@ -81,6 +84,22 @@ interface ProgressSnapshot {
  * input still takes an exact value.
  */
 const WORDS_STEP = 100;
+
+/** Display noun of an arc gauge's counter unit. */
+function unitLabel(unit: string): string {
+	switch (unit) {
+		case 'pages': return t('reading.card.units.pages');
+		case 'words': return t('reading.card.units.words');
+		case 'chapters': return t('detail.reading.unitChapters');
+		default: return t('detail.reading.unitVolumes');
+	}
+}
+
+/** Splits a translated sentence around one slot, so each language orders the text around it. */
+function splitAtSlot(text: string, slot: string): [string, string] {
+	const at = text.indexOf(slot);
+	return at < 0 ? [text, ''] : [text.slice(0, at), text.slice(at + slot.length)];
+}
 
 export class ReadingDetailModal extends Modal {
 	private plugin: WatchLogPlugin;
@@ -220,7 +239,7 @@ export class ReadingDetailModal extends Modal {
 		this.contentEl.empty();
 		const item = this.getItem();
 		if (!item) {
-			this.contentEl.createDiv({ text: 'Item no longer exists.' });
+			this.contentEl.createDiv({ text: t('detail.reading.gone') });
 			return;
 		}
 		this.renderHeader(item);
@@ -292,14 +311,7 @@ export class ReadingDetailModal extends Modal {
 	}
 
 	private renderTitleDisplay(wrap: HTMLElement): void {
-		wrap.empty();
-		const fresh = this.getItem();
-		const titleEl = wrap.createEl('h2', {
-			cls: 'wl-reading-detail-title wl-reading-detail-editable-text',
-			text: fresh?.title ?? '',
-		});
-		titleEl.title = 'Click to edit';
-		titleEl.addEventListener('click', () => this.editTitle(wrap));
+		renderEditableTitle(wrap, this.getItem()?.title ?? '', () => this.editTitle(wrap));
 	}
 
 	private editTitle(wrap: HTMLElement): void {
@@ -342,7 +354,7 @@ export class ReadingDetailModal extends Modal {
 			cls: 'wl-reading-detail-author wl-reading-detail-editable-text',
 			text: fresh?.author || '—',
 		});
-		authorEl.title = 'Click to edit';
+		authorEl.title = t('detail.clickToEdit');
 		authorEl.addEventListener('click', () => this.editAuthor(wrap));
 	}
 
@@ -382,9 +394,9 @@ export class ReadingDetailModal extends Modal {
 		wrap.empty();
 		const fresh = this.getItem();
 		const status = fresh?.status ?? 'Plan to Read';
-		const badge = wrap.createSpan({ cls: 'wl-reading-detail-status', text: status });
+		const badge = wrap.createSpan({ cls: 'wl-reading-detail-status', text: readingStatusLabel(status) });
 		badge.style.backgroundColor = readingStatusColor(status, this.readingData.getSettings().statusColors);
-		badge.title = 'Click to change status';
+		badge.title = t('detail.clickToChangeStatus');
 		badge.addEventListener('click', (e) => {
 			e.stopPropagation();
 			this.openStatusDropdown(badge, wrap);
@@ -395,7 +407,7 @@ export class ReadingDetailModal extends Modal {
 		openStatusDropdown({
 			anchor,
 			container: this.contentEl,
-			options: [...SELECTABLE_READING_STATUSES],
+			options: SELECTABLE_READING_STATUSES.map((status) => ({ value: status, label: readingStatusLabel(status) })),
 			getOptionColor: (status) => readingStatusColor(status as ReadingStatus, this.readingData.getSettings().statusColors),
 			onSelect: (status) =>
 				void this.saveStatus(status as ReadingStatus).then(() => this.renderStatusBadge(wrap)),
@@ -426,7 +438,7 @@ export class ReadingDetailModal extends Modal {
 
 		const linkBtn = container.createEl('button', {
 			cls: 'wl-btn wl-btn-sm',
-			text: hasLink ? 'Change link' : 'External link',
+			text: hasLink ? t('detail.reading.changeLink') : t('detail.reading.externalLink'),
 		});
 		linkBtn.addEventListener('click', () => {
 			container.empty();
@@ -436,8 +448,8 @@ export class ReadingDetailModal extends Modal {
 				attr: { type: 'url', placeholder: 'https://…' },
 			});
 			inp.value = item.externalLink ?? '';
-			const saveBtn = inputWrap.createEl('button', { cls: 'wl-reading-add-btn wl-btn-success', text: 'Save' });
-			const cancelBtn = inputWrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Cancel' });
+			const saveBtn = inputWrap.createEl('button', { cls: 'wl-reading-add-btn wl-btn-success', text: t('common.save') });
+			const cancelBtn = inputWrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('common.cancel') });
 			const commit = (): void => {
 				const url = inp.value.trim();
 				void (async () => {
@@ -464,7 +476,7 @@ export class ReadingDetailModal extends Modal {
 		if (hasLink) {
 			const openBtn = container.createEl('button', {
 				cls: 'wl-btn wl-btn-sm',
-				text: 'Open',
+				text: t('detail.reading.open'),
 			});
 			openBtn.title = item.externalLink ?? '';
 			openBtn.addEventListener('click', () => {
@@ -484,11 +496,11 @@ export class ReadingDetailModal extends Modal {
 		// the button carries the "Vault page" wording, so the value beside it is just the state
 		const linkBtn = row.createEl('button', {
 			cls: 'wl-btn wl-btn-sm',
-			text: 'Vault page',
+			text: t('detail.reading.vaultPage'),
 		});
 		linkBtn.title = item.vaultPage
-			? `Linked: ${item.vaultPage}`
-			: 'Link a vault note to this entry';
+			? t('detail.reading.linked', { path: item.vaultPage })
+			: t('detail.reading.linkVaultNote');
 		linkBtn.addEventListener('click', () => {
 			const files = this.plugin.app.vault.getMarkdownFiles();
 			new VaultFilePicker(this.plugin.app, files, (file) => {
@@ -499,9 +511,9 @@ export class ReadingDetailModal extends Modal {
 		if (item.vaultPage) {
 			const openBtn = row.createEl('button', {
 				cls: 'wl-btn wl-btn-sm',
-				text: 'Open',
+				text: t('detail.reading.open'),
 			});
-			openBtn.title = 'Open the linked vault page in a new tab';
+			openBtn.title = t('detail.reading.openVaultPage');
 			openBtn.addEventListener('click', () => this.openLinkedVaultPage());
 		}
 
@@ -515,7 +527,7 @@ export class ReadingDetailModal extends Modal {
 		} else {
 			row.createSpan({
 				cls: 'wl-reading-detail-vault-empty',
-				text: 'not linked',
+				text: t('detail.reading.notLinked'),
 			});
 		}
 	}
@@ -540,7 +552,7 @@ export class ReadingDetailModal extends Modal {
 			void this.plugin.app.workspace.getLeaf('tab').openFile(file);
 			this.close();
 		} else {
-			new Notice('Linked vault page no longer exists.');
+			new Notice(t('detail.reading.vaultMissing'));
 		}
 	}
 
@@ -575,7 +587,7 @@ export class ReadingDetailModal extends Modal {
 	private renderProgressSection(item: Book | Manga): void {
 		const section = this.contentEl.createDiv({ cls: 'wl-reading-detail-progress' });
 		const label = section.createDiv({ cls: 'wl-reading-section-label' });
-		label.createSpan({ text: 'Progress' });
+		label.createSpan({ text: t('detail.progress') });
 		// only books carry a unit switch, so only they need the taller flex row
 		if (this.mode === 'book') {
 			label.addClass('wl-reading-section-label-row');
@@ -638,7 +650,7 @@ export class ReadingDetailModal extends Modal {
 			const secondary = this.mode === 'book' ? 'chapters' : 'volumes';
 			section.createDiv({
 				cls: 'wl-cl-draft-banner',
-				text: `⚠ Click the total number of ${primary} or ${secondary} above to edit it.`,
+				text: `⚠ ${t('detail.reading.totalHint', { primary: unitLabel(primary), secondary: unitLabel(secondary) })}`,
 			});
 		}
 	}
@@ -648,8 +660,8 @@ export class ReadingDetailModal extends Modal {
 		renderSegmentedToggle<BookProgressUnit>({
 			parent,
 			options: [
-				{ value: 'pages', label: 'Pages', title: 'Track progress in pages' },
-				{ value: 'words', label: 'Words', title: 'Track progress in words' },
+				{ value: 'pages', label: t('detail.reading.pages'), title: t('detail.reading.trackPages') },
+				{ value: 'words', label: t('detail.reading.words'), title: t('detail.reading.trackWords') },
 			],
 			value: bookProgressUnit(book),
 			onPick: (unit) => { void this.switchProgressUnit(unit); },
@@ -770,27 +782,33 @@ export class ReadingDetailModal extends Modal {
 		};
 
 		// static "of … <unit>" line with only the total inline-editable
-		const renderLabel = (): void => {
+		const fillOfLabel = <E extends HTMLElement>(buildTotal: () => E): E => {
+			const [before, after] = splitAtSlot(
+				t('detail.reading.arcOf', { total: '{total}', unit: unitLabel(unit) }),
+				'{total}',
+			);
 			label.empty();
-			label.createSpan({ text: 'of ' });
-			const numEl = label.createSpan({
+			label.createSpan({ text: before });
+			const el = buildTotal();
+			label.createSpan({ text: after });
+			return el;
+		};
+
+		const renderLabel = (): void => {
+			const numEl = fillOfLabel(() => label.createSpan({
 				cls: 'wl-reading-arc-total wl-reading-detail-editable-text',
 				text: formatCount(getTotal()),
-			});
-			numEl.title = 'Click to edit';
+			}));
+			numEl.title = t('detail.clickToEdit');
 			numEl.addEventListener('click', () => editTotal());
-			label.createSpan({ text: ` ${unit}` });
 		};
 
 		const editTotal = (): void => {
-			label.empty();
-			label.createSpan({ text: 'of ' });
-			const totalInput = label.createEl('input', {
+			const totalInput = fillOfLabel(() => label.createEl('input', {
 				cls: 'wl-modal-input wl-modal-input-sm wl-reading-arc-total-input',
 				attr: { type: 'number', min: '0' },
-			});
+			}));
 			totalInput.value = String(getTotal());
-			label.createSpan({ text: ` ${unit}` });
 			let committed = false;
 			const commit = (): void => {
 				if (committed) return;
@@ -834,14 +852,14 @@ export class ReadingDetailModal extends Modal {
 
 	private renderDetailsSection(item: Book | Manga): void {
 		const section = this.contentEl.createDiv({ cls: 'wl-reading-detail-details' });
-		section.createDiv({ cls: 'wl-reading-section-label', text: 'Details' });
+		section.createDiv({ cls: 'wl-reading-section-label', text: t('detail.details') });
 
 		const grid = section.createDiv({ cls: 'wl-reading-detail-grid' });
 
 		this.renderIdCell(grid, item);
 
 		this.renderEditableDateCell(
-			grid, 'Started',
+			grid, t('detail.reading.started'),
 			() => this.getItem()?.dateStarted ?? null,
 			async (val) => {
 				const curr = this.getItem();
@@ -858,7 +876,7 @@ export class ReadingDetailModal extends Modal {
 		this.renderAddedReleaseCell(grid, item);
 
 		this.renderEditableDateCell(
-			grid, 'Finished',
+			grid, t('detail.reading.finished'),
 			() => this.getItem()?.dateFinished ?? null,
 			async (val) => {
 				const curr = this.getItem();
@@ -923,7 +941,7 @@ export class ReadingDetailModal extends Modal {
 		const editBtn = value.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-reading-detail-id-edit',
 			text: '✎',
-			attr: { title: this.mode === 'book' ? 'Edit Google Books ID' : 'Edit MAL ID' },
+			attr: { title: t('detail.reading.editId', { name: this.mode === 'book' ? 'Google Books ID' : 'MAL ID' }) },
 		});
 		editBtn.addEventListener('click', () => this.editIdLink(value, item));
 	}
@@ -935,12 +953,14 @@ export class ReadingDetailModal extends Modal {
 			cls: 'wl-modal-input wl-reading-external-link-input',
 			attr: {
 				type: 'text',
-				placeholder: this.mode === 'book' ? 'Google Books volume ID' : 'MAL manga ID',
+				placeholder: this.mode === 'book'
+					? t('detail.reading.googleBooksIdPlaceholder')
+					: t('detail.reading.malIdPlaceholder'),
 			},
 		});
 		inp.value = this.idText(item);
-		const saveBtn = wrap.createEl('button', { cls: 'wl-reading-add-btn wl-btn-success', text: 'Save' });
-		const cancelBtn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Cancel' });
+		const saveBtn = wrap.createEl('button', { cls: 'wl-reading-add-btn wl-btn-success', text: t('common.save') });
+		const cancelBtn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('common.cancel') });
 
 		const restore = (): void => {
 			const fresh = this.getItem();
@@ -980,12 +1000,12 @@ export class ReadingDetailModal extends Modal {
 		try {
 			if (this.mode === 'book') {
 				if (!this.plugin.apiService.hasGoogleBooksKey()) {
-					new Notice('Google Books API key required; add one in Settings → API → Books.');
+					new Notice(t('reading.notices.googleBooksKeyRequired'));
 					return;
 				}
 				const result = await this.plugin.apiService.getGoogleBookById(newId);
 				if (!result || !result.coverUrl) {
-					new Notice("This volume doesn't have a cover; try a different edition's ID.");
+					new Notice(t('detail.reading.noBookCover'));
 					return;
 				}
 				const fresh = this.getItem();
@@ -994,7 +1014,7 @@ export class ReadingDetailModal extends Modal {
 			} else {
 				const result = await this.plugin.apiService.getMangaByMalId(Number(newId));
 				if (!result || !result.coverUrl) {
-					new Notice("This manga doesn't have a cover; try a different ID.");
+					new Notice(t('detail.reading.noMangaCover'));
 					return;
 				}
 				const fresh = this.getItem();
@@ -1015,14 +1035,14 @@ export class ReadingDetailModal extends Modal {
 		const cell = grid.createDiv({ cls: 'wl-reading-detail-cell wl-reading-detail-cell-pair' });
 
 		const added = cell.createDiv({ cls: 'wl-reading-detail-pair-col' });
-		added.createDiv({ cls: 'wl-reading-detail-cell-label', text: 'Added' });
+		added.createDiv({ cls: 'wl-reading-detail-cell-label', text: t('detail.reading.added') });
 		added.createDiv({
 			cls: 'wl-reading-detail-cell-value',
 			text: formatDateDisplay(item.dateAdded.slice(0, 10)),
 		});
 
 		const rel = cell.createDiv({ cls: 'wl-reading-detail-pair-col' });
-		rel.createDiv({ cls: 'wl-reading-detail-cell-label', text: 'Release' });
+		rel.createDiv({ cls: 'wl-reading-detail-cell-label', text: t('detail.reading.release') });
 		createDatePicker({
 			parent: rel,
 			inputCls: 'wl-reading-detail-date-input',
@@ -1064,8 +1084,8 @@ export class ReadingDetailModal extends Modal {
 
 		const todayBtn = valueArea.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-reading-detail-today-btn',
-			text: 'Today',
-			attr: { title: 'Fill with today\'s date' },
+			text: t('list.footer.today'),
+			attr: { title: t('list.footer.fillToday') },
 		});
 		const picker = createDatePicker({
 			parent: valueArea,
@@ -1094,12 +1114,12 @@ export class ReadingDetailModal extends Modal {
 		const left = footer.createDiv({ cls: 'wl-reading-detail-footer-left' });
 		const deleteBtn = left.createEl('button', {
 			cls: 'wl-delete-btn wl-btn-danger wl-reading-detail-delete',
-			text: 'Delete',
+			text: t('common.delete'),
 		});
 		deleteBtn.addEventListener('click', () => {
 			new ConfirmModal(
 				this.plugin.app,
-				`Delete "${item.title}"?`,
+				t('detail.reading.deleteConfirm', { title: item.title }),
 				() => {
 					void (async () => {
 						if (this.mode === 'book') {
@@ -1123,10 +1143,7 @@ export class ReadingDetailModal extends Modal {
 		setIcon(favBtn, 'heart');
 		const paintFav = (): void => {
 			const fav = this.getItem()?.favorite === true;
-			favBtn.toggleClass('is-active', fav);
-			const label = fav ? 'Remove from favorites' : 'Add to favorites';
-			favBtn.title = label;
-			favBtn.setAttr('aria-label', label);
+			paintFavoriteButton(favBtn, fav);
 		};
 		paintFav();
 		favBtn.addEventListener('click', () => {
@@ -1138,7 +1155,7 @@ export class ReadingDetailModal extends Modal {
 
 		const updateBtn = right.createEl('button', {
 			cls: 'wl-reading-add-btn wl-btn-success',
-			text: 'Update progress',
+			text: t('detail.reading.updateProgress'),
 		});
 		updateBtn.addEventListener('click', () => void this.commitDraft());
 	}
@@ -1163,10 +1180,10 @@ export class ReadingDetailModal extends Modal {
 		const section = this.contentEl.createDiv({ cls: 'wl-reading-detail-custom' });
 
 		const heading = section.createDiv({ cls: 'wl-reading-detail-custom-heading' });
-		heading.createSpan({ cls: 'wl-reading-section-label', text: 'Custom fields' });
+		heading.createSpan({ cls: 'wl-reading-section-label', text: t('detail.reading.customFields') });
 		const manageLink = heading.createEl('a', {
 			cls: 'wl-reading-detail-custom-manage',
-			text: 'Manage',
+			text: t('detail.reading.manage'),
 		});
 		manageLink.addEventListener('click', (e) => {
 			e.preventDefault();
@@ -1176,16 +1193,20 @@ export class ReadingDetailModal extends Modal {
 		const cols = this.getColumns();
 		if (cols.length === 0) {
 			const empty = section.createDiv({ cls: 'wl-reading-detail-custom-empty' });
-			empty.createSpan({ text: 'No custom fields; add some via ' });
+			const [before, after] = splitAtSlot(
+				t('detail.reading.noCustomFields', { manage: '{manage}' }),
+				'{manage}',
+			);
+			empty.createSpan({ text: before });
 			const link = empty.createEl('a', {
 				cls: 'wl-reading-detail-custom-manage',
-				text: 'Manage',
+				text: t('detail.reading.manage'),
 			});
 			link.addEventListener('click', (e) => {
 				e.preventDefault();
 				this.openManageColumns();
 			});
-			empty.createSpan({ text: '.' });
+			empty.createSpan({ text: after });
 			return;
 		}
 
@@ -1274,7 +1295,7 @@ export class ReadingDetailModal extends Modal {
 			cls: 'wl-modal-input wl-reading-custom-input',
 			attr: {
 				type: col.type === 'number' ? 'number' : 'text',
-				placeholder: 'Enter value…',
+				placeholder: t('detail.reading.enterValue'),
 			},
 		});
 		if (current !== undefined && current !== null) input.value = String(current);
@@ -1322,10 +1343,10 @@ export class ReadingDetailModal extends Modal {
 		const section = this.contentEl.createDiv({ cls: 'wl-reading-detail-quotes' });
 
 		const heading = section.createDiv({ cls: 'wl-reading-detail-quotes-heading' });
-		heading.createSpan({ cls: 'wl-reading-section-label', text: 'Favorite quotes' });
+		heading.createSpan({ cls: 'wl-reading-section-label', text: t('detail.reading.quotes') });
 		const addBtn = heading.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-reading-detail-quotes-add',
-			text: 'Add quote',
+			text: t('detail.reading.addQuote'),
 		});
 
 		const listEl = section.createDiv({ cls: 'wl-reading-quote-list' });
@@ -1339,7 +1360,7 @@ export class ReadingDetailModal extends Modal {
 				if (quotes.length === 0) {
 					listEl.createDiv({
 						cls: 'wl-reading-quote-empty',
-						text: 'No quotes yet.',
+						text: t('detail.reading.noQuotes'),
 					});
 				} else {
 					for (const q of quotes) {
@@ -1379,26 +1400,26 @@ export class ReadingDetailModal extends Modal {
 
 		const textarea = form.createEl('textarea', {
 			cls: 'wl-modal-input wl-reading-quote-textarea',
-			attr: { placeholder: 'Quote text…', rows: '3' },
+			attr: { placeholder: t('detail.reading.quotePlaceholder'), rows: '3' },
 		});
 
 		const refInput = form.createEl('input', {
 			cls: 'wl-modal-input wl-reading-quote-ref-input',
-			attr: { type: 'text', placeholder: 'p. 123 or ch. 5 (optional)' },
+			attr: { type: 'text', placeholder: t('detail.reading.quoteRefPlaceholder') },
 		});
 
 		const actions = form.createDiv({ cls: 'wl-reading-quote-form-actions' });
-		const cancelBtn = actions.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Cancel' });
+		const cancelBtn = actions.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('common.cancel') });
 		cancelBtn.addEventListener('click', () => parent.empty());
 
 		const saveBtn = actions.createEl('button', {
 			cls: 'wl-reading-add-btn wl-btn-success wl-reading-quote-save',
-			text: 'Save quote',
+			text: t('detail.reading.saveQuote'),
 		});
 		saveBtn.addEventListener('click', () => {
 			const text = textarea.value.trim();
 			if (!text) {
-				new Notice('Enter the quote text first.');
+				new Notice(t('detail.reading.enterQuote'));
 				return;
 			}
 			void (async () => {
@@ -1408,7 +1429,7 @@ export class ReadingDetailModal extends Modal {
 					await onSaved();
 				} catch (e) {
 					console.warn('[WL] appendQuote failed:', e);
-					new Notice('Could not save quote.');
+					new Notice(t('detail.reading.quoteFailed'));
 				}
 			})();
 		});
@@ -1444,7 +1465,7 @@ export class ReadingDetailModal extends Modal {
 		this.logProgressChange(item);
 		this.openSnapshot = { ...this.draft };
 
-		new Notice('Progress updated.');
+		new Notice(t('detail.reading.progressUpdated'));
 		this.onChanged();
 		this.close();
 	}

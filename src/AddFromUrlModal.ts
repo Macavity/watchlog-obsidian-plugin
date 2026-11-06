@@ -4,6 +4,7 @@ import type { DataManager } from './DataManager';
 import type { MediaSearchResult } from './types';
 import { apiErrorMessage } from './ApiService';
 import { AddTitleModal } from './AddTitleModal';
+import { t } from './i18n';
 
 /** themoviedb.org/movie/27205-inception, /tv/1396, with or without slug and query */
 const TMDB_URL_RE = /themoviedb\.org\/(movie|tv)\/(\d+)/i;
@@ -24,13 +25,13 @@ export class AddFromUrlModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.titleEl.setText('Add from URL');
+		this.titleEl.setText(t('add.choice.fromUrl'));
 		const content = this.contentEl;
 		content.addClass('wl-add-modal');
 
 		content.createDiv({
 			cls: 'wl-modal-info',
-			text: 'Please enter an IMDb or TMDB URL (e.g. https://www.imdb.com/title/tt1375666/ or https://www.themoviedb.org/movie/27205)',
+			text: t('add.url.info'),
 		});
 
 		this.imdbInput = this.buildRow(
@@ -65,7 +66,7 @@ export class AddFromUrlModal extends Modal {
 			cls: 'wl-modal-input',
 			attr: { type: 'url', placeholder },
 		});
-		const btn = row.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add' });
+		const btn = row.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('common.add') });
 
 		const run = () => void this.handleAdd(btn, lookup);
 		btn.addEventListener('click', run);
@@ -103,7 +104,7 @@ export class AddFromUrlModal extends Modal {
 		lookup: () => Promise<MediaSearchResult | null | 'invalid' | 'nokey'>,
 	): Promise<void> {
 		btn.disabled = true;
-		btn.textContent = 'Loading…';
+		btn.textContent = t('common.loading');
 		if (this.errorEl) this.errorEl.hide();
 
 		try {
@@ -117,11 +118,11 @@ export class AddFromUrlModal extends Modal {
 			}
 
 			if (result === 'nokey') {
-				this.showError('Add a TMDB API key in Settings → API to use TMDB links.');
+				this.showError(t('add.url.noTmdbKey'));
 				return;
 			}
 			if (result === 'invalid' || !result) {
-				this.showError('Title not found. Please check the URL and try again.');
+				this.showError(t('add.url.notFound'));
 				return;
 			}
 
@@ -142,7 +143,7 @@ export class AddFromUrlModal extends Modal {
 			}).open();
 		} finally {
 			btn.disabled = false;
-			btn.textContent = 'Add';
+			btn.textContent = t('common.add');
 		}
 	}
 

@@ -1,4 +1,5 @@
 import { apiErrorMessage } from '../ApiService';
+import { t } from '../i18n';
 import { makeRow, nameSelect } from './FormCells';
 
 export interface SearchPickerConfig<R> {
@@ -25,7 +26,7 @@ export interface SearchPickerConfig<R> {
 	/** Results per page; without it all results render and there is no pager. */
 	pageSize?: number;
 	/** Adds a "Type" select above the search row; the picker resets itself after onChange. */
-	typeSelect?: { names: string[]; selected: string; onChange: (value: string) => void };
+	typeSelect?: { names: string[]; selected: string; onChange: (value: string) => void; format?: (name: string) => string };
 	initialQuery?: string;
 	/** Default 600. */
 	debounceMs?: number;
@@ -67,7 +68,7 @@ export function createSearchPicker<R>(config: SearchPickerConfig<R>): SearchPick
 	function mountSearchRow(parent: HTMLElement): void {
 		const withYear = config.withYear ?? false;
 		const row = parent.createDiv({ cls: withYear ? 'wl-modal-row wl-search-row' : 'wl-modal-row' });
-		row.createSpan({ cls: 'wl-modal-label', text: 'Search' });
+		row.createSpan({ cls: 'wl-modal-label', text: t('common.search') });
 		// one wrapper so mobile can stack: query on top, year + button under it
 		const fields = withYear ? row.createDiv({ cls: 'wl-search-fields' }) : row;
 		const queryInput = fields.createEl('input', {
@@ -82,7 +83,7 @@ export function createSearchPicker<R>(config: SearchPickerConfig<R>): SearchPick
 		if (withYear) {
 			const yearInput = fields.createEl('input', {
 				cls: 'wl-modal-input wl-search-year',
-				attr: { type: 'text', inputmode: 'numeric', maxlength: '4', placeholder: 'Year' },
+				attr: { type: 'text', inputmode: 'numeric', maxlength: '4', placeholder: t('ui.picker.year') },
 			});
 			yearInput.value = year;
 			yearInput.addEventListener('input', () => {
@@ -92,17 +93,17 @@ export function createSearchPicker<R>(config: SearchPickerConfig<R>): SearchPick
 				scheduleSearch();
 			});
 		}
-		const searchBtn = fields.createEl('button', { cls: 'wl-btn', text: 'Search' });
+		const searchBtn = fields.createEl('button', { cls: 'wl-btn', text: t('common.search') });
 		searchBtn.addEventListener('click', () => void search());
 	}
 
 	function mount(parent: HTMLElement): void {
 		const type = config.typeSelect;
 		if (type) {
-			nameSelect(makeRow(parent, 'Type'), type.names, type.selected, (v) => {
+			nameSelect(makeRow(parent, t('ui.picker.type')), type.names, type.selected, (v) => {
 				type.onChange(v);
 				reset();
-			});
+			}, false, type.format);
 		}
 		mountSearchRow(parent);
 		resultsEl = parent.createDiv({
@@ -169,7 +170,7 @@ export function createSearchPicker<R>(config: SearchPickerConfig<R>): SearchPick
 		host.empty();
 		renderPager();
 		if (isSearching) {
-			host.createDiv({ cls: 'wl-modal-loading', text: 'Searching...' });
+			host.createDiv({ cls: 'wl-modal-loading', text: t('ui.picker.searching') });
 			return;
 		}
 		if (noApi) return renderMessage(host, 'ℹ', noApi);
@@ -192,7 +193,7 @@ export function createSearchPicker<R>(config: SearchPickerConfig<R>): SearchPick
 		prev.disabled = page === 0;
 		prev.addEventListener('click', () => goToPage(page - 1));
 
-		pagerEl.createSpan({ cls: 'wl-result-pager-info', text: `Page ${page + 1} of ${total}` });
+		pagerEl.createSpan({ cls: 'wl-result-pager-info', text: t('ui.picker.page', { page: page + 1, total }) });
 
 		const next = pagerEl.createEl('button', { cls: 'wl-btn wl-result-pager-btn', text: '›' });
 		next.disabled = page >= total - 1;

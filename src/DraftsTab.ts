@@ -4,9 +4,20 @@ import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { DraftPersistState } from './types';
 import { openAddForTitle } from './AddRouter';
+import { t } from './i18n';
 
 /** Libraries a draft can already live in — used for the "In …" duplicate label. */
 type DraftLibrary = 'Watchlist' | 'Books' | 'Manga' | 'Games';
+
+/** Display name of a draft library. */
+function libraryLabel(library: DraftLibrary): string {
+	switch (library) {
+		case 'Watchlist': return t('drafts.libraryWatchlist');
+		case 'Books': return t('drafts.libraryBooks');
+		case 'Manga': return t('drafts.libraryManga');
+		case 'Games': return t('drafts.libraryGames');
+	}
+}
 
 interface DraftLibraryEntry {
 	title: string;
@@ -212,7 +223,7 @@ export class DraftsTab {
 	 */
 	private static buildFuse(plugin: WatchLogPlugin): Fuse<DraftLibraryEntry> {
 		const entries: DraftLibraryEntry[] = [
-			...plugin.dataManager.getTitles().map((t) => ({ title: t.title, library: 'Watchlist' as const })),
+			...plugin.dataManager.getTitles().map((ti) => ({ title: ti.title, library: 'Watchlist' as const })),
 			...plugin.readingDataManager.getBooks().map((b) => ({ title: b.title, library: 'Books' as const })),
 			...plugin.readingDataManager.getMangaList().map((m) => ({ title: m.title, library: 'Manga' as const })),
 			...plugin.gameDataManager.getGames().map((g) => ({ title: g.title, library: 'Games' as const })),
@@ -286,7 +297,7 @@ export class DraftsTab {
 		if (this.plugin.settings.showHintBanners) {
 			el.createDiv({
 				cls: 'wl-drafts-notice',
-				text: `⚠ Write ${tag} Title in any note and it appears here automatically. Hit Add when you're ready to send it to your Watchlist, Books, Manga or Games.`,
+				text: `⚠ ${t('drafts.hint', { tag })}`,
 			});
 		}
 
@@ -294,13 +305,13 @@ export class DraftsTab {
 		countWrap.createSpan({ cls: 'wl-list-count', text: String(pendingCount) });
 		countWrap.createSpan({
 			cls: 'wl-drafts-count-label',
-			text: ` Pending draft${pendingCount !== 1 ? 's' : ''}`,
+			text: ` ${t('drafts.pending', { count: pendingCount })}`,
 		});
 
 		if (entries.length === 0) {
 			el.createDiv({
 				cls: 'wl-drafts-empty',
-				text: `No drafts found. Add ${tag} followed by a title in any vault note.`,
+				text: t('drafts.empty', { tag }),
 			});
 			return;
 		}
@@ -354,21 +365,25 @@ export class DraftsTab {
 		// "In <library>" indicator, only when applicable
 		const dupEl = card.createDiv({ cls: 'wl-drafts-card-dup' });
 		if (dupLibrary) {
-			const where = dupLibrary === 'Watchlist' ? 'your Watchlist' : `your ${dupLibrary} library`;
+			const libraryName = libraryLabel(dupLibrary);
 			dupEl.createSpan({
-				text: `In ${dupLibrary}`,
-				attr: { title: `This title already exists in ${where}` },
+				text: t('drafts.inLibrary', { library: libraryName }),
+				attr: {
+					title: dupLibrary === 'Watchlist'
+						? t('drafts.existsWatchlist')
+						: t('drafts.existsLibrary', { library: libraryName }),
+				},
 			});
 		}
 
 		const actions = card.createDiv({ cls: 'wl-drafts-card-actions' });
 
 		if (entry.added || isDuplicate) {
-			actions.createSpan({ cls: 'wl-drafts-added-label', text: 'Added' });
+			actions.createSpan({ cls: 'wl-drafts-added-label', text: t('drafts.added') });
 		} else {
 			const addBtn = actions.createEl('button', {
 				cls: 'wl-btn wl-btn-sm wl-btn-primary',
-				text: 'Add',
+				text: t('common.add'),
 			});
 			addBtn.addEventListener('click', () => this.openAddModal(entry));
 		}
@@ -376,7 +391,7 @@ export class DraftsTab {
 		const dismissBtn = actions.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-drafts-dismiss',
 			text: '✕',
-			attr: { title: 'Dismiss' },
+			attr: { title: t('drafts.dismiss') },
 		});
 		dismissBtn.addEventListener('click', () => void this.dismissEntry(entry.titleKey));
 	}

@@ -76,49 +76,54 @@ export function withoutSecrets(b: BackupFile): BackupFile {
 	return { ...b, local };
 }
 
+/** Why a backup file was rejected; the settings tab renders it (`settings.backup.restore.errors.<code>`). */
+export type BackupErrorCode =
+	| 'parseJson' | 'notObject' | 'titlesMissing' | 'readingMissing' | 'gamesMissing' | 'sharedMissing'
+	| 'historyInvalid' | 'localInvalid' | 'unsupportedFormat' | 'watchMissing';
+
 /** Validates the whole file before anything is written. */
-export function parseBackup(text: string): { backup: BackupFile } | LegacyBackup | { error: string } {
+export function parseBackup(text: string): { backup: BackupFile } | LegacyBackup | { error: BackupErrorCode } {
 	let parsed: unknown;
-	try { parsed = JSON.parse(text); } catch { return { error: 'could not parse JSON.' }; }
-	if (!isRecord(parsed)) return { error: 'not an object.' };
+	try { parsed = JSON.parse(text); } catch { return { error: 'parseJson' }; }
+	if (!isRecord(parsed)) return { error: 'notObject' };
 	if (parsed['version'] !== 2 || !isRecord(parsed['entries'])) return parseLegacy(parsed);
 	const e = parsed['entries'];
 	const reading = e['reading'];
 	const games = e['games'];
-	if (!Array.isArray(e['titles']) || !Array.isArray(e['maybe'])) return { error: 'titles are missing.' };
+	if (!Array.isArray(e['titles']) || !Array.isArray(e['maybe'])) return { error: 'titlesMissing' };
 	if (!isRecord(reading) || !Array.isArray(reading['books']) || !Array.isArray(reading['manga'])) {
-		return { error: 'reading data is missing books or manga.' };
+		return { error: 'readingMissing' };
 	}
 	if (!isRecord(games) || !Array.isArray(games['games']) || !isRecord(games['settings'])) {
-		return { error: 'games data is missing games or settings.' };
+		return { error: 'gamesMissing' };
 	}
-	if (!isRecord(parsed['shared'])) return { error: 'shared settings are missing.' };
-	if (!Array.isArray(parsed['history'])) return { error: 'activity log is not a list.' };
-	if (parsed['local'] !== undefined && !isRecord(parsed['local'])) return { error: 'local settings are invalid.' };
+	if (!isRecord(parsed['shared'])) return { error: 'sharedMissing' };
+	if (!Array.isArray(parsed['history'])) return { error: 'historyInvalid' };
+	if (parsed['local'] !== undefined && !isRecord(parsed['local'])) return { error: 'localInvalid' };
 	return { backup: { ...parsed, local: parsed['local'] ?? {} } as unknown as BackupFile };
 }
 
 /** Old exports: v1 is the bare data.json, v2/v3 wrap `watch`, `reading`, `games` and `history`. */
-function parseLegacy(p: Record<string, unknown>): LegacyBackup | { error: string } {
+function parseLegacy(p: Record<string, unknown>): LegacyBackup | { error: BackupErrorCode } {
 	const version = p['version'];
 	const isWatch = (v: unknown): v is Record<string, unknown> =>
 		isRecord(v) && Array.isArray(v['titles']) && Array.isArray(v['groups']) && isRecord(v['settings']);
 	if (version !== 2 && version !== 3) {
-		if (version !== undefined || !isWatch(p)) return { error: 'unsupported format.' };
+		if (version !== undefined || !isWatch(p)) return { error: 'unsupportedFormat' };
 		return { legacy: p as unknown as WatchLogData };
 	}
 	const watch = p['watch'];
-	if (!isWatch(watch)) return { error: 'watch data is missing titles, groups or settings.' };
+	if (!isWatch(watch)) return { error: 'watchMissing' };
 	const reading = p['reading'];
 	if (!isRecord(reading) || !Array.isArray(reading['books']) || !Array.isArray(reading['manga']) || !isRecord(reading['settings'])) {
-		return { error: 'reading data is missing books or manga.' };
+		return { error: 'readingMissing' };
 	}
 	// v2 files exported before Games shipped carry them (if at all) inside `watch`
 	const games = version === 3 ? p['games'] : watch['games'];
 	if (version === 3 && (!isRecord(games) || !Array.isArray(games['games']) || !isRecord(games['settings']))) {
-		return { error: 'games data is missing games or settings.' };
+		return { error: 'gamesMissing' };
 	}
-	if (!Array.isArray(p['history'])) return { error: 'activity log is not a list.' };
+	if (!Array.isArray(p['history'])) return { error: 'historyInvalid' };
 	return { legacy: { ...watch, reading, games, history: p['history'] } as unknown as WatchLogData };
 }
 

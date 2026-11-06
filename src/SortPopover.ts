@@ -4,9 +4,27 @@
  * any change closes the panel and reports the full new state. Used by ListTab and GamesTab.
  */
 
+import { t } from './i18n';
+
 export interface SortState {
 	key: string;
 	dir: 'asc' | 'desc';
+}
+
+/** One popover row: label plus key select; `none` adds the leading "None" option (secondary row). */
+export function createSortSelectRow(
+	parent: HTMLElement,
+	labelText: string,
+	none?: { selected: boolean },
+): { row: HTMLElement; sel: HTMLSelectElement } {
+	const row = parent.createDiv({ cls: 'wl-filter-row' });
+	row.createSpan({ cls: 'wl-filter-label', text: labelText });
+	const sel = row.createEl('select', { cls: 'wl-select' });
+	if (none) {
+		const noneOpt = sel.createEl('option', { text: t('common.none'), value: 'none' });
+		noneOpt.selected = none.selected;
+	}
+	return { row, sel };
 }
 
 export interface SortPopoverConfig {
@@ -61,14 +79,7 @@ export function toggleSortPopover(cfg: SortPopoverConfig): void {
 	};
 
 	const addSortRow = (labelText: string, current: SortState, isPrimary: boolean): void => {
-		const row = panel.createDiv({ cls: 'wl-filter-row' });
-		row.createSpan({ cls: 'wl-filter-label', text: labelText });
-		const sel = row.createEl('select', { cls: 'wl-select' });
-
-		if (!isPrimary) {
-			const noneOpt = sel.createEl('option', { text: 'None', value: 'none' });
-			noneOpt.selected = current.key === 'none';
-		}
+		const { row, sel } = createSortSelectRow(panel, labelText, isPrimary ? undefined : { selected: current.key === 'none' });
 		for (const opt of cfg.options) {
 			const el = sel.createEl('option', { text: opt, value: opt });
 			if (cfg.labelToKey(opt) === current.key) el.selected = true;
@@ -79,8 +90,8 @@ export function toggleSortPopover(cfg: SortPopoverConfig): void {
 			text: current.dir === 'asc' ? '↑' : '↓',
 		});
 		dirBtn.title = current.dir === 'asc'
-			? 'Ascending; click to switch to descending'
-			: 'Descending; click to switch to ascending';
+			? t('list.sortPopover.ascTip')
+			: t('list.sortPopover.descTip');
 
 		sel.addEventListener('change', () => {
 			const newKey = sel.value === 'none' ? 'none' : cfg.labelToKey(sel.value);
@@ -100,8 +111,8 @@ export function toggleSortPopover(cfg: SortPopoverConfig): void {
 		});
 	};
 
-	addSortRow('Sort by', state.primary, true);
-	addSortRow('Then by', state.secondary, false);
+	addSortRow(t('list.sortPopover.sortBy'), state.primary, true);
+	addSortRow(t('list.sortPopover.thenBy'), state.secondary, false);
 
 	const closer = (ev: MouseEvent): void => {
 		if (!cfg.wrap.contains(ev.target as Node)) {

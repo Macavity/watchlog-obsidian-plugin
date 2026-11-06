@@ -1,4 +1,5 @@
 import type { App } from 'obsidian';
+import { t } from '../i18n';
 import { renderGroupCollage } from '../CollageUtil';
 import { ConfirmModal } from '../ConfirmModal';
 import { openCardMenu } from '../PosterCard';
@@ -14,8 +15,8 @@ export interface GroupCardOptions<M> {
 	textUnder: boolean;
 	selected: boolean;
 	cardHeight?: number;
-	/** Singular noun for the count badge ("game", "title"). */
-	unit: string;
+	/** What the count badge counts. */
+	unit: GroupUnit;
 	/** Scope for the card menu and its render-scoped cleanups. */
 	container: HTMLElement;
 	cleanups: Array<() => void>;
@@ -32,9 +33,11 @@ export function groupLetter(name: string): string {
 	return (name.trim().charAt(0) || '?').toUpperCase();
 }
 
+export type GroupUnit = 'game' | 'title';
+
 /** "1 game" / "3 games". */
-export function groupCountLabel(count: number, unit: string): string {
-	return `${count} ${unit}${count !== 1 ? 's' : ''}`;
+export function groupCountLabel(count: number, unit: GroupUnit): string {
+	return t(unit === 'game' ? 'ui.group.countGame' : 'ui.group.countTitle', { count });
 }
 
 function renderGroupText(textHost: HTMLElement, under: boolean, name: string, label: string, color: string): void {
@@ -46,13 +49,13 @@ function renderGroupText(textHost: HTMLElement, under: boolean, name: string, la
 
 function renderGroupMenuButton<M>(card: HTMLElement, opts: GroupCardOptions<M>): void {
 	const menuBtn = card.createEl('button', { cls: 'wl-card-menu-btn', text: '⋮' });
-	menuBtn.setAttr('aria-label', 'Group actions');
+	menuBtn.setAttr('aria-label', t('ui.group.actions'));
 	menuBtn.addEventListener('click', (e) => {
 		e.stopPropagation();
 		openCardMenu(card, menuBtn, [
-			{ label: 'Edit name', onClick: opts.onRename },
+			{ label: t('ui.group.editName'), onClick: opts.onRename },
 			{
-				label: 'Delete group',
+				label: t('ui.group.delete'),
 				onClick: () => { new ConfirmModal(opts.app, opts.deleteMessage, opts.onDelete).open(); },
 			},
 		], { container: opts.container, cleanups: opts.cleanups });

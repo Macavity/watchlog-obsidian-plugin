@@ -6,6 +6,7 @@ import { LocalStore } from '../../src/storage/LocalStore';
 import { SharedConfigStore } from '../../src/storage/SharedConfigStore';
 import { EntryIndex } from '../../src/storage/EntryIndex';
 import { DEFAULT_SETTINGS } from '../../src/types';
+import type { ManagerNotice } from '../../src/storage/storageTypes';
 import type WatchLogPlugin from '../../src/main';
 
 // browser globals the managers touch
@@ -38,14 +39,16 @@ export async function createStores(files: Record<string, string>, opts: StoreOpt
 		registerEvent: f.plugin.registerEvent,
 		...pluginExtra,
 	} as unknown as WatchLogPlugin;
+	const notices: ManagerNotice[] = [];
+	const notify = (n: ManagerNotice) => { notices.push(n); };
 	const local = new LocalStore(f.plugin);
 	await local.load();
 	const layout = new VaultLayout('W', () => settings.types.map((t) => t.name));
-	const shared = new SharedConfigStore(f.app, () => layout, { parse, stringify });
+	const shared = new SharedConfigStore(f.app, () => layout, { parse, stringify }, undefined, notify);
 	if (createBase && !f.files.has('W/WatchLog.base')) await shared.createBase({});
 	if (createBase || opts.loadShared) await shared.load();
 	const index = new EntryIndex(f.app, () => layout, local, f.plugin.registerEvent);
 	await index.build();
 	index.start();
-	return { f, plugin, settings, local, layout, shared, index, stores: { index, local, shared, layout: () => layout } };
+	return { f, plugin, settings, local, layout, shared, index, notices, stores: { index, local, shared, layout: () => layout, notify } };
 }

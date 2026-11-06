@@ -1,9 +1,13 @@
 import type WatchLogPlugin from './main';
+import { t, type TranslationKey } from './i18n';
+import { gameStatusLabel, readingStatusLabel, statusLabel, typeLabel } from './i18n/labels';
+import en from './i18n/en';
 import type { DataManager } from './DataManager';
 import type { ReadingDataManager } from './ReadingDataManager';
-import type { Book, Game, Manga, TagDefinition, WatchLogTitle } from './types';
-import { formatTime, getTitleCredits, getThemedColor, getReadingTypeColor, GAME_FINISHED_STATUS, bookPageEquivalents, formatCount } from './types';
+import type { Book, Game, Manga, ReadingStatus, WatchLogTitle } from './types';
+import { formatTime, getTitleCredits, getReadingTypeColor, GAME_FINISHED_STATUS, bookPageEquivalents, formatCount } from './types';
 import type { CreditsField } from './types';
+import { renderTypeBadge } from './ui/typeBadge';
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 45; // r=45
 
@@ -23,10 +27,10 @@ interface StatItem {
 /** Libraries the More-statistics panel can be narrowed to. */
 type StatSource = 'watchlist' | 'reading' | 'games';
 
-const STAT_SOURCES: { label: string; value: StatSource }[] = [
-	{ label: 'Watchlist', value: 'watchlist' },
-	{ label: 'Reading', value: 'reading' },
-	{ label: 'Games', value: 'games' },
+const STAT_SOURCES: { labelKey: TranslationKey; value: StatSource }[] = [
+	{ labelKey: 'app.tabs.watchlist', value: 'watchlist' },
+	{ labelKey: 'app.tabs.reading', value: 'reading' },
+	{ labelKey: 'app.tabs.games', value: 'games' },
 ];
 
 /** Aggregated reading stats for one kind (books or manga). */
@@ -36,6 +40,20 @@ interface ReadingAggregate {
 	total: number;      // sum of total pages / chapters
 	volumesRead: number;
 	totalVolumes: number;
+}
+
+/** Status of any library: watch statuses first, then reading, then game ones; user-defined values pass through. */
+function anyStatusLabel(status: string): string {
+	if (Object.prototype.hasOwnProperty.call(en.labels.status, status)) return statusLabel(status);
+	if (Object.prototype.hasOwnProperty.call(en.labels.readingStatus, status)) return readingStatusLabel(status as ReadingStatus);
+	return gameStatusLabel(status);
+}
+
+/** Type bucket of the stats: watch types, the Book / Manga buckets of the reading libraries, game genres. */
+function statTypeLabel(type: string): string {
+	if (type === 'Book') return t('dashboard.stats.book');
+	if (type === 'Manga') return t('dashboard.stats.manga');
+	return typeLabel(type);
 }
 
 export class DashboardTab {
@@ -139,12 +157,12 @@ export class DashboardTab {
 				stats.total === 0 ? 0 : Math.round((stats.watched / stats.total) * 100);
 			if (isRect) {
 				const item = grid.createDiv({ cls: 'wl-rect-item' });
-				this.fillRect(item, type.name, type.color, percent, stats);
+				this.fillRect(item, typeLabel(type.name), type.color, percent, stats);
 				// reserve the sublabel line so type cards match the taller Books/Manga cards
 				item.createDiv({ cls: 'wl-rect-subline', text: ' ' });
 			} else {
 				const item = grid.createDiv({ cls: 'wl-ring-item' });
-				this.fillRing(item, type.name, type.color, percent, stats);
+				this.fillRing(item, typeLabel(type.name), type.color, percent, stats);
 				item.createDiv({ cls: 'wl-ring-subtitle wl-ring-subline', text: ' ' });
 			}
 		}
@@ -175,16 +193,16 @@ export class DashboardTab {
 		const seg1 = card.createDiv({ cls: isRect ? 'wl-dash-seg' : 'wl-dash-seg wl-dash-seg-center' });
 		if (isRect) {
 			// rect content goes straight into the segment, so its border is the card's
-			this.fillRect(seg1, 'Total', '#7F77DD', totalPercent, totalStats);
+			this.fillRect(seg1, t('dashboard.cards.total'), '#7F77DD', totalPercent, totalStats);
 		} else {
 			// rings are borderless; wrap so the accent ring matches type cards
-			this.fillRing(seg1.createDiv({ cls: 'wl-ring-item' }), 'Total', '#7F77DD', totalPercent, totalStats);
+			this.fillRing(seg1.createDiv({ cls: 'wl-ring-item' }), t('dashboard.cards.total'), '#7F77DD', totalPercent, totalStats);
 		}
 
 		// segments 2 & 3 — Time Watched / Remaining: label + value, no bar
-		this.renderTimeSegment(card, 'Time Watched', timeWatchedStr);
-		this.renderTimeSegment(card, 'Time Remaining', timeRemainingStr);
-		if (timePlayedStr) this.renderTimeSegment(card, 'Time Played', timePlayedStr);
+		this.renderTimeSegment(card, t('dashboard.cards.timeWatched'), timeWatchedStr);
+		this.renderTimeSegment(card, t('dashboard.cards.timeRemaining'), timeRemainingStr);
+		if (timePlayedStr) this.renderTimeSegment(card, t('dashboard.cards.timePlayed'), timePlayedStr);
 	}
 
 	private renderTimeSegment(card: HTMLElement, label: string, value: string): void {
@@ -233,28 +251,27 @@ export class DashboardTab {
 		const color = getReadingTypeColor(label === 'Books' ? 'book' : 'manga', this.plugin.settings);
 
 		// single inline subline under the bar: Books → pages; Manga → chapters · vol.
+		const readStr = formatCount(agg.read);
+		const totalStr = formatCount(agg.total);
 		const subline =
 			label === 'Books'
-				? `${formatCount(agg.read)} / ${formatCount(agg.total)} pages`
-				: `${formatCount(agg.read)} / ${formatCount(agg.total)} chapters · ${agg.volumesRead} / ${agg.totalVolumes} vol`;
+				? t('dashboard.cards.pages', { read: readStr, total: totalStr })
+				: t('dashboard.cards.chapters', {
+					read: readStr, total: totalStr, volumesRead: agg.volumesRead, volumesTotal: agg.totalVolumes,
+				});
+		const displayLabel = t(label === 'Books' ? 'dashboard.cards.books' : 'dashboard.cards.manga');
+		const left = t('dashboard.cards.left', { count: agg.left });
 
 		if (isRect) {
 			const item = grid.createDiv({ cls: 'wl-rect-item' });
-			const topRow = item.createDiv({ cls: 'wl-rect-top' });
-			topRow.createSpan({ cls: 'wl-rect-label', text: label });
-			topRow.createSpan({ cls: 'wl-rect-unwatched', text: `${agg.left} left` });
-			item.createDiv({ cls: 'wl-rect-value', text: `${percent}%` });
-			const barWrap = item.createDiv({ cls: 'wl-rect-bar-wrap' });
-			const bar = barWrap.createDiv({ cls: 'wl-rect-bar' });
-			bar.style.width = `${percent}%`;
-			bar.style.backgroundColor = color;
+			this.fillRectBody(item, displayLabel, left, color, percent);
 			item.createDiv({ cls: 'wl-rect-subline', text: subline });
 		} else {
 			const item = grid.createDiv({ cls: 'wl-ring-item' });
 			const svg = this.makeRingSvg(percent, color, `${percent}%`, '', true);
 			item.appendChild(svg);
-			item.createDiv({ cls: 'wl-ring-label', text: label });
-			item.createDiv({ cls: 'wl-ring-subtitle', text: `${agg.left} left` });
+			item.createDiv({ cls: 'wl-ring-label', text: displayLabel });
+			item.createDiv({ cls: 'wl-ring-subtitle', text: left });
 			item.createDiv({ cls: 'wl-ring-subtitle wl-ring-subline', text: subline });
 		}
 	}
@@ -336,7 +353,7 @@ export class DashboardTab {
 		item.appendChild(svg);
 		item.createDiv({ cls: 'wl-ring-label', text: label });
 		const unwatched = stats.total - stats.watched;
-		item.createDiv({ cls: 'wl-ring-subtitle', text: `${unwatched} unwatched` });
+		item.createDiv({ cls: 'wl-ring-subtitle', text: t('dashboard.cards.unwatched', { count: unwatched }) });
 	}
 
 	private fillRect(
@@ -346,13 +363,16 @@ export class DashboardTab {
 		percent: number,
 		stats: { watched: number; total: number },
 	): void {
+		const unwatched = stats.total - stats.watched;
+		this.fillRectBody(item, label, t('dashboard.cards.left', { count: unwatched }), color, percent);
+	}
+
+	/** Rect card body: label + "left" text, percent value and the coloured bar. */
+	private fillRectBody(item: HTMLElement, label: string, left: string, color: string, percent: number): void {
 		const topRow = item.createDiv({ cls: 'wl-rect-top' });
 		topRow.createSpan({ cls: 'wl-rect-label', text: label });
-		const unwatched = stats.total - stats.watched;
-		topRow.createSpan({ cls: 'wl-rect-unwatched', text: `${unwatched} left` });
-
+		topRow.createSpan({ cls: 'wl-rect-unwatched', text: left });
 		item.createDiv({ cls: 'wl-rect-value', text: `${percent}%` });
-
 		const barWrap = item.createDiv({ cls: 'wl-rect-bar-wrap' });
 		const bar = barWrap.createDiv({ cls: 'wl-rect-bar' });
 		bar.style.width = `${percent}%`;
@@ -367,7 +387,7 @@ export class DashboardTab {
 		manga: Manga[],
 		games: Game[],
 	): void {
-		const inner = this.renderAccordion(this.container, 'More Statistics', 'wl-more-stats');
+		const inner = this.renderAccordion(this.container, t('dashboard.stats.title'), 'wl-more-stats');
 
 		// pinned library counts — repainted with the panel so they follow the source filter
 		const pinned = inner.createDiv({ cls: 'wl-summary-metrics wl-more-stats-pinned' });
@@ -390,7 +410,7 @@ export class DashboardTab {
 
 		const allBtn = bar.createEl('button', {
 			cls: `wl-stats-filter-btn${allActive ? ' is-active' : ''}`,
-			text: 'All',
+			text: t('ui.toolbar.all'),
 		});
 		allBtn.addEventListener('click', () => {
 			if (allActive) return;
@@ -402,7 +422,7 @@ export class DashboardTab {
 			const isActive = active.has(src.value);
 			const btn = bar.createEl('button', {
 				cls: `wl-stats-filter-btn${isActive && !allActive ? ' is-active' : ''}`,
-				text: src.label,
+				text: t(src.labelKey),
 			});
 			btn.addEventListener('click', () => {
 				// from "All", picking one source narrows to it; otherwise toggle, falling back to "All" when the
@@ -452,8 +472,8 @@ export class DashboardTab {
 			shownManga.reduce((n, m) => n + (m.status === 'Completed' ? 1 : 0), 0) +
 			shownGames.reduce((n, g) => n + (g.status === GAME_FINISHED_STATUS ? 1 : 0), 0);
 
-		this.renderMetricRow(pinned, 'Titles in library', String(titleCount));
-		this.renderMetricRow(pinned, 'Completed', String(completedCount));
+		this.renderMetricRow(pinned, t('dashboard.stats.titlesInLibrary'), String(titleCount));
+		this.renderMetricRow(pinned, t('dashboard.stats.completed'), String(completedCount));
 
 		// one normalized list feeding the library-wide counters (Added Over Time / By Status / Type / Year)
 		const statItems: StatItem[] = [
@@ -465,18 +485,18 @@ export class DashboardTab {
 
 		// always-open stat cards, alphabetical by label. The first four span every selected library; Time
 		// Watched and the credit lists are Watchlist-only — minutes and cast/crew have no analog elsewhere.
-		this.renderCountSection(grid, 'Added Over Time', this.countBy(statItems, (t) => this.yearOf(t.dateAdded)));
-		this.renderCountSection(grid, 'By Status', this.countBy(statItems, (t) => t.status));
-		this.renderCountSection(grid, 'By Type', this.countBy(statItems, (t) => t.type));
+		this.renderCountSection(grid, t('dashboard.stats.addedOverTime'), this.countBy(statItems, (item) => this.yearOf(item.dateAdded)));
+		this.renderCountSection(grid, t('dashboard.stats.byStatus'), this.countBy(statItems, (item) => item.status), undefined, anyStatusLabel);
+		this.renderCountSection(grid, t('dashboard.stats.byType'), this.countBy(statItems, (item) => item.type), undefined, statTypeLabel);
 		this.renderByYearSection(grid, statItems);
 		this.renderTimeByYearSection(grid, watch);
 		const topN = Math.max(1, this.plugin.settings.dashboardTopCredits ?? 5);
-		this.renderCountSection(grid, 'Top Actors', this.countCredits(watch, 'cast'), topN);
-		this.renderCountSection(grid, 'Top Directors', this.countCredits(watch, 'director'), topN);
-		this.renderCountSection(grid, 'Top Studios', this.countCredits(watch, 'studio'), topN);
+		this.renderCountSection(grid, t('dashboard.stats.topActors'), this.countCredits(watch, 'cast'), topN);
+		this.renderCountSection(grid, t('dashboard.stats.topDirectors'), this.countCredits(watch, 'director'), topN);
+		this.renderCountSection(grid, t('dashboard.stats.topStudios'), this.countCredits(watch, 'studio'), topN);
 
 		if (grid.childElementCount === 0) {
-			grid.createDiv({ cls: 'wl-empty-state', text: 'No statistics for the selected libraries yet.' });
+			grid.createDiv({ cls: 'wl-empty-state', text: t('dashboard.stats.empty') });
 		}
 	}
 
@@ -551,10 +571,11 @@ export class DashboardTab {
 		label: string,
 		counts: Map<string, number>,
 		limit?: number,
+		labelOf?: (key: string) => string,
 	): void {
 		if (counts.size === 0) return;
 		const { card } = this.renderStatCard(parent, label);
-		this.renderCountList(card, counts, String, limit);
+		this.renderCountList(card, counts, String, limit, labelOf);
 	}
 
 	/** Renders count rows sorted count-desc (ties label-asc); optional cap for Top-N lists. */
@@ -563,17 +584,18 @@ export class DashboardTab {
 		counts: Map<string, number>,
 		format: (n: number) => string,
 		limit?: number,
+		labelOf?: (key: string) => string,
 	): void {
 		let rows = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 		if (limit !== undefined) rows = rows.slice(0, limit);
 		if (rows.length === 0) {
-			parent.createDiv({ cls: 'wl-empty-state', text: 'No data yet.' });
+			parent.createDiv({ cls: 'wl-empty-state', text: t('dashboard.stats.noData') });
 			return;
 		}
 		const list = parent.createDiv({ cls: 'wl-stat-list' });
 		for (const [label, n] of rows) {
 			const row = list.createDiv({ cls: 'wl-stat-row' });
-			row.createSpan({ cls: 'wl-metric-label', text: label });
+			row.createSpan({ cls: 'wl-metric-label', text: labelOf ? labelOf(label) : label });
 			row.createSpan({ cls: 'wl-metric-value', text: format(n) });
 		}
 	}
@@ -581,7 +603,7 @@ export class DashboardTab {
 	private renderByYearSection(parent: HTMLElement, statItems: StatItem[]): void {
 		const byYear = this.countBy(statItems, (t) => this.yearOf(t.releaseDate));
 		if (byYear.size === 0) return;
-		const { card, header } = this.renderStatCard(parent, 'By Year');
+		const { card, header } = this.renderStatCard(parent, t('dashboard.stats.byYear'));
 		const byDecade = new Map<string, number>();
 		for (const [year, n] of byYear) {
 			const decade = `${year.slice(0, 3)}0s`;
@@ -593,7 +615,7 @@ export class DashboardTab {
 		const listWrap = card.createDiv();
 		const renderList = () => {
 			listWrap.empty();
-			toggle.textContent = grouping === 'decade' ? 'Group by year' : 'Group by decade';
+			toggle.textContent = t(grouping === 'decade' ? 'dashboard.stats.groupByYear' : 'dashboard.stats.groupByDecade');
 			this.renderCountList(listWrap, grouping === 'decade' ? byDecade : byYear, String);
 		};
 		toggle.addEventListener('click', () => {
@@ -615,7 +637,7 @@ export class DashboardTab {
 			minutes.set(year, (minutes.get(year) ?? 0) + time);
 		}
 		if (minutes.size === 0) return;
-		const { card } = this.renderStatCard(parent, 'Time Watched by Year');
+		const { card } = this.renderStatCard(parent, t('dashboard.stats.timeByYear'));
 		this.renderCountList(card, minutes, formatTime);
 	}
 
@@ -631,7 +653,7 @@ export class DashboardTab {
 		if (planTitles.length === 0) return;
 
 		const section = this.container.createDiv({ cls: 'wl-suggestions' });
-		section.createDiv({ cls: 'wl-section-title', text: "Don't know what to watch next?" });
+		section.createDiv({ cls: 'wl-section-title', text: t('dashboard.suggestions.title') });
 
 		const grid = section.createDiv({ cls: 'wl-suggestions-grid' });
 
@@ -657,18 +679,18 @@ export class DashboardTab {
 		for (const typeName of fixedTypes) {
 			const pick = shortestByType(typeName);
 			const card = grid.createDiv({ cls: 'wl-suggestion-card' });
-			card.createDiv({ cls: 'wl-suggestion-label', text: `Shortest ${typeName}` });
+			card.createDiv({ cls: 'wl-suggestion-label', text: t('dashboard.suggestions.shortest', { type: typeLabel(typeName) }) });
 			card.createDiv({
 				cls: `wl-suggestion-title${pick ? '' : ' wl-suggestion-empty'}`,
-				text: pick ?? 'Nothing planned',
+				text: pick ?? t('dashboard.suggestions.nothingPlanned'),
 			});
 		}
 
 		const randomCard = grid.createDiv({ cls: 'wl-suggestion-card' });
 		const randomHeader = randomCard.createDiv({ cls: 'wl-suggestion-random-header' });
-		randomHeader.createDiv({ cls: 'wl-suggestion-label', text: 'Random' });
+		randomHeader.createDiv({ cls: 'wl-suggestion-label', text: t('dashboard.suggestions.random') });
 		const shuffleBtn = randomHeader.createEl('button', { cls: 'wl-suggestion-shuffle', text: '🔀' });
-		shuffleBtn.title = 'Pick another';
+		shuffleBtn.title = t('dashboard.suggestions.pickAnother');
 
 		const getRandomTitle = (): string =>
 			planTitles[Math.floor(Math.random() * planTitles.length)]?.title ?? '';
@@ -679,93 +701,49 @@ export class DashboardTab {
 		});
 	}
 
-	// Recently watched
+	// Recently watched / added
 
 	private renderRecentlyWatched(): void {
-		const section = this.container.createDiv({ cls: 'wl-recently-watched' });
-		section.createDiv({ cls: 'wl-section-title', text: 'Recently watched' });
-
-		const recent = this.dataManager.getRecentlyWatched(3);
-
-		if (recent.length === 0) {
-			section.createDiv({ cls: 'wl-empty-state', text: 'No titles watched yet.' });
-			return;
-		}
-
-		for (const title of recent) {
-			const item = section.createDiv({ cls: 'wl-rw-item' });
-
-			item.createDiv({ cls: 'wl-rw-title', text: title.title });
-
-			const typeDef = this.getTagDef(title.type, this.plugin.settings.types);
-			const colored = this.plugin.settings.coloredTypeBadges;
-			const badgeWrap = item.createDiv({ cls: 'wl-rw-col-badge' });
-			const badge = badgeWrap.createSpan({
-				cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-				text: title.type,
-			});
-			if (colored && typeDef) badge.style.backgroundColor = getThemedColor(title.type, typeDef.color, this.plugin.settings.colorTheme);
-
-			const epCol = item.createDiv({ cls: 'wl-rw-col-ep' });
-			const isMovie = title.type === 'Movie';
-			if (!isMovie) {
-				const nextEp = this.dataManager.getNextUnwatchedEpisode(title);
-				epCol.textContent = nextEp !== null ? `Ep ${nextEp}` : '✓';
-			}
-
-			const pctCol = item.createDiv({ cls: 'wl-rw-col-pct' });
-			if (isMovie) {
-				pctCol.textContent = title.watchedEpisodes.includes(1) ? '100%' : '0%';
-			} else {
-				pctCol.textContent = `${this.dataManager.getProgress(title)}%`;
-			}
-		}
+		this.renderRecentSection(
+			'dashboard.recent.watchedTitle', 'dashboard.recent.watchedEmpty', this.dataManager.getRecentlyWatched(3),
+		);
 	}
-
-	// Recently added
 
 	private renderRecentlyAdded(): void {
-		const section = this.container.createDiv({ cls: 'wl-recently-watched' });
-		section.createDiv({ cls: 'wl-section-title', text: 'Recently added' });
+		this.renderRecentSection(
+			'dashboard.recent.addedTitle', 'dashboard.recent.addedEmpty', this.dataManager.getRecentlyAdded(3),
+		);
+	}
 
-		const recent = this.dataManager.getRecentlyAdded(3);
+	private renderRecentSection(titleKey: TranslationKey, emptyKey: TranslationKey, recent: WatchLogTitle[]): void {
+		const section = this.container.createDiv({ cls: 'wl-recently-watched' });
+		section.createDiv({ cls: 'wl-section-title', text: t(titleKey) });
 
 		if (recent.length === 0) {
-			section.createDiv({ cls: 'wl-empty-state', text: 'No titles in your library yet.' });
+			section.createDiv({ cls: 'wl-empty-state', text: t(emptyKey) });
 			return;
 		}
 
-		for (const title of recent) {
-			const item = section.createDiv({ cls: 'wl-rw-item' });
-
-			item.createDiv({ cls: 'wl-rw-title', text: title.title });
-
-			const typeDef = this.getTagDef(title.type, this.plugin.settings.types);
-			const colored = this.plugin.settings.coloredTypeBadges;
-			const badgeWrap = item.createDiv({ cls: 'wl-rw-col-badge' });
-			const badge = badgeWrap.createSpan({
-				cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-				text: title.type,
-			});
-			if (colored && typeDef) badge.style.backgroundColor = getThemedColor(title.type, typeDef.color, this.plugin.settings.colorTheme);
-
-			const epCol = item.createDiv({ cls: 'wl-rw-col-ep' });
-			const isMovie = title.type === 'Movie';
-			if (!isMovie) {
-				const nextEp = this.dataManager.getNextUnwatchedEpisode(title);
-				epCol.textContent = nextEp !== null ? `Ep ${nextEp}` : '✓';
-			}
-
-			const pctCol = item.createDiv({ cls: 'wl-rw-col-pct' });
-			if (isMovie) {
-				pctCol.textContent = title.watchedEpisodes.includes(1) ? '100%' : '0%';
-			} else {
-				pctCol.textContent = `${this.dataManager.getProgress(title)}%`;
-			}
-		}
+		for (const title of recent) this.renderRecentItem(section, title);
 	}
 
-	private getTagDef(name: string, tags: TagDefinition[]): TagDefinition | undefined {
-		return tags.find((t) => t.name === name);
+	private renderRecentItem(section: HTMLElement, title: WatchLogTitle): void {
+		const item = section.createDiv({ cls: 'wl-rw-item' });
+		item.createDiv({ cls: 'wl-rw-title', text: title.title });
+		renderTypeBadge(item.createDiv({ cls: 'wl-rw-col-badge' }), title.type, this.plugin.settings);
+		item.createDiv({ cls: 'wl-rw-col-ep', text: this.recentEpisodeText(title) });
+		item.createDiv({ cls: 'wl-rw-col-pct', text: this.recentProgressText(title) });
+	}
+
+	/** Next unwatched episode, "✓" when all are watched, empty for movies. */
+	private recentEpisodeText(title: WatchLogTitle): string {
+		if (title.type === 'Movie') return '';
+		const nextEp = this.dataManager.getNextUnwatchedEpisode(title);
+		return nextEp !== null ? t('dashboard.recent.episode', { n: nextEp }) : '✓';
+	}
+
+	private recentProgressText(title: WatchLogTitle): string {
+		if (title.type === 'Movie') return title.watchedEpisodes.includes(1) ? '100%' : '0%';
+		return `${this.dataManager.getProgress(title)}%`;
 	}
 }

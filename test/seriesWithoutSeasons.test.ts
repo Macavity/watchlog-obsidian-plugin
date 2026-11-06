@@ -24,31 +24,31 @@ describe('series without a season list', () => {
 
 	it('refill notfound: implicit season, toggles allowed', async () => {
 		const fetchSeasons = vi.fn(() => Promise.resolve<ApiOutcome<Season[]>>({ status: 'notfound' }));
-		const { dm, f } = await setupDataManager({ 'W/TV Show/N.md': NOTE }, { apiService: { fetchSeasons } });
+		const { dm, f, notices } = await setupDataManager({ 'W/TV Show/N.md': NOTE }, { apiService: { fetchSeasons } });
 		await tick();
 		expect(fetchSeasons).toHaveBeenCalledTimes(1);
 		await dm.markEpisodeWatched('TV Show/N', 2, true);
 		expect(f.files.get('W/TV Show/N.md')).toContain('watched: S01E02');
-		expect(shown).not.toContain('Episodes of "N" are still loading.');
+		expect(notices).not.toContainEqual({ code: 'episodesLoading', title: 'N' });
 	});
 
 	it('refill nokey: own notice, toggles allowed', async () => {
 		const fetchSeasons = vi.fn(() => Promise.resolve<ApiOutcome<Season[]>>({ status: 'nokey' }));
-		const { dm, f } = await setupDataManager({ 'W/TV Show/N.md': NOTE }, { apiService: { fetchSeasons } });
+		const { dm, f, notices } = await setupDataManager({ 'W/TV Show/N.md': NOTE }, { apiService: { fetchSeasons } });
 		await tick();
 		await dm.markEpisodeWatched('TV Show/N', 2, true);
 		expect(f.files.get('W/TV Show/N.md')).toContain('watched: S01E02');
-		expect(shown).toContain('API key needed to load episodes');
+		expect(notices).toContainEqual({ code: 'apiKeyNeeded' });
 	});
 
 	it('refill transient: toggles wait', async () => {
 		const fetchSeasons = vi.fn(() => Promise.resolve<ApiOutcome<Season[]>>({ status: 'transient' }));
-		const { dm, f } = await setupDataManager({ 'W/TV Show/N.md': NOTE }, { apiService: { fetchSeasons } });
+		const { dm, f, notices } = await setupDataManager({ 'W/TV Show/N.md': NOTE }, { apiService: { fetchSeasons } });
 		await tick();
 		await dm.markEpisodeWatched('TV Show/N', 2, true);
 		await tick(700);
 		expect(f.files.get('W/TV Show/N.md')).toBe(NOTE);
-		expect(shown).toContain('Episodes of "N" are still loading.');
+		expect(notices).toContainEqual({ code: 'episodesLoading', title: 'N' });
 	});
 
 	it('edited seasons go to the note', async () => {

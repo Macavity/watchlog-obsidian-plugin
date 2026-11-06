@@ -14,8 +14,8 @@
  */
 
 import { setIcon } from 'obsidian';
+import { t } from './i18n';
 import {
-	dateFormatHint,
 	dateFormatMask,
 	formatDateDisplay,
 	getActiveDateFormat,
@@ -54,12 +54,22 @@ export interface DatePickerHandle {
 	destroy(): void;
 }
 
-const WEEKDAYS_MON = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const WEEKDAYS_SUN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WEEKDAYS_MON = [
+	'misc.datePicker.weekdays.mon', 'misc.datePicker.weekdays.tue', 'misc.datePicker.weekdays.wed',
+	'misc.datePicker.weekdays.thu', 'misc.datePicker.weekdays.fri', 'misc.datePicker.weekdays.sat',
+	'misc.datePicker.weekdays.sun',
+] as const;
+const WEEKDAYS_SUN = [
+	'misc.datePicker.weekdays.sun', 'misc.datePicker.weekdays.mon', 'misc.datePicker.weekdays.tue',
+	'misc.datePicker.weekdays.wed', 'misc.datePicker.weekdays.thu', 'misc.datePicker.weekdays.fri',
+	'misc.datePicker.weekdays.sat',
+] as const;
 const MONTH_NAMES = [
-	'January', 'February', 'March', 'April', 'May', 'June',
-	'July', 'August', 'September', 'October', 'November', 'December',
-];
+	'misc.datePicker.months.january', 'misc.datePicker.months.february', 'misc.datePicker.months.march',
+	'misc.datePicker.months.april', 'misc.datePicker.months.may', 'misc.datePicker.months.june',
+	'misc.datePicker.months.july', 'misc.datePicker.months.august', 'misc.datePicker.months.september',
+	'misc.datePicker.months.october', 'misc.datePicker.months.november', 'misc.datePicker.months.december',
+] as const;
 
 /** Only the American format starts its weeks on Sunday. */
 function weekStartsMonday(): boolean {
@@ -83,7 +93,7 @@ export function createDatePicker(cfg: DatePickerConfig): DatePickerHandle {
 			placeholder: dateFormatMask(),
 			maxlength: '10',
 			// users still type here, so this is a hint, not a lock
-			'aria-label': `Date (${dateFormatMask()})`,
+			'aria-label': t('misc.datePicker.ariaLabel', { format: dateFormatMask() }),
 		},
 	});
 	input.value = value ? formatDateDisplay(value) : passthrough;
@@ -138,16 +148,16 @@ export function createDatePicker(cfg: DatePickerConfig): DatePickerHandle {
 		const head = body.createDiv({ cls: 'wl-datepicker-head' });
 		const prev = head.createEl('button', {
 			cls: 'wl-datepicker-nav',
-			attr: { 'aria-label': 'Previous month' },
+			attr: { 'aria-label': t('misc.datePicker.previousMonth') },
 		});
 		setIcon(prev, 'chevron-left');
 		head.createSpan({
 			cls: 'wl-datepicker-month',
-			text: `${MONTH_NAMES[viewMonth]} ${viewYear}`,
+			text: `${t(MONTH_NAMES[viewMonth]!)} ${viewYear}`,
 		});
 		const next = head.createEl('button', {
 			cls: 'wl-datepicker-nav',
-			attr: { 'aria-label': 'Next month' },
+			attr: { 'aria-label': t('misc.datePicker.nextMonth') },
 		});
 		setIcon(next, 'chevron-right');
 
@@ -167,7 +177,7 @@ export function createDatePicker(cfg: DatePickerConfig): DatePickerHandle {
 		const monday = weekStartsMonday();
 		const names = monday ? WEEKDAYS_MON : WEEKDAYS_SUN;
 		const dow = body.createDiv({ cls: 'wl-datepicker-dow' });
-		for (const n of names) dow.createSpan({ text: n });
+		for (const n of names) dow.createSpan({ text: t(n) });
 
 		const grid = body.createDiv({ cls: 'wl-datepicker-grid' });
 		const first = new Date(viewYear, viewMonth, 1);
@@ -194,8 +204,8 @@ export function createDatePicker(cfg: DatePickerConfig): DatePickerHandle {
 		}
 
 		const foot = body.createDiv({ cls: 'wl-datepicker-foot' });
-		const todayBtn = foot.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Today' });
-		const clearBtn = foot.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Clear' });
+		const todayBtn = foot.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('misc.datePicker.today') });
+		const clearBtn = foot.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('misc.datePicker.clear') });
 		todayBtn.addEventListener('click', (ev) => {
 			ev.stopPropagation();
 			closePanel();
@@ -264,7 +274,7 @@ export function createDatePicker(cfg: DatePickerConfig): DatePickerHandle {
 		const parsed = parse(raw);
 		if (!parsed) {
 			input.addClass('wl-input-error');
-			input.title = dateFormatHint();
+			input.title = t('misc.datePicker.formatHint', { format: dateFormatMask() });
 			return;
 		}
 		commit(parsed);

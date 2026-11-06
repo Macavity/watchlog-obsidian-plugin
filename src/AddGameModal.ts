@@ -4,6 +4,8 @@ import type { GameDataManager } from './GameDataManager';
 import { rawgResizedCover, steamAppIdFromUrl, type GameSearchResult } from './ApiService';
 import { Game, GameGroup, GAME_AUTO_STATUS } from './types';
 import { renderSearchResultRow } from './SearchThumbnail';
+import { t } from './i18n';
+import { gameStatusLabel, priorityLabel } from './i18n/labels';
 import { SearchFormModal, type SearchPickerOptions } from './ui/SearchFormModal';
 import { LibraryIndex, gameResultIdKeys } from './LibraryIndex';
 import { renderModePill } from './ModePill';
@@ -51,7 +53,7 @@ function platformMatches(a: string, b: string): boolean {
 /** "2021 · PC, PS5": release year and up to three platforms. */
 function gameResultMeta(result: GameSearchResult): string {
 	const year = result.releaseDate.match(/^(\d{4})/)?.[1] ?? '—';
-	const platforms = result.platforms.slice(0, 3).join(', ') || 'Unknown platforms';
+	const platforms = result.platforms.slice(0, 3).join(', ') || t('add.game.unknownPlatforms');
 	return `${year} · ${platforms}`;
 }
 
@@ -98,7 +100,7 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 		onAdded: () => void,
 		prefill?: { searchQuery?: string; title?: string },
 	) {
-		super(app, 'Add game', ['wl-add-modal', 'wl-add-game-modal']);
+		super(app, t('add.game.heading'), ['wl-add-modal', 'wl-add-game-modal']);
 		this.plugin = plugin;
 		this.gameData = gameData;
 		this.onAdded = onAdded;
@@ -111,7 +113,7 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 	}
 
 	protected pickerOptions(): SearchPickerOptions<GameSearchResult> {
-		return { placeholder: 'Search for a game...', grid: true, initialQuery: this.initialQuery };
+		return { placeholder: t('add.game.searchPlaceholder'), grid: true, initialQuery: this.initialQuery };
 	}
 
 	protected noApiMessage(): string | null {
@@ -119,9 +121,9 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 		if (this.plugin.settings.gamesApiSource === 'igdb') {
 			return api.hasIgdbCredentials()
 				? null
-				: 'No IGDB credentials configured. Go to Settings → API → Games to set the Twitch Client ID and Secret.';
+				: t('add.game.noIgdb');
 		}
-		return api.hasRawgKey() ? null : 'No RAWG API key configured. Go to Settings → API → Games to set one up.';
+		return api.hasRawgKey() ? null : t('add.game.noRawg');
 	}
 
 	protected search(query: string): Promise<GameSearchResult[]> {
@@ -191,35 +193,35 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 		if (!form) return;
 		const makeRow = (label: string): HTMLElement => makeFormRow(form, label);
 
-		titleField(form, this.fieldTitle, 'Game title', (v) => { this.fieldTitle = v; });
+		titleField(form, this.fieldTitle, t('add.game.titlePlaceholder'), (v) => { this.fieldTitle = v; });
 
 		const devPubRow = form.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
-		textInput(makeCell(devPubRow, 'Developer'), {
+		textInput(makeCell(devPubRow, t('add.game.developer')), {
 			value: this.fieldDeveloper,
-			placeholder: 'Developer',
+			placeholder: t('add.game.developer'),
 			onInput: (v) => { this.fieldDeveloper = v; },
 		});
-		textInput(makeCell(devPubRow, 'Publisher', true), {
+		textInput(makeCell(devPubRow, t('add.game.publisher'), true), {
 			value: this.fieldPublisher,
-			placeholder: 'Publisher',
+			placeholder: t('add.game.publisher'),
 			onInput: (v) => { this.fieldPublisher = v; },
 		});
 
 		const settings = this.gameData.getSettings();
 		const genrePriRow = form.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
-		nameSelect(makeCell(genrePriRow, 'Genre'), settings.types.map((t) => t.name), this.fieldGenre,
+		nameSelect(makeCell(genrePriRow, t('add.game.genre')), settings.types.map((t) => t.name), this.fieldGenre,
 			(v) => { this.fieldGenre = v; });
-		nameSelect(makeCell(genrePriRow, 'Priority', true), this.plugin.settings.priorities.map((p) => p.name),
-			this.fieldPriority, (v) => { this.fieldPriority = v; }, true);
+		nameSelect(makeCell(genrePriRow, t('add.priority'), true), this.plugin.settings.priorities.map((p) => p.name),
+			this.fieldPriority, (v) => { this.fieldPriority = v; }, true, priorityLabel);
 
 		// status + date started paired 50/50 (the auto "To be released" is excluded — it follows the
 		// release date)
 		const statusStartRow = form.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
 		const statuses = settings.statuses.filter((s) => s.name !== GAME_AUTO_STATUS);
-		nameSelect(makeCell(statusStartRow, 'Status'), statuses.map((s) => s.name), this.fieldStatus,
-			(v) => { this.fieldStatus = v; });
+		nameSelect(makeCell(statusStartRow, t('add.status')), statuses.map((s) => s.name), this.fieldStatus,
+			(v) => { this.fieldStatus = v; }, false, gameStatusLabel);
 
-		const startCell = makeCell(statusStartRow, 'Date started', true);
+		const startCell = makeCell(statusStartRow, t('add.dateStarted'), true);
 		createDatePicker({
 			parent: startCell,
 			inputCls: 'wl-modal-input',
@@ -229,7 +231,7 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 
 		releaseDateField(form, this.fieldReleaseDate, (v) => { this.fieldReleaseDate = v; });
 
-		const storeRow = makeRow('Store link');
+		const storeRow = makeRow(t('add.game.storeLink'));
 		const storeInput = storeRow.createEl('input', {
 			cls: 'wl-modal-input',
 			attr: { type: 'url', placeholder: 'https://store.steampowered.com/...' },
@@ -237,7 +239,7 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 		storeInput.value = this.fieldStoreUrl;
 		const storeBtn = storeRow.createEl('button', {
 			cls: 'wl-store-btn',
-			attr: { type: 'button', title: 'Open store page', 'aria-label': 'Open store page' },
+			attr: { type: 'button', title: t('add.game.openStore'), 'aria-label': t('add.game.openStore') },
 		});
 		setIcon(storeBtn, 'store');
 		const syncStoreBtn = (): void => {
@@ -255,14 +257,14 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 
 		linkField(form, this.fieldLink, 'https://example.com', (v) => { this.fieldLink = v; });
 
-		textInput(makeRow('Cover URL'), {
+		textInput(makeRow(t('add.coverUrl')), {
 			value: this.fieldCoverUrl,
 			type: 'url',
 			placeholder: 'https://…',
 			onInput: (v) => { this.fieldCoverUrl = v; },
 		});
 
-		const modesRow = makeRow('Modes');
+		const modesRow = makeRow(t('add.game.modes'));
 		renderModePill(
 			modesRow,
 			() => ({
@@ -278,7 +280,7 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 		);
 
 		// platforms — the shared coloured toggle chips, driven by Settings → Customize → Games
-		const platRow = makeRow('Platforms');
+		const platRow = makeRow(t('add.game.platforms'));
 		renderTagChips({
 			wrap: platRow.createDiv({ cls: 'wl-game-modal-platforms wl-add-game-platforms' }),
 			tags: settings.platforms,
@@ -290,14 +292,14 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 		renderGroupPicker(form, this.gameData.getGroups(), this.group);
 
 		const btnRow = form.createDiv({ cls: 'wl-modal-btn-row' });
-		const addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add to games' });
+		const addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('add.game.submit') });
 		addBtn.addEventListener('click', () => void this.addGame());
 	}
 
 	private async addGame(): Promise<void> {
 		const titleName = this.fieldTitle.trim();
 		if (!titleName) {
-			new Notice('Please enter a game title.');
+			new Notice(t('add.game.emptyTitle'));
 			return;
 		}
 
@@ -364,7 +366,7 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 			await this.gameData.addGroup(group);
 		}
 
-		new Notice(`"${titleName}" added to WatchLog.`);
+		new Notice(t('add.added', { name: titleName }));
 		this.close();
 		this.onAdded();
 	}

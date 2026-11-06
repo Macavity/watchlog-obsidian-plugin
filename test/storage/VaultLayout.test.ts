@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { VaultLayout, safeTypeName, typeNameError } from '../../src/storage/VaultLayout';
+import { VaultLayout, safeTypeName, typeNameProblem } from '../../src/storage/VaultLayout';
 const l = new VaultLayout('Journal/WatchLog', () => ['Movie', 'TV Show']);
 describe('VaultLayout', () => {
   it('classifies entries', () => {
@@ -35,8 +35,12 @@ describe('safe names', () => {
     expect(safeTypeName('Sci-Fi/Fantasy')).toBe('Sci-Fi-Fantasy');
     expect(safeTypeName('Books')).toBe('Books (type)');
     expect(safeTypeName(' Anime ')).toBe('Anime');
-    expect(typeNameError('Anime')).toBeNull();
-    expect(typeNameError('Sci-Fi/Fantasy')).toMatch(/Sci-Fi-Fantasy/);
-    expect(typeNameError('games')).toMatch(/reserved/);
+  });
+  it('reports type name problems as codes', () => {
+    expect(typeNameProblem('Anime')).toBeNull();
+    expect(typeNameProblem('Sci-Fi/Fantasy')).toEqual({ reason: 'unsafe', name: 'Sci-Fi/Fantasy', safe: 'Sci-Fi-Fantasy' });
+    expect(typeNameProblem(' Sci-Fi/Fantasy ')).toEqual({ reason: 'unsafe', name: 'Sci-Fi/Fantasy', safe: 'Sci-Fi-Fantasy' });
+    expect(typeNameProblem('games')).toEqual({ reason: 'reserved', name: 'games' });
+    expect(typeNameProblem('Books')).toEqual({ reason: 'reserved', name: 'Books' });
   });
 });

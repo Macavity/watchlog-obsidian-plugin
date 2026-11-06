@@ -1,5 +1,6 @@
 import { App, Modal } from 'obsidian';
 import type WatchLogPlugin from './main';
+import { t } from './i18n';
 import type { WatchLogTitle, CreditsField } from './types';
 import { getDisplayCredits, getManualCredits, getTitleCredits } from './types';
 
@@ -58,15 +59,11 @@ export class AddCreditModal extends Modal {
 		this.staged = [...this.initial];
 	}
 
-	private get label(): string {
-		return this.field === 'director' ? 'director' : 'cast';
-	}
-
-	onOpen(): void {
+		onOpen(): void {
 		const colorTheme = this.plugin.settings.colorTheme ?? 'default';
 		this.modalEl.setAttribute('data-theme', colorTheme);
 		this.contentEl.setAttribute('data-theme', colorTheme);
-		this.titleEl.setText(`Add ${this.label}`);
+		this.titleEl.setText(this.field === 'director' ? t('add.credit.titleDirector') : t('add.credit.titleCast'));
 		this.contentEl.addClass('wl-view');
 		this.contentEl.addClass('wl-credit-modal');
 		this.renderBody();
@@ -100,15 +97,18 @@ export class AddCreditModal extends Modal {
 	/** Count line under a suggestion: the field being edited first, the other one after. */
 	private metaFor(s: CreditSuggestion): string {
 		const parts: string[] = [];
-		const push = (n: number, word: string): void => {
-			if (n > 0) parts.push(`${word} in ${n} title${n === 1 ? '' : 's'}`);
+		const director = (): void => {
+			if (s.directorCount > 0) parts.push(t('add.credit.directorInTitles', { count: s.directorCount }));
+		};
+		const cast = (): void => {
+			if (s.castCount > 0) parts.push(t('add.credit.castInTitles', { count: s.castCount }));
 		};
 		if (this.field === 'director') {
-			push(s.directorCount, 'Director');
-			push(s.castCount, 'Cast');
+			director();
+			cast();
 		} else {
-			push(s.castCount, 'Cast');
-			push(s.directorCount, 'Director');
+			cast();
+			director();
 		}
 		return parts.join(' · ');
 	}
@@ -132,7 +132,7 @@ export class AddCreditModal extends Modal {
 
 		content.createDiv({
 			cls: 'wl-modal-info',
-			text: `Search names already in your library, or type a new one. Added names sit after the fetched ${this.label} and survive a refresh.`,
+			text: this.field === 'director' ? t('add.credit.infoDirector') : t('add.credit.infoCast'),
 		});
 
 		const panes = content.createDiv({ cls: 'wl-credit-panes' });
@@ -141,7 +141,7 @@ export class AddCreditModal extends Modal {
 		const searchPane = panes.createDiv({ cls: 'wl-credit-pane wl-credit-search-pane' });
 		this.searchInput = searchPane.createEl('input', {
 			cls: 'wl-modal-input wl-credit-search-input',
-			attr: { type: 'text', placeholder: `Search or add a ${this.label} name...` },
+			attr: { type: 'text', placeholder: this.field === 'director' ? t('add.credit.placeholderDirector') : t('add.credit.placeholderCast') },
 		});
 		this.searchInput.value = this.query;
 		this.searchInput.addEventListener('input', () => {
@@ -154,13 +154,13 @@ export class AddCreditModal extends Modal {
 
 		// right — staged names
 		const stagedPane = panes.createDiv({ cls: 'wl-credit-pane wl-credit-staged-pane' });
-		stagedPane.createDiv({ cls: 'wl-credit-pane-title', text: 'To add' });
+		stagedPane.createDiv({ cls: 'wl-credit-pane-title', text: t('add.credit.toAdd') });
 		this.stagedEl = stagedPane.createDiv({ cls: 'wl-credit-staged' });
 
 		const btnRow = content.createDiv({ cls: 'wl-modal-btn-row' });
-		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-mr', text: 'Cancel' });
+		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-mr', text: t('common.cancel') });
 		cancelBtn.addEventListener('click', () => this.close());
-		this.saveBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add all' });
+		this.saveBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('add.credit.addAll') });
 		this.saveBtn.addEventListener('click', () => void this.commit());
 
 		this.renderResults();
@@ -178,7 +178,7 @@ export class AddCreditModal extends Modal {
 		if (!q) {
 			list.createDiv({
 				cls: 'wl-credit-hint',
-				text: 'Start typing to search names from your other titles.',
+				text: t('add.credit.startTyping'),
 			});
 			return;
 		}
@@ -203,13 +203,13 @@ export class AddCreditModal extends Modal {
 		// "Add <typed>" leads unless an existing name matches the query exactly
 		const exact = matches.some((s) => s.name.toLowerCase() === lower);
 		if (!exact) {
-			this.renderResultRow(list, q, `New ${this.label} name`, true);
+			this.renderResultRow(list, q, this.field === 'director' ? t('add.credit.newNameDirector') : t('add.credit.newNameCast'), true);
 		}
 		for (const s of matches) {
 			this.renderResultRow(list, s.name, this.metaFor(s), false);
 		}
 		if (exact && matches.length === 0) {
-			list.createDiv({ cls: 'wl-credit-hint', text: 'No matches.' });
+			list.createDiv({ cls: 'wl-credit-hint', text: t('add.noMatches') });
 		}
 	}
 
@@ -222,8 +222,8 @@ export class AddCreditModal extends Modal {
 		const present = this.isPresent(name);
 		const item = list.createDiv({ cls: 'wl-result-item wl-credit-result' });
 		if (isNew) item.addClass('wl-credit-result-new');
-		item.createDiv({ cls: 'wl-result-title', text: isNew ? `Add "${name}"` : name });
-		item.createDiv({ cls: 'wl-result-meta', text: present ? 'Already on this title' : meta });
+		item.createDiv({ cls: 'wl-result-title', text: isNew ? t('add.credit.addNamed', { name }) : name });
+		item.createDiv({ cls: 'wl-result-meta', text: present ? t('add.credit.alreadyPresent') : meta });
 		if (present) {
 			item.addClass('is-disabled');
 			return;
@@ -289,7 +289,7 @@ export class AddCreditModal extends Modal {
 		wrap.empty();
 
 		if (this.staged.length === 0) {
-			wrap.createDiv({ cls: 'wl-credit-hint', text: 'Nothing staged yet.' });
+			wrap.createDiv({ cls: 'wl-credit-hint', text: t('add.credit.nothingStaged') });
 			this.updateSaveState();
 			return;
 		}
@@ -298,8 +298,9 @@ export class AddCreditModal extends Modal {
 			const chip = wrap.createDiv({ cls: 'wl-credit-chip' });
 			chip.createSpan({ cls: 'wl-credit-chip-name', text: name });
 			const del = chip.createEl('button', { cls: 'wl-credit-chip-del', text: '✕' });
-			del.title = `Remove ${name}`;
-			del.setAttr('aria-label', `Remove ${name}`);
+			const removeLabel = t('add.credit.removeName', { name });
+			del.title = removeLabel;
+			del.setAttr('aria-label', removeLabel);
 			del.addEventListener('click', () => {
 				this.staged.splice(idx, 1);
 				this.renderResults();
@@ -318,7 +319,7 @@ export class AddCreditModal extends Modal {
 		const initialKeys = new Set(this.initial.map((n) => n.toLowerCase()));
 		const added = this.staged.filter((n) => !initialKeys.has(n.toLowerCase())).length;
 		const removed = this.initial.length - (this.staged.length - added);
-		this.saveBtn.textContent = added > 0 ? `Add all (${added})` : 'Save changes';
+		this.saveBtn.textContent = added > 0 ? t('add.credit.addAllCount', { count: added }) : t('add.saveChanges');
 		this.saveBtn.disabled = added === 0 && removed === 0;
 	}
 

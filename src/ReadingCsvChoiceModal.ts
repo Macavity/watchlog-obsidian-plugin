@@ -1,4 +1,5 @@
 import { App, Modal } from 'obsidian';
+import { t } from './i18n';
 
 export type ReadingCsvKind = 'book' | 'manga';
 
@@ -20,12 +21,12 @@ export class ReadingCsvChoiceModal extends Modal {
 		contentEl.empty();
 		contentEl.addClass('wl-draft-choice-modal');
 
-		this.titleEl.setText(this.mode === 'export' ? 'Export to CSV' : 'Import from CSV');
+		this.titleEl.setText(this.mode === 'export' ? t('csv.exportTitle') : t('csv.importTitle'));
 		contentEl.createDiv({
 			cls: 'wl-draft-choice-subtitle',
 			text: this.mode === 'export'
-				? 'Which library do you want to export?'
-				: 'Which library do you want to import into?',
+				? t('csv.chooseExport')
+				: t('csv.chooseImport'),
 		});
 
 		const grid = contentEl.createDiv({ cls: 'wl-draft-choice-grid' });
@@ -39,8 +40,8 @@ export class ReadingCsvChoiceModal extends Modal {
 			});
 		};
 
-		makeOption('Books', 'book');
-		makeOption('Manga', 'manga');
+		makeOption(t('csv.library.book'), 'book');
+		makeOption(t('csv.library.manga'), 'manga');
 	}
 
 	onClose(): void {
