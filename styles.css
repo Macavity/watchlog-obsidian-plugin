@@ -7843,6 +7843,64 @@ button.wl-seg-toggle-btn.is-active {
   to   { transform: rotate(360deg); }
 }
 
+/* ══ ICON BUTTONS ══ */
+
+/* Icon-only buttons, built by src/ui/IconButton.ts. element-qualified: a plain .class
+   loses to core's button:not(.clickable-icon) (background, shadow, radius, height). */
+button.wl-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+}
+
+button.wl-icon-btn .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+button.wl-icon-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+
+/* bordered, the rating-row look */
+button.wl-icon-btn-framed {
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* card menus and the mobile toolbar */
+button.wl-icon-btn-lg {
+  width: 28px;
+  height: 28px;
+}
+
+button.wl-icon-btn-lg .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* refresh in flight; the caller toggles the class */
+button.wl-icon-btn.is-loading {
+  animation: wl-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+
+/* core's .is-tablet button:not(.clickable-icon) padding would squeeze the icon out */
+body.is-tablet button.wl-icon-btn {
+  padding: 0;
+}
+
 /* Small numeric settings input (e.g. top directors/actors count): ~3 digits wide. */
 input.wl-settings-count-input {
   width: 64px;
