@@ -57,6 +57,11 @@ const ui = {
 		dayOfWeek: 'Wochentag',
 		dayOfMonth: 'Tag im Monat',
 		of: 'von',
+		noDate: 'Kein Datum gesetzt',
+		everyDay: 'Jeden Tag',
+		everyWeekday: 'Jeden {day}',
+		monthlyOn: 'Monatlich am Tag {day}',
+		unknown: 'Unbekannt',
 		single: 'Einzelner Termin',
 		recurring: 'Wiederkehrend',
 		days: {

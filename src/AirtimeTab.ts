@@ -2,12 +2,13 @@ import { App, Modal, Notice } from 'obsidian';
 import { t, type TranslationKey } from './i18n';
 import { statusLabel, typeLabel } from './i18n/labels';
 import { monthName } from './ui/dateNames';
+import { scheduleText } from './ui/scheduleText';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { ReadingDataManager } from './ReadingDataManager';
 import type { GameDataManager } from './GameDataManager';
 import type { WatchLogTitle, AirtimeEntry, AirtimeSchedule, MaybeTitle, Book, Manga, Game } from './types';
-import { getAirtimeScheduleString, getThemedColor, getReadingTypeColor, getDisplayPoster, isReleaseDateFuture, formatDateDisplay, todayIso, toIsoDate, GAME_AUTO_STATUS } from './types';
+import { getThemedColor, getReadingTypeColor, getDisplayPoster, isReleaseDateFuture, formatDateDisplay, todayIso, toIsoDate, GAME_AUTO_STATUS } from './types';
 import {
 	type ScheduleFormState,
 	RECURRENCE_OPTIONS,
@@ -218,9 +219,7 @@ function tickConfirmMessage(r: ResolvedUpcoming, current: number | undefined, is
 
 /** The schedule line of a Cards entry, with the long "Release date" lead shortened. */
 function trackerSubText(schedule: AirtimeSchedule): string {
-	const text = getAirtimeScheduleString(schedule);
-	const lead = t('ui.schedule.releaseDate');
-	return text.startsWith(lead) ? t('airtime.sub.releasePrefix') + text.slice(lead.length) : text;
+	return scheduleText(schedule, t('airtime.sub.releasePrefix'));
 }
 
 /** Opens the entry's external page, or tells the user none is set. */
@@ -1101,7 +1100,7 @@ export class AirtimeTab {
 			text: r.typeLabel,
 		});
 		if (r.typeColor) typeBadge.style.backgroundColor = r.typeColor;
-		metaRow.createSpan({ cls: 'wl-airtime-schedule', text: getAirtimeScheduleString(entry.schedule) });
+		metaRow.createSpan({ cls: 'wl-airtime-schedule', text: scheduleText(entry.schedule) });
 
 		// progress badge — multi-part titles only (series / manga)
 		if (!isMovie && (entry.currentSeason !== undefined || entry.currentEpisode !== undefined)) {

@@ -66,8 +66,13 @@ const misc = {
 		hintMangaRecurring: "Saving also updates this title's total chapters and volumes.",
 		hintBookRecurring: "Saving also updates this title's total chapters.",
 	},
+	colorPicker: {
+		custom: 'Custom color…',
+		clear: 'No color (reset to default)',
+	},
 	datePicker: {
 		ariaLabel: 'Date ({format})',
+		formatHint: 'Unrecognised format. Expected {format}.',
 		previousMonth: 'Previous month',
 		nextMonth: 'Next month',
 		today: 'Today',

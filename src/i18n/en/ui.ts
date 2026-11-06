@@ -53,7 +53,12 @@ const ui = {
 		timeOptional: 'Time (optional)',
 		dayOfWeek: 'Day of week',
 		dayOfMonth: 'Day of month',
-		of: 'Of',
+		of: 'of',
+		noDate: 'No date set',
+		everyDay: 'Every day',
+		everyWeekday: 'Every {day}',
+		monthlyOn: 'Monthly on day {day}',
+		unknown: 'Unknown',
 		single: 'Single release',
 		recurring: 'Recurring',
 		days: {

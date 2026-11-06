@@ -16,7 +16,6 @@
 import { setIcon } from 'obsidian';
 import { t } from './i18n';
 import {
-	dateFormatHint,
 	dateFormatMask,
 	formatDateDisplay,
 	getActiveDateFormat,
@@ -275,7 +274,7 @@ export function createDatePicker(cfg: DatePickerConfig): DatePickerHandle {
 		const parsed = parse(raw);
 		if (!parsed) {
 			input.addClass('wl-input-error');
-			input.title = dateFormatHint();
+			input.title = t('misc.datePicker.formatHint', { format: dateFormatMask() });
 			return;
 		}
 		commit(parsed);

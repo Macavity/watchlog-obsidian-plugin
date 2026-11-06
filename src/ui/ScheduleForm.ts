@@ -219,7 +219,7 @@ export function renderCounterRow(parent: HTMLElement, groups: CounterGroup[]): v
 		progRow.createSpan({ cls: 'wl-modal-label', text: group.label });
 		makeNum(group.current);
 		// the leaf is capitalized for the sentence-case lint; it reads as a lowercase connector between inputs
-		progRow.createSpan({ cls: 'wl-schedule-progress-sep', text: t('ui.schedule.of').toLocaleLowerCase() });
+		progRow.createSpan({ cls: 'wl-schedule-progress-sep', text: t('ui.schedule.of') });
 		makeNum(group.total);
 	});
 }

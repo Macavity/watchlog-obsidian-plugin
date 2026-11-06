@@ -69,8 +69,13 @@ const misc = {
 		hintMangaRecurring: 'Beim Speichern werden auch die Kapitel- und Bandzahl des Titels aktualisiert.',
 		hintBookRecurring: 'Beim Speichern wird auch die Kapitelzahl des Titels aktualisiert.',
 	},
+	colorPicker: {
+		custom: 'Eigene Farbe…',
+		clear: 'Keine Farbe (auf Standard zurücksetzen)',
+	},
 	datePicker: {
 		ariaLabel: 'Datum ({format})',
+		formatHint: 'Unbekanntes Format. Erwartet: {format}.',
 		previousMonth: 'Vorheriger Monat',
 		nextMonth: 'Nächster Monat',
 		today: 'Heute',

@@ -15,3 +15,8 @@ export function dayName(index: number): string {
 export function monthName(index: number): string {
 	return t(`airtime.months.${MONTH_KEYS[index] ?? 'january'}` as TranslationKey);
 }
+
+/** Localized short month name (Jan, Feb, …); `index` follows Date.getMonth(). */
+export function monthShortName(index: number): string {
+	return t(`airtime.monthsShort.${MONTH_KEYS[index] ?? 'january'}` as TranslationKey);
+}
