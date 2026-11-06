@@ -70,6 +70,23 @@ export interface FilterPanelConfig {
 }
 
 /** Opens the panel under the anchor, or closes an already-open one (toggle). */
+/**
+ * The "◆ All" checkbox row at the top of a filter section. A click anywhere on the row runs
+ * `onToggle`; the checkbox's native toggle is cancelled because the caller drives its state.
+ */
+export function renderAllToggleRow(content: HTMLElement, onToggle: () => void): HTMLInputElement {
+	const allRow = content.createDiv({ cls: 'wl-filter-checkbox-row' });
+	const allCb = allRow.createEl('input', { attr: { type: 'checkbox' } });
+	allRow.createSpan({ cls: 'wl-filter-all-toggle', text: `◆ ${t('ui.toolbar.all')}` });
+	allCb.addEventListener('click', (ev) => { ev.stopPropagation(); onToggle(); });
+	allRow.addEventListener('click', (ev) => {
+		if (ev.target === allCb) return;
+		ev.stopPropagation();
+		onToggle();
+	});
+	return allCb;
+}
+
 export function toggleFilterPanel(cfg: FilterPanelConfig): void {
 	const existing = activeDocument.querySelector('.wl-filters-panel');
 	if (existing) { existing.remove(); return; }
@@ -181,9 +198,7 @@ export function toggleFilterPanel(cfg: FilterPanelConfig): void {
 		});
 
 		// "All" toggle — first item inside the section
-		const allRow = content.createDiv({ cls: 'wl-filter-checkbox-row' });
-		const allCb = allRow.createEl('input', { attr: { type: 'checkbox' } });
-		allRow.createSpan({ cls: 'wl-filter-all-toggle', text: `◆ ${t('ui.toolbar.all')}` });
+		const allCb = renderAllToggleRow(content, () => toggleAll());
 
 		const optionCbs: HTMLInputElement[] = [];
 		// exclusive specials in this section — unchecked when an option is touched
@@ -245,16 +260,6 @@ export function toggleFilterPanel(cfg: FilterPanelConfig): void {
 			}
 			syncAllCb();
 		};
-		allCb.addEventListener('click', (ev) => {
-			ev.stopPropagation();
-			// we drive the visual + data state ourselves; cancel the native toggle
-			toggleAll();
-		});
-		allRow.addEventListener('click', (ev) => {
-			if (ev.target === allCb) return;
-			ev.stopPropagation();
-			toggleAll();
-		});
 	}
 
 	// Apply — commits the draft, re-renders, closes the panel

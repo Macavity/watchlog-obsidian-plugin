@@ -16,6 +16,9 @@ import { coverFallbackColor, readingStatusColor } from './readingColors';
 import { ReadingManageColumnsModal } from './ReadingManageColumnsModal';
 import { ConfirmModal } from './ConfirmModal';
 import { renderToolbarWithMobileToggle } from './MobileToolbar';
+import { renderSearchBox, renderSelectionButtons } from './ui/TabToolbar';
+import { createSortSelectRow } from './SortPopover';
+import { renderAllToggleRow } from './FilterPanel';
 import { VirtualGrid, computeGridMetrics, setRowsCardWidth, type GridMetrics } from './VirtualGrid';
 import { VirtualScroller } from './VirtualScroller';
 import { LazyCardObserver } from './LazyCardObserver';
@@ -101,14 +104,15 @@ function mangaProgress(m: Manga): number {
 function passesCustomFilter(item: Book | Manga, col: ReadingCustomColumn, excluded: string[] | undefined): boolean {
 	if (!excluded || excluded.length === 0) return true;
 	if (col.type === 'select') {
-		const v = item.customFields?.[col.id];
-		const sv = v === undefined || v === null ? '' : String(v);
+		const sv = selectValueOf(item, col.id);
 		return sv === '' || !excluded.includes(sv);
 	}
-	const has = customFieldHasValue(item, col.id);
-	if (has && excluded.includes(HAS_VALUE)) return false;
-	if (!has && excluded.includes(NO_VALUE)) return false;
-	return true;
+	return !excluded.includes(customFieldHasValue(item, col.id) ? HAS_VALUE : NO_VALUE);
+}
+
+function selectValueOf(item: Book | Manga, colId: string): string {
+	const v = item.customFields?.[colId];
+	return v === undefined || v === null ? '' : String(v);
 }
 
 export class ReadingTab {
@@ -248,36 +252,13 @@ export class ReadingTab {
 	}
 
 	private renderReadingSearch(parent: HTMLElement): void {
-		const searchWrap = parent.createDiv({ cls: 'wl-reading-search-wrap' });
-		const placeholder = t(this.activeSubTab === 'books' ? 'reading.searchPlaceholder.books' : 'reading.searchPlaceholder.manga');
-		const searchInput = searchWrap.createEl('input', {
-			cls: 'wl-reading-search-input',
-			attr: { type: 'text', placeholder },
-		});
-		searchInput.value = this.searchQuery;
-		renderSearchHelpButton(searchWrap, this.plugin.app, t(this.activeSubTab === 'books' ? 'reading.tabs.books' : 'reading.tabs.manga'), () => this.searchFields());
-		// clear button — only while there is text
-		const clearBtn = searchWrap.createEl('button', {
-			cls: 'wl-search-clear',
-			attr: { type: 'button', 'aria-label': t('ui.toolbar.clearSearch') },
-		});
-		setIcon(clearBtn, 'x');
-		const syncClear = () => clearBtn.toggleClass('is-visible', searchInput.value.length > 0);
-		syncClear();
-		let debounce = 0;
-		searchInput.addEventListener('input', () => {
-			this.searchQuery = searchInput.value;
-			syncClear();
-			window.clearTimeout(debounce);
-			debounce = window.setTimeout(() => this.renderContent(), 200);
-		});
-		clearBtn.addEventListener('click', () => {
-			window.clearTimeout(debounce);
-			searchInput.value = '';
-			this.searchQuery = '';
-			syncClear();
-			searchInput.focus();
-			this.renderContent();
+		renderSearchBox(parent, {
+			value: this.searchQuery,
+			placeholder: t(this.activeSubTab === 'books' ? 'reading.searchPlaceholder.books' : 'reading.searchPlaceholder.manga'),
+			onChange: (q) => { this.searchQuery = q; },
+			onCommit: () => this.renderContent(),
+			debounceMs: 200,
+			help: (host) => renderSearchHelpButton(host, this.plugin.app, t(this.activeSubTab === 'books' ? 'reading.tabs.books' : 'reading.tabs.manga'), () => this.searchFields()),
 		});
 	}
 
@@ -343,14 +324,10 @@ export class ReadingTab {
 			this.renderSelectionActionBar(parent);
 		}
 
-		if (this.selectionMode) {
-			const hasAny = this.selectedIds.size > 0;
-			const selAllBtn = parent.createEl('button', {
-				cls: 'wl-btn wl-btn-sm',
-				text: hasAny ? t('common.none') : t('ui.toolbar.all'),
-			});
-			selAllBtn.title = hasAny ? t('ui.toolbar.deselectAll') : t('ui.toolbar.selectAllVisible');
-			selAllBtn.addEventListener('click', () => {
+		renderSelectionButtons(parent, {
+			selectionMode: this.selectionMode,
+			hasSelection: this.selectedIds.size > 0,
+			onToggleAll: () => {
 				if (this.selectedIds.size > 0) {
 					this.selectedIds.clear();
 				} else {
@@ -362,18 +339,12 @@ export class ReadingTab {
 					}
 				}
 				this.render();
-			});
-		}
-
-		// in selection mode the button is the way out — red Cancel
-		const selBtn = parent.createEl('button', {
-			cls: `wl-btn wl-btn-sm${this.selectionMode ? ' wl-btn-cancel' : ''}`,
-			text: this.selectionMode ? t('common.cancel') : t('ui.toolbar.select'),
-		});
-		selBtn.addEventListener('click', () => {
-			this.selectionMode = !this.selectionMode;
-			this.selectedIds.clear();
-			this.render();
+			},
+			onToggleMode: () => {
+				this.selectionMode = !this.selectionMode;
+				this.selectedIds.clear();
+				this.render();
+			},
 		});
 
 		const right = parent.createDiv({ cls: 'wl-reading-toolbar-right' });
@@ -611,9 +582,7 @@ export class ReadingTab {
 		labelOf: (option: string) => string = (o) => o,
 	): SectionController {
 		const cbs: HTMLInputElement[] = [];
-		const allRow = content.createDiv({ cls: 'wl-filter-checkbox-row' });
-		const allCb = allRow.createEl('input', { attr: { type: 'checkbox' } });
-		allRow.createSpan({ cls: 'wl-filter-all-toggle', text: `◆ ${t('ui.toolbar.all')}` });
+		const allCb = renderAllToggleRow(content, () => toggleAll());
 
 		const syncAll = (): void => {
 			allCb.checked = cbs.length > 0 && cbs.every((c) => c.checked);
@@ -644,13 +613,6 @@ export class ReadingTab {
 			}
 			syncAll();
 		};
-		allCb.addEventListener('click', (ev) => { ev.stopPropagation(); toggleAll(); });
-		allRow.addEventListener('click', (ev) => {
-			if (ev.target === allCb) return;
-			ev.stopPropagation();
-			toggleAll();
-		});
-
 		return {
 			selectAll: () => { for (const cb of cbs) cb.checked = true; excludeSet.clear(); syncAll(); },
 			deselectAll: () => { for (const cb of cbs) cb.checked = false; for (const o of options) excludeSet.add(o); syncAll(); },
@@ -818,14 +780,7 @@ export class ReadingTab {
 			currentDir: SortDir,
 			isPrimary: boolean,
 		): void => {
-			const row = el.createDiv({ cls: 'wl-filter-row' });
-			row.createSpan({ cls: 'wl-filter-label', text: labelText });
-			const sel = row.createEl('select', { cls: 'wl-select' });
-
-			if (!isPrimary) {
-				const noneOpt = sel.createEl('option', { text: t('common.none'), value: 'none' });
-				if (currentKey === 'none') noneOpt.selected = true;
-			}
+			const { row, sel } = createSortSelectRow(el, labelText, isPrimary ? undefined : { selected: currentKey === 'none' });
 			for (const k of keys) {
 				const opt = sel.createEl('option', { text: k.label, value: k.key });
 				if (k.key === currentKey) opt.selected = true;

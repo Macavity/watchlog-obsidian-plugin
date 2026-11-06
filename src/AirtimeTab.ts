@@ -28,7 +28,8 @@ import { MaybeAddModal } from './MaybeAddModal';
 import { ReadingScheduleModal } from './ReadingScheduleModal';
 import { GameScheduleModal } from './GameScheduleModal';
 import { UpcomingFinderModal, type UpcomingFinderItem } from './UpcomingFinderModal';
-import { renderAddButton, renderViewDropdown } from './ui/TabToolbar';
+import { renderAddButton, renderSelectAllButton, renderViewDropdown } from './ui/TabToolbar';
+import { renderTypeBadge } from './ui/typeBadge';
 import { renderActionBar } from './ui/ActionBar';
 
 /**
@@ -495,10 +496,7 @@ export class AirtimeTab {
 		left.createDiv({ cls: 'wl-airtime-card-title', text: title.title });
 
 		const metaRow = left.createDiv({ cls: 'wl-airtime-card-meta' });
-		const typeDef = this.plugin.settings.types.find((t) => t.name === title.type);
-		const colored = this.plugin.settings.coloredTypeBadges;
-		const typeBadge = metaRow.createSpan({ cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain', text: typeLabel(title.type) });
-		if (colored && typeDef) typeBadge.style.backgroundColor = getThemedColor(title.type, typeDef.color, this.plugin.settings.colorTheme);
+		renderTypeBadge(metaRow, title.type, this.plugin.settings);
 		if (title.releaseDate) {
 			metaRow.createSpan({ cls: 'wl-airtime-schedule', text: formatDateDisplay(title.releaseDate) });
 		}
@@ -574,10 +572,7 @@ export class AirtimeTab {
 
 		left.createSpan({ cls: 'wl-maybe-card-title', text: mt.title });
 
-		const typeDef = this.plugin.settings.types.find((t) => t.name === mt.type);
-		const colored = this.plugin.settings.coloredTypeBadges;
-		const typeBadge = left.createSpan({ cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain', text: typeLabel(mt.type) });
-		if (colored && typeDef) typeBadge.style.backgroundColor = getThemedColor(mt.type, typeDef.color, this.plugin.settings.colorTheme);
+		renderTypeBadge(left, mt.type, this.plugin.settings);
 
 		const pillClsMap: Record<DetailedCountdown['kind'], string> = {
 			'today-before': 'wl-airtime-pill wl-airtime-pill-today-series',
@@ -659,10 +654,7 @@ export class AirtimeTab {
 		}
 
 		if (this.selectionMode) {
-			const hasAny = this.selectedItems.size > 0;
-			const selAllBtn = controls.createEl('button', { cls: 'wl-btn wl-btn-sm', text: hasAny ? t('common.none') : t('ui.toolbar.all') });
-			selAllBtn.title = hasAny ? t('ui.toolbar.deselectAll') : t('ui.toolbar.selectAllVisible');
-			selAllBtn.addEventListener('click', () => {
+			renderSelectAllButton(controls, this.selectedItems.size > 0, () => {
 				if (this.selectedItems.size > 0) {
 					this.selectedItems.clear();
 				} else {
@@ -1010,21 +1002,39 @@ export class AirtimeTab {
 			});
 	}
 
-	private renderCards(): void {
+	/** The green tick button; confirms advancing the entry to its next episode/chapter. */
+	private renderTickButton(
+		parent: HTMLElement,
+		cls: string,
+		entry: AirtimeEntry,
+		r: ResolvedUpcoming,
+		isFinalEpisode: boolean,
+	): void {
+		const tickBtn = parent.createEl('button', { cls, text: '✓' });
+		tickBtn.title = tickTooltip(r, isFinalEpisode);
+		tickBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			this.confirmTick(entry, r);
+		});
+	}
+
+	/** Card data to render, or null after the matching empty state has been shown. */
+	private trackerCardDataOrEmpty(): TrackerCardData[] | null {
 		if (this.dataManager.getAirtimeEntries().length === 0) {
-			this.container.createDiv({
-				cls: 'wl-empty-state',
-				text: t('airtime.empty.tracker'),
-			});
-			return;
+			this.container.createDiv({ cls: 'wl-empty-state', text: t('airtime.empty.tracker') });
+			return null;
 		}
-
 		const cardData = this.computeTrackerCardData();
-
 		if (cardData.length === 0) {
 			this.container.createDiv({ cls: 'wl-empty-state', text: t('airtime.empty.search') });
-			return;
+			return null;
 		}
+		return cardData;
+	}
+
+	private renderCards(): void {
+		const cardData = this.trackerCardDataOrEmpty();
+		if (!cardData) return;
 
 		const cardsEl = this.container.createDiv({ cls: 'wl-airtime-cards' });
 		for (const { entry, r, countdown } of cardData) {
@@ -1120,17 +1130,7 @@ export class AirtimeTab {
 		const actions = right.createDiv({ cls: 'wl-airtime-actions' });
 
 		// green tick, shown once the airtime/release passes
-		if (showTick) {
-			const tickBtn = actions.createEl('button', {
-				cls: 'wl-airtime-action-btn wl-airtime-action-btn-tick',
-				text: '✓',
-			});
-			tickBtn.title = tickTooltip(r, isFinalEpisode);
-			tickBtn.addEventListener('click', (e) => {
-				e.stopPropagation();
-				this.confirmTick(entry, r);
-			});
-		}
+		if (showTick) this.renderTickButton(actions, 'wl-airtime-action-btn wl-airtime-action-btn-tick', entry, r, isFinalEpisode);
 
 		const globeBtn = actions.createEl('button', { cls: 'wl-airtime-action-btn', text: '🌐' });
 		globeBtn.title = t('airtime.actions.openPage');
@@ -1241,19 +1241,8 @@ export class AirtimeTab {
 	}
 
 	private renderTrackerCardsGrid(): void {
-		if (this.dataManager.getAirtimeEntries().length === 0) {
-			this.container.createDiv({
-				cls: 'wl-empty-state',
-				text: t('airtime.empty.tracker'),
-			});
-			return;
-		}
-
-		const cardData = this.computeTrackerCardData();
-		if (cardData.length === 0) {
-			this.container.createDiv({ cls: 'wl-empty-state', text: t('airtime.empty.search') });
-			return;
-		}
+		const cardData = this.trackerCardDataOrEmpty();
+		if (!cardData) return;
 
 		// sequential grouping — the sort is monotonic in next-occurrence date (aired/due resolve to
 		// today), so one pass preserves card order
@@ -1454,14 +1443,7 @@ export class AirtimeTab {
 		}
 
 		// green tick overlay (same due/aired gate as the List tick button)
-		if (showTick) {
-			const tickBtn = card.createEl('button', { cls: 'wl-tracker-tick-btn', text: '✓' });
-			tickBtn.title = tickTooltip(r, isFinalEpisode);
-			tickBtn.addEventListener('click', (e) => {
-				e.stopPropagation();
-				this.confirmTick(entry, r);
-			});
-		}
+		if (showTick) this.renderTickButton(card, 'wl-tracker-tick-btn', entry, r, isFinalEpisode);
 
 		// ⋮ menu (Remove only) — stacked above the globe, bottom-right
 		const menuBtn = card.createEl('button', { cls: 'wl-card-menu-btn wl-tracker-menu-btn', text: '⋮' });

@@ -162,16 +162,20 @@ export interface SelectionButtonsOptions {
 	onToggleMode: () => void;
 }
 
+/** The All/None button of selection mode: selects all visible, or clears when something is selected. */
+export function renderSelectAllButton(parent: HTMLElement, hasSelection: boolean, onClick: () => void): HTMLButtonElement {
+	const btn = parent.createEl('button', {
+		cls: 'wl-btn wl-btn-sm',
+		text: hasSelection ? t('common.none') : t('ui.toolbar.all'),
+	});
+	btn.title = hasSelection ? t('ui.toolbar.deselectAll') : t('ui.toolbar.selectAllVisible');
+	btn.addEventListener('click', onClick);
+	return btn;
+}
+
 /** In selection mode: the All/None button, then the Select/Cancel button that enters/leaves it. */
 export function renderSelectionButtons(parent: HTMLElement, opts: SelectionButtonsOptions): void {
-	if (opts.selectionMode) {
-		const selAllBtn = parent.createEl('button', {
-			cls: 'wl-btn wl-btn-sm',
-			text: opts.hasSelection ? t('common.none') : t('ui.toolbar.all'),
-		});
-		selAllBtn.title = opts.hasSelection ? t('ui.toolbar.deselectAll') : t('ui.toolbar.selectAllVisible');
-		selAllBtn.addEventListener('click', opts.onToggleAll);
-	}
+	if (opts.selectionMode) renderSelectAllButton(parent, opts.hasSelection, opts.onToggleAll);
 	// in selection mode the button is the way out: red Cancel
 	const selBtn = parent.createEl('button', {
 		cls: `wl-btn wl-btn-sm${opts.selectionMode ? ' wl-btn-cancel' : ''}`,

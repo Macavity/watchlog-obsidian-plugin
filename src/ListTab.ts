@@ -14,6 +14,8 @@ import { AddTitleModal } from './AddTitleModal';
 import { AddFromUrlModal } from './AddFromUrlModal';
 import { AddTitleChoiceModal } from './AddTitleChoiceModal';
 import { renderSearchBox, openRenameGroupPrompt, syncSelectionClasses, toggleCardSelected, buildShelfSelect, refreshShelfSelects, renderToolbarCore, renderSortingDropdown, renderViewDropdown, type SortFields } from './ui/TabToolbar';
+import { renderTypeBadge } from './ui/typeBadge';
+import { renderEpisodeGrid } from './ui/EpisodeGrid';
 import { renderActionBar, renderBatchStatusSelect, renderMoveToGroupSelect } from './ui/ActionBar';
 import { renderGroupCard } from './ui/GroupCard';
 import { PRIORITY_ORDER, pickRandom, compareUnsetLast, comparePriority, isRecentlyReleased } from './ui/TabHelpers';
@@ -1836,14 +1838,9 @@ export class ListTab {
 
 		const colTitle = row.createDiv({ cls: 'wl-col-title' });
 		colTitle.createDiv({ cls: 'wl-row-title-text', text: title.title });
-		const typeDef = this.getTagDef(title.type, this.plugin.settings.types);
 		const colored = this.plugin.settings.coloredTypeBadges;
 		const badgeRow = colTitle.createDiv({ cls: 'wl-badge-row' });
-		const typeBadge = badgeRow.createSpan({
-			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-			text: typeLabel(title.type),
-		});
-		if (colored && typeDef) typeBadge.style.backgroundColor = getThemedColor(title.type, typeDef.color, this.plugin.settings.colorTheme);
+		renderTypeBadge(badgeRow, title.type, this.plugin.settings);
 		// release year after the type badge; omitted when unknown
 		const yearMatch = title.releaseDate?.match(/^(\d{4})/);
 		if (yearMatch) badgeRow.createSpan({ cls: 'wl-row-year', text: yearMatch[1] });
@@ -2030,13 +2027,7 @@ export class ListTab {
 
 		const primaryType = members[0]?.type ?? '';
 		if (primaryType) {
-			const typeDef = this.getTagDef(primaryType, this.plugin.settings.types);
-			const colored = this.plugin.settings.coloredTypeBadges;
-			const typeBadge = colTitle.createSpan({
-				cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-				text: typeLabel(primaryType),
-			});
-			if (colored && typeDef) typeBadge.style.backgroundColor = getThemedColor(primaryType, typeDef.color, this.plugin.settings.colorTheme);
+			renderTypeBadge(colTitle, primaryType, this.plugin.settings);
 		}
 
 		const statsEl = colTitle.createDiv({ cls: 'wl-group-stats' });
@@ -2324,62 +2315,27 @@ export class ListTab {
 		title: WatchLogTitle,
 		season: Season | null,
 	): void {
-		const grid = parent.createDiv({ cls: 'wl-episode-grid' });
-		const count = season ? season.episodes : title.totalEpisodes;
-		const offset = season ? season.offset : 0;
-		const seasonEps = Array.from({ length: count }, (_, i) => offset + i + 1);
-
-		// fill/clear toggle; its state is recomputed from live watchedEpisodes
-		const fillBtn = grid.createDiv({ cls: 'wl-season-fill-btn' });
-		const refreshFillBtn = (): void => {
-			const watched = new Set(title.watchedEpisodes);
-			const allWatched = seasonEps.length > 0 && seasonEps.every((ep) => watched.has(ep));
-			fillBtn.classList.toggle('is-clear', allWatched);
-			fillBtn.classList.toggle('is-fill', !allWatched);
-			fillBtn.textContent = allWatched ? '✗' : '✓';
-			fillBtn.title = allWatched
-				? t('list.season.clearAll')
-				: t('list.season.markAll');
-		};
-		refreshFillBtn();
-		fillBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			const watched = new Set(title.watchedEpisodes);
-			const allWatched = seasonEps.length > 0 && seasonEps.every((ep) => watched.has(ep));
-			// bulk: cheap via the notify path, which triggers a full re-render
-			void this.dataManager.markSeasonWatched(title.id, seasonEps, !allWatched, season?.name).then(() => this.rerenderTable());
-		});
-
-		const perSeason = this.plugin.settings.episodeNumbering === 'per-season';
-
-		for (let i = 0; i < count; i++) {
-			const epNum = offset + i + 1;
-			const relNum = i + 1;
-			const displayNum = perSeason ? relNum : epNum;
-
-			const box = grid.createDiv({ cls: 'wl-episode-box' });
-
-			// read fresh state — closures over isWatched/isSkipped go stale
-			const refreshBox = (): void => {
-				const isWatched = title.watchedEpisodes.includes(epNum);
-				const isSkipped = season ? (season.skippedEpisodes ?? []).includes(relNum) : false;
-				box.classList.toggle('is-watched', isWatched);
-				box.classList.toggle('is-skipped', isSkipped);
-				box.textContent = isSkipped && !isWatched ? '—' : (isWatched ? '✓' : String(displayNum));
-				box.title = t(isSkipped ? 'list.episodeSkipped' : 'list.episode', { num: epNum });
-			};
-			refreshBox();
-
+		renderEpisodeGrid(parent, {
+			getTitle: () => title,
+			season,
+			perSeason: this.plugin.settings.episodeNumbering === 'per-season',
+			labels: { clearAll: t('list.season.clearAll'), markAll: t('list.season.markAll') },
+			episodeTooltip: (epNum, isSkipped) => t(isSkipped ? 'list.episodeSkipped' : 'list.episode', { num: epNum }),
+			onFill: (seasonEps, markWatched, e) => {
+				e.stopPropagation();
+				// bulk: cheap via the notify path, which triggers a full re-render
+				void this.dataManager.markSeasonWatched(title.id, seasonEps, markWatched, season?.name).then(() => this.rerenderTable());
+			},
 			// click toggles watched only; skippedEpisodes comes from the Edit modal's season text
-			box.addEventListener('click', (e) => {
+			onEpisode: (epNum, e, refreshBox, refreshFillBtn) => {
 				e.stopPropagation();
 				const isWatched = title.watchedEpisodes.includes(epNum);
 				this.dataManager.applyEpisodeWatchedToggle(title.id, epNum, !isWatched);
 				refreshBox();
 				refreshFillBtn();
-				this.updateAccordionStats(box, title, season);
-			});
-		}
+				this.updateAccordionStats(e.currentTarget as HTMLElement, title, season);
+			},
+		});
 	}
 
 	/**

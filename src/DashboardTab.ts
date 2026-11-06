@@ -4,9 +4,10 @@ import { readingStatusLabel, statusLabel, typeLabel } from './i18n/labels';
 import en from './i18n/en';
 import type { DataManager } from './DataManager';
 import type { ReadingDataManager } from './ReadingDataManager';
-import type { Book, Game, Manga, ReadingStatus, TagDefinition, WatchLogTitle } from './types';
-import { formatTime, getTitleCredits, getThemedColor, getReadingTypeColor, GAME_FINISHED_STATUS, bookPageEquivalents, formatCount } from './types';
+import type { Book, Game, Manga, ReadingStatus, WatchLogTitle } from './types';
+import { formatTime, getTitleCredits, getReadingTypeColor, GAME_FINISHED_STATUS, bookPageEquivalents, formatCount } from './types';
 import type { CreditsField } from './types';
+import { renderTypeBadge } from './ui/typeBadge';
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 45; // r=45
 
@@ -262,14 +263,7 @@ export class DashboardTab {
 
 		if (isRect) {
 			const item = grid.createDiv({ cls: 'wl-rect-item' });
-			const topRow = item.createDiv({ cls: 'wl-rect-top' });
-			topRow.createSpan({ cls: 'wl-rect-label', text: displayLabel });
-			topRow.createSpan({ cls: 'wl-rect-unwatched', text: left });
-			item.createDiv({ cls: 'wl-rect-value', text: `${percent}%` });
-			const barWrap = item.createDiv({ cls: 'wl-rect-bar-wrap' });
-			const bar = barWrap.createDiv({ cls: 'wl-rect-bar' });
-			bar.style.width = `${percent}%`;
-			bar.style.backgroundColor = color;
+			this.fillRectBody(item, displayLabel, left, color, percent);
 			item.createDiv({ cls: 'wl-rect-subline', text: subline });
 		} else {
 			const item = grid.createDiv({ cls: 'wl-ring-item' });
@@ -368,13 +362,16 @@ export class DashboardTab {
 		percent: number,
 		stats: { watched: number; total: number },
 	): void {
+		const unwatched = stats.total - stats.watched;
+		this.fillRectBody(item, label, t('dashboard.cards.left', { count: unwatched }), color, percent);
+	}
+
+	/** Rect card body: label + "left" text, percent value and the coloured bar. */
+	private fillRectBody(item: HTMLElement, label: string, left: string, color: string, percent: number): void {
 		const topRow = item.createDiv({ cls: 'wl-rect-top' });
 		topRow.createSpan({ cls: 'wl-rect-label', text: label });
-		const unwatched = stats.total - stats.watched;
-		topRow.createSpan({ cls: 'wl-rect-unwatched', text: t('dashboard.cards.left', { count: unwatched }) });
-
+		topRow.createSpan({ cls: 'wl-rect-unwatched', text: left });
 		item.createDiv({ cls: 'wl-rect-value', text: `${percent}%` });
-
 		const barWrap = item.createDiv({ cls: 'wl-rect-bar-wrap' });
 		const bar = barWrap.createDiv({ cls: 'wl-rect-bar' });
 		bar.style.width = `${percent}%`;
@@ -726,37 +723,26 @@ export class DashboardTab {
 			return;
 		}
 
-		for (const title of recent) {
-			const item = section.createDiv({ cls: 'wl-rw-item' });
-
-			item.createDiv({ cls: 'wl-rw-title', text: title.title });
-
-			const typeDef = this.getTagDef(title.type, this.plugin.settings.types);
-			const colored = this.plugin.settings.coloredTypeBadges;
-			const badgeWrap = item.createDiv({ cls: 'wl-rw-col-badge' });
-			const badge = badgeWrap.createSpan({
-				cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-				text: typeLabel(title.type),
-			});
-			if (colored && typeDef) badge.style.backgroundColor = getThemedColor(title.type, typeDef.color, this.plugin.settings.colorTheme);
-
-			const epCol = item.createDiv({ cls: 'wl-rw-col-ep' });
-			const isMovie = title.type === 'Movie';
-			if (!isMovie) {
-				const nextEp = this.dataManager.getNextUnwatchedEpisode(title);
-				epCol.textContent = nextEp !== null ? t('dashboard.recent.episode', { n: nextEp }) : '✓';
-			}
-
-			const pctCol = item.createDiv({ cls: 'wl-rw-col-pct' });
-			if (isMovie) {
-				pctCol.textContent = title.watchedEpisodes.includes(1) ? '100%' : '0%';
-			} else {
-				pctCol.textContent = `${this.dataManager.getProgress(title)}%`;
-			}
-		}
+		for (const title of recent) this.renderRecentItem(section, title);
 	}
 
-	private getTagDef(name: string, tags: TagDefinition[]): TagDefinition | undefined {
-		return tags.find((t) => t.name === name);
+	private renderRecentItem(section: HTMLElement, title: WatchLogTitle): void {
+		const item = section.createDiv({ cls: 'wl-rw-item' });
+		item.createDiv({ cls: 'wl-rw-title', text: title.title });
+		renderTypeBadge(item.createDiv({ cls: 'wl-rw-col-badge' }), title.type, this.plugin.settings);
+		item.createDiv({ cls: 'wl-rw-col-ep', text: this.recentEpisodeText(title) });
+		item.createDiv({ cls: 'wl-rw-col-pct', text: this.recentProgressText(title) });
+	}
+
+	/** Next unwatched episode, "✓" when all are watched, empty for movies. */
+	private recentEpisodeText(title: WatchLogTitle): string {
+		if (title.type === 'Movie') return '';
+		const nextEp = this.dataManager.getNextUnwatchedEpisode(title);
+		return nextEp !== null ? t('dashboard.recent.episode', { n: nextEp }) : '✓';
+	}
+
+	private recentProgressText(title: WatchLogTitle): string {
+		if (title.type === 'Movie') return title.watchedEpisodes.includes(1) ? '100%' : '0%';
+		return `${this.dataManager.getProgress(title)}%`;
 	}
 }

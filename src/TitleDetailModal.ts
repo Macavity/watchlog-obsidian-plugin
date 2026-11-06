@@ -15,6 +15,7 @@ import { renderTagPill } from './StatusDropdown';
 import { renderStarRating } from './StarRating';
 import { CollectionModal, resolveCollection, countMissing } from './CollectionModal';
 import { pinModalFooter } from './StickyModal';
+import { renderEpisodeGrid } from './ui/EpisodeGrid';
 import type { TmdbCollectionDetail } from './types';
 
 // titles whose credits backfill is in flight — de-dupes rapid modal re-opens
@@ -605,53 +606,26 @@ export class TitleDetailModal extends Modal {
 	}
 
 	private renderEpisodeGrid(parent: HTMLElement, season: Season | null): void {
-		const t = this.title;
-		const grid = parent.createDiv({ cls: 'wl-episode-grid' });
-		const count = season ? season.episodes : t.totalEpisodes;
-		const offset = season ? season.offset : 0;
-		const seasonEps = Array.from({ length: count }, (_, i) => offset + i + 1);
-
-		const fillBtn = grid.createDiv({ cls: 'wl-season-fill-btn' });
-		const refreshFillBtn = (): void => {
-			const watched = new Set(this.title.watchedEpisodes);
-			const allWatched = seasonEps.length > 0 && seasonEps.every((ep) => watched.has(ep));
-			fillBtn.classList.toggle('is-clear', allWatched);
-			fillBtn.classList.toggle('is-fill', !allWatched);
-			fillBtn.textContent = allWatched ? '✗' : '✓';
-			fillBtn.title = allWatched
-				? 'Clear all episodes in this season'
-				: 'Mark all episodes in this season as watched';
-		};
-		refreshFillBtn();
-		fillBtn.addEventListener('click', () => {
-			const watched = new Set(this.title.watchedEpisodes);
-			const allWatched = seasonEps.length > 0 && seasonEps.every((ep) => watched.has(ep));
-			void this.dataManager
-				.markSeasonWatched(this.title.id, seasonEps, !allWatched, season?.name)
-				.then(() => {
-					this.refreshTitle();
-					this.markChanged();
-					this.renderEpisodesBody();
-					this.renderStatsBox();
-				});
-		});
-
-		const perSeason = this.plugin.settings.episodeNumbering === 'per-season';
-		for (let i = 0; i < count; i++) {
-			const epNum = offset + i + 1;
-			const relNum = i + 1;
-			const displayNum = perSeason ? relNum : epNum;
-			const box = grid.createDiv({ cls: 'wl-episode-box' });
-			const refreshBox = (): void => {
-				const isWatched = this.title.watchedEpisodes.includes(epNum);
-				const isSkipped = season ? (season.skippedEpisodes ?? []).includes(relNum) : false;
-				box.classList.toggle('is-watched', isWatched);
-				box.classList.toggle('is-skipped', isSkipped);
-				box.textContent = isSkipped && !isWatched ? '—' : isWatched ? '✓' : String(displayNum);
-				box.title = `Episode ${epNum}${isSkipped ? ' (skipped)' : ''}`;
-			};
-			refreshBox();
-			box.addEventListener('click', () => {
+		renderEpisodeGrid(parent, {
+			getTitle: () => this.title,
+			season,
+			perSeason: this.plugin.settings.episodeNumbering === 'per-season',
+			labels: {
+				clearAll: 'Clear all episodes in this season',
+				markAll: 'Mark all episodes in this season as watched',
+			},
+			episodeTooltip: (epNum, isSkipped) => `Episode ${epNum}${isSkipped ? ' (skipped)' : ''}`,
+			onFill: (seasonEps, markWatched) => {
+				void this.dataManager
+					.markSeasonWatched(this.title.id, seasonEps, markWatched, season?.name)
+					.then(() => {
+						this.refreshTitle();
+						this.markChanged();
+						this.renderEpisodesBody();
+						this.renderStatsBox();
+					});
+			},
+			onEpisode: (epNum, _e, refreshBox, refreshFillBtn) => {
 				const isWatched = this.title.watchedEpisodes.includes(epNum);
 				this.dataManager.applyEpisodeWatchedToggle(this.title.id, epNum, !isWatched);
 				this.refreshTitle();
@@ -659,8 +633,8 @@ export class TitleDetailModal extends Modal {
 				refreshBox();
 				refreshFillBtn();
 				this.renderStatsBox();
-			});
-		}
+			},
+		});
 	}
 
 	// Rating

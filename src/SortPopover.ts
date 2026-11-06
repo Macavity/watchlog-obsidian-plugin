@@ -11,6 +11,22 @@ export interface SortState {
 	dir: 'asc' | 'desc';
 }
 
+/** One popover row: label plus key select; `none` adds the leading "None" option (secondary row). */
+export function createSortSelectRow(
+	parent: HTMLElement,
+	labelText: string,
+	none?: { selected: boolean },
+): { row: HTMLElement; sel: HTMLSelectElement } {
+	const row = parent.createDiv({ cls: 'wl-filter-row' });
+	row.createSpan({ cls: 'wl-filter-label', text: labelText });
+	const sel = row.createEl('select', { cls: 'wl-select' });
+	if (none) {
+		const noneOpt = sel.createEl('option', { text: t('common.none'), value: 'none' });
+		noneOpt.selected = none.selected;
+	}
+	return { row, sel };
+}
+
 export interface SortPopoverConfig {
 	/** The button wrap — the panel is appended inside it. */
 	wrap: HTMLElement;
@@ -63,14 +79,7 @@ export function toggleSortPopover(cfg: SortPopoverConfig): void {
 	};
 
 	const addSortRow = (labelText: string, current: SortState, isPrimary: boolean): void => {
-		const row = panel.createDiv({ cls: 'wl-filter-row' });
-		row.createSpan({ cls: 'wl-filter-label', text: labelText });
-		const sel = row.createEl('select', { cls: 'wl-select' });
-
-		if (!isPrimary) {
-			const noneOpt = sel.createEl('option', { text: t('common.none'), value: 'none' });
-			noneOpt.selected = current.key === 'none';
-		}
+		const { row, sel } = createSortSelectRow(panel, labelText, isPrimary ? undefined : { selected: current.key === 'none' });
 		for (const opt of cfg.options) {
 			const el = sel.createEl('option', { text: opt, value: opt });
 			if (cfg.labelToKey(opt) === current.key) el.selected = true;
