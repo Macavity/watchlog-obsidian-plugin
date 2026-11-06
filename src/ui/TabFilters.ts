@@ -1,6 +1,6 @@
 import { toggleFilterPanel, type FilterPanelConfig, type FilterSection } from '../FilterPanel';
 import { t } from '../i18n';
-import { formatPriorityOpt, priorityFilterOpts, type TagDefinition } from '../types';
+import { priorityFilterOpts, type TagDefinition } from '../types';
 
 /**
  * Rating filter options 1★ … 5★; a half option (½★ … 4½★) appears only when an item holds that
@@ -24,6 +24,11 @@ export function formatRatingOpt(opt: string): string {
 	return opt.replace(/^(\d+)\.5/, (_m, whole: string) => (whole === '0' ? '½' : `${whole}½`));
 }
 
+/** Display form of a priority option: '' (no priority set) reads as "No priority". */
+export function formatPriorityOpt(opt: string): string {
+	return opt === '' ? t('list.footer.noPriority') : opt;
+}
+
 /** The draft fields both tabs' filter panels share. */
 export interface CommonFilterDraft {
 	statusExclude: Set<string>;
@@ -39,6 +44,8 @@ export interface FilterSectionsInput {
 	/** Leading section(s): Genre/Type. */
 	lead: FilterSection[];
 	statusOpts: string[];
+	/** Display text of a status option (the stored value stays the filter key). */
+	formatStatus?: (status: string) => string;
 	ratingOpts: string[];
 	priorities: TagDefinition[];
 	/** Sections between Priority and Group (Games' Platform). */
@@ -54,6 +61,7 @@ export function buildFilterSections(input: FilterSectionsInput): FilterSection[]
 		...input.lead,
 		{
 			label: t('ui.filters.status'), opts: input.statusOpts, excludeSet: draft.statusExclude,
+			formatOpt: input.formatStatus,
 			specials: [{
 				text: `✦ ${t('ui.filters.recentlyArrived')}`,
 				spanCls: 'wl-recently-arrived-filter',

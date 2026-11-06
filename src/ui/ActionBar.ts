@@ -33,11 +33,12 @@ export function renderBatchStatusSelect(
 	bar: HTMLElement,
 	statusNames: string[],
 	onPick: (status: string) => Promise<void>,
+	formatStatus: (status: string) => string = (s) => s,
 ): void {
 	const statusSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
 	statusSelect.createEl('option', { text: t('ui.actionBar.status'), value: '' });
 	for (const name of statusNames) {
-		statusSelect.createEl('option', { text: name, value: name });
+		statusSelect.createEl('option', { text: formatStatus(name), value: name });
 	}
 	statusSelect.addEventListener('change', () => {
 		void (async () => {

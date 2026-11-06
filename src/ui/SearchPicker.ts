@@ -26,7 +26,7 @@ export interface SearchPickerConfig<R> {
 	/** Results per page; without it all results render and there is no pager. */
 	pageSize?: number;
 	/** Adds a "Type" select above the search row; the picker resets itself after onChange. */
-	typeSelect?: { names: string[]; selected: string; onChange: (value: string) => void };
+	typeSelect?: { names: string[]; selected: string; onChange: (value: string) => void; format?: (name: string) => string };
 	initialQuery?: string;
 	/** Default 600. */
 	debounceMs?: number;
@@ -103,7 +103,7 @@ export function createSearchPicker<R>(config: SearchPickerConfig<R>): SearchPick
 			nameSelect(makeRow(parent, t('ui.picker.type')), type.names, type.selected, (v) => {
 				type.onChange(v);
 				reset();
-			});
+			}, false, type.format);
 		}
 		mountSearchRow(parent);
 		resultsEl = parent.createDiv({

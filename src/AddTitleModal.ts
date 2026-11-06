@@ -4,6 +4,7 @@ import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, Season } from './types';
 import { getApiGroupForType, todayIso } from './types';
 import { t } from './i18n';
+import { statusLabel } from './i18n/labels';
 import { renderSearchResultRow } from './SearchThumbnail';
 import {
 	episodesLabel,
@@ -163,7 +164,7 @@ export class AddTitleModal extends SearchFormModal<TitleSearchResult> {
 		const statusPriRow = form.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
 		const statuses = this.plugin.settings.statuses.filter((s) => s.name !== 'To be released');
 		nameSelect(makeCell(statusPriRow, t('add.status')), statuses.map((s) => s.name), this.fieldStatus,
-			(v) => { this.fieldStatus = v; });
+			(v) => { this.fieldStatus = v; }, false, statusLabel);
 		nameSelect(makeCell(statusPriRow, t('add.priority'), true), this.plugin.settings.priorities.map((p) => p.name),
 			this.fieldPriority, (v) => { this.fieldPriority = v; });
 

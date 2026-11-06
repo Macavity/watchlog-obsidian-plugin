@@ -1153,6 +1153,7 @@ export class ListTab {
 							excludeSet: draft.typeExclude,
 						}],
 						statusOpts: this.plugin.settings.statuses.map((s) => s.name),
+						formatStatus: statusLabel,
 						// half options appear only when a title holds that exact rating
 						ratingOpts: buildRatingOpts(this.dataManager.getTitles().map((t) => t.rating)),
 						priorities: this.plugin.settings.priorities,
@@ -1278,6 +1279,7 @@ export class ListTab {
 				}
 				this.render();
 			},
+			statusLabel,
 		);
 
 		const allGroups = this.dataManager.getGroups();

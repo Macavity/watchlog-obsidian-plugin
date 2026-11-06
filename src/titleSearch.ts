@@ -1,5 +1,6 @@
 import type WatchLogPlugin from './main';
 import { t } from './i18n';
+import { typeLabel } from './i18n/labels';
 import type { MediaFields } from './ui/FormCells';
 import type { AnimeSearchResult, MediaSearchResult, Season } from './types';
 import { getApiGroupForType } from './types';
@@ -170,6 +171,7 @@ export function titlePickerBase(
 			names: plugin.settings.types.map((t) => t.name),
 			selected: selectedType,
 			onChange: onTypeChange,
+			format: typeLabel,
 		},
 	};
 }

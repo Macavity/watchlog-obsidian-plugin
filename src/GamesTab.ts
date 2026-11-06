@@ -1,5 +1,5 @@
 import { Notice, TFile, setIcon } from 'obsidian';
-import { t } from './i18n';
+import { t, type TranslationKey } from './i18n';
 import type WatchLogPlugin from './main';
 import type { GameDataManager } from './GameDataManager';
 import {
@@ -568,7 +568,10 @@ export class GamesTab {
 		setIcon(gearBtn, 'settings');
 		gearBtn.addEventListener('click', () => {
 			new RowsCustomizeModal(this.plugin.app, this.plugin, {
-				shelves: GAMES_ROWS_SHELVES,
+				shelves: GAMES_ROWS_SHELVES.map((sh) => ({
+					id: sh.id,
+					label: t(`games.shelves.${sh.id === 'byType' ? 'byGenre' : sh.id}` as TranslationKey),
+				})),
 				getLayout: () => this.gameData.getSettings().rowsLayout,
 				setLayout: (layout) => { this.gameData.getSettings().rowsLayout = layout; },
 				// the layout lives inside data.json's games key, not plugin.settings — persist through the games

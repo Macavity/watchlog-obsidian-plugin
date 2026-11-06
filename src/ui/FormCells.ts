@@ -62,11 +62,12 @@ export function nameSelect(
 	selected: string,
 	onChange: (v: string) => void,
 	empty = false,
+	format: (name: string) => string = (n) => n,
 ): HTMLSelectElement {
 	const select = parent.createEl('select', { cls: 'wl-select' });
 	if (empty) select.createEl('option', { text: t('ui.form.none'), value: '' });
 	for (const name of names) {
-		const opt = select.createEl('option', { text: name, value: name });
+		const opt = select.createEl('option', { text: format(name), value: name });
 		if (name === selected) opt.selected = true;
 	}
 	select.addEventListener('change', () => onChange(select.value));

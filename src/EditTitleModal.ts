@@ -1,5 +1,6 @@
 import { App, Modal, Notice } from 'obsidian';
 import { t } from './i18n';
+import { typeLabel } from './i18n/labels';
 import { blockDuplicate, createDuplicateGuard } from './ui/DuplicateGuard';
 import {
 	linkField,
@@ -152,7 +153,7 @@ export class EditTitleModal extends Modal {
 		titleField(content, this.fieldTitle, undefined, (v) => { this.fieldTitle = v; });
 
 		nameSelect(makeRow(t('edit.type')), this.plugin.settings.types.map((t) => t.name), this.fieldType,
-			(v) => { this.fieldType = v; });
+			(v) => { this.fieldType = v; }, false, typeLabel);
 
 		// total episodes + ep. duration paired on one row (episodes keeps its seasons skip/watch inline
 		// labels — only the layout changed)

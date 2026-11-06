@@ -1,5 +1,5 @@
 import { Notice, setIcon } from 'obsidian';
-import { t } from './i18n';
+import { t, type TranslationKey } from './i18n';
 import { readingStatusLabel } from './i18n/labels';
 import { apiErrorMessage } from './ApiService';
 import { fetchReadingCoverById } from './coverRefresh';
@@ -1106,7 +1106,7 @@ export class ReadingTab {
 		setIcon(gearBtn, 'settings');
 		gearBtn.addEventListener('click', () => {
 			new RowsCustomizeModal(this.plugin.app, this.plugin, {
-				shelves: READING_ROWS_SHELVES,
+				shelves: READING_ROWS_SHELVES.map((sh) => ({ id: sh.id, label: t(`reading.shelves.${sh.id}` as TranslationKey) })),
 				getLayout: () => this.readingData.getSettings().rowsLayout,
 				setLayout: (layout) => { this.readingData.getSettings().rowsLayout = layout; },
 				// The layout lives inside data.json's reading key, not
