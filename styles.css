@@ -2484,6 +2484,13 @@ button.wl-api-test {
   border-top: 1px solid var(--background-modifier-border);
 }
 
+.wl-api-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .wl-api-action-texts {
   flex: 1 1 auto;
   min-width: 0;

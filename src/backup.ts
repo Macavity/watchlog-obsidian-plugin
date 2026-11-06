@@ -6,6 +6,7 @@ import type { GamesData, MaybeTitle, ReadingData, WatchLogData, WatchLogTitle } 
 import type { LocalStore } from './storage/LocalStore';
 import { SHARED_SETTING_KEYS, type SharedConfigStore } from './storage/SharedConfigStore';
 import { importLegacy, type ImportContext } from './storage/migrateV1';
+import { withoutCredentials } from './jikanBase';
 
 export interface BackupManagers {
 	dataManager: DataManager;
@@ -63,10 +64,15 @@ export function buildBackup(m: BackupManagers): BackupFile {
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const SECRET_KEY = /api.?key|secret|client.?id|steam.?id|token/i;
 
-/** The same backup without API keys and ids: for a copy that is written into the (synced) vault. */
+/** The same backup without API keys, ids and logins: for a copy that is written into the (synced) vault. */
 export function withoutSecrets(b: BackupFile): BackupFile {
 	const local: Record<string, unknown> = {};
 	for (const [k, v] of Object.entries(b.local)) if (!SECRET_KEY.test(k)) local[k] = v;
+	if (typeof local['jikanBaseUrl'] === 'string') {
+		const endpoint = withoutCredentials(local['jikanBaseUrl']);
+		if (endpoint === null) delete local['jikanBaseUrl'];
+		else local['jikanBaseUrl'] = endpoint;
+	}
 	return { ...b, local };
 }
 

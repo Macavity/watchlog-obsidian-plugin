@@ -26,6 +26,7 @@ import { loadOwnOrOriginal, ORIGINAL_PLUGIN_ID } from './storage/legacyPlugin';
 import type { BackupManagers } from './backup';
 import { composeSettings, persistSettings } from './settingsSplit';
 import { runAirtimeScheduler } from './airtimeScheduler';
+import { resolveJikanEndpoint } from './jikanBase';
 
 /** Root folder created on a fresh install (no `.base` with a `watchlog:` key found). */
 const DEFAULT_ROOT = 'WatchLog';
@@ -123,6 +124,7 @@ export default class WatchLogPlugin extends Plugin {
 			this.settings.igdbClientSecret,
 			this.settings.steamApiKey,
 			this.settings.steamId,
+			resolveJikanEndpoint(this.settings.jikanBaseUrl),
 		);
 		this.apiKeys = [this.settings.tmdbApiKey, this.settings.omdbApiKey].join('\n');
 		this.dataManager.setHistoryManager(this.historyManager);
@@ -467,6 +469,8 @@ export default class WatchLogPlugin extends Plugin {
 		// mirror into types.ts so the pure formatters render in the chosen order without a settings ref
 		setActiveDateFormat(this.settings.dateFormat);
 		this.syncTypeNames();
+		// a restored backup can bring another endpoint; PosterService reads it per request anyway
+		this.apiService.setJikanEndpoint(resolveJikanEndpoint(this.settings.jikanBaseUrl));
 	}
 
 	async saveSettings(): Promise<void> {

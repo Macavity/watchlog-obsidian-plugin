@@ -5,8 +5,17 @@ All notable changes to WatchLog Sync are documented here. Versions up to 3.1.2 a
 
 ## [4.1.0] - 2026-10-30
 
+##### Fixed
+
+* Anime and manga search, details, posters and airing data work again after the public Jikan API shut down. MyAnimeList data now comes from [Tenrai](https://tenrai.org/), a Jikan-compatible API, by default.
+
+##### Added
+
+* Settings → API → Anime: an endpoint field for any Jikan-compatible API, for example your own Jikan instance (https only, stored per device), with a reset button for Tenrai and a Test button. Basic auth works with the login in the address (`https://user:password@host/v4`); it is sent only to that endpoint and left out of backups saved to the vault.
+
 ##### Changed
 
+* "Jikan" is now called "MyAnimeList" in the API settings and in error messages, since the data source no longer has to be Jikan.
 * Mobile and tablet toolbar (Watchlist, Reading, Games): the add button is always visible as a `+` icon next to the toggle instead of hiding behind it.
 * The toolbar toggle shows a filter icon (and a search icon when expanded) instead of a chevron, so it is clear that filters, sorting and selection live there.
 

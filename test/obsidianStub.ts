@@ -1,6 +1,7 @@
 // Minimal stand-in for the 'obsidian' module in unit tests. Extend as tests need more surface.
 import { parse, stringify } from 'yaml';
 import { El } from './helpers/fakeEl';
+import { vi } from 'vitest';
 
 export function normalizePath(path: string): string {
 	return path
@@ -60,3 +61,6 @@ export function setIcon(el: El, icon: string): void {
 	el.text = '';
 	el.attr['data-icon'] = icon;
 }
+
+/** Network stand-in; tests set the response with mockResolvedValue and read the sent params from mock.calls. */
+export const requestUrl = vi.fn(async (_params: unknown) => ({ status: 200, text: '{}', json: {} as unknown }));

@@ -22,12 +22,17 @@ describe('settings split', () => {
 		const { f, local, shared } = await setup({ 'W/WatchLog.base': 'watchlog:\n  version: 1\n' });
 		const settings = composeSettings(local.data.settings, shared.get().settings);
 		settings.tmdbApiKey = 'SECRET';
+		settings.jikanBaseUrl = 'https://u:NASPW@jikan.example.org/v4';
 		settings.statuses = [{ name: 'Rewatch', color: '#123456' }];
 		await persistSettings(settings, local, shared);
 		await local.flush();
 		expect(f.files.get('W/WatchLog.base')).toContain('Rewatch');
 		expect(f.files.get('W/WatchLog.base')).not.toContain('SECRET');
 		expect(JSON.stringify(f.plugin.data)).toContain('SECRET');
+		expect(f.files.get('W/WatchLog.base')).not.toContain('jikan.example.org');
+		expect(JSON.stringify(f.plugin.data)).toContain('jikan.example.org');
+		expect(f.files.get('W/WatchLog.base')).not.toContain('NASPW');
+		expect(JSON.stringify(f.plugin.data)).toContain('NASPW');
 		expect(JSON.stringify(f.plugin.data)).not.toContain('Rewatch');
 	});
 
