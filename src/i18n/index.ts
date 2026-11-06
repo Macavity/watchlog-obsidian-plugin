@@ -24,7 +24,8 @@ let locale = 'en';
 let rules = new Intl.PluralRules('en');
 
 function isPlural(v: unknown): v is Exclude<Leaf, string> {
-	return typeof v === 'object' && v !== null && typeof (v as { other?: unknown }).other === 'string';
+	const o = v as { one?: unknown; other?: unknown };
+	return typeof v === 'object' && v !== null && typeof o.one === 'string' && typeof o.other === 'string';
 }
 
 function flatten(node: object, prefix: string, out: Map<string, Leaf>): void {

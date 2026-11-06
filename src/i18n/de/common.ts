@@ -12,6 +12,4 @@ export default {
 	search: 'Suchen',
 	loading: 'Lädt…',
 	none: 'Keine',
-	testGreeting: 'Hallo {name}',
-	testRows: { one: '{count} Zeile', other: '{count} Zeilen' },
 } as const satisfies DeepPartial<typeof enCommon>;

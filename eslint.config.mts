@@ -14,7 +14,7 @@ const sentenceCaseOptions = {
 		'Drafts', 'Custom', 'Lists', 'Books', 'Manga', 'Games',
 		'Notes', 'Quotes', 'Regenerate', 'Settings', 'Add', 'Last',
 		// External services / acronyms not in the rule defaults
-		'Google', 'MAL', 'TSV', 'URLs', 'APIs', 'Steam', 'Tenrai', 'English',
+		'Google', 'MAL', 'TSV', 'URLs', 'APIs', 'Steam', 'Tenrai',
 		// Stored type name and the default rating-tier label
 		'Book', 'Good',
 		// API provider names (proper nouns)
