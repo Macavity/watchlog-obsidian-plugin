@@ -5,6 +5,7 @@ import type { DataManager } from './DataManager';
 import type { DraftPersistState } from './types';
 import { openAddForTitle } from './AddRouter';
 import { t } from './i18n';
+import { createIconButton } from './ui/IconButton';
 
 /** Libraries a draft can already live in — used for the "In …" duplicate label. */
 type DraftLibrary = 'Watchlist' | 'Books' | 'Manga' | 'Games';
@@ -388,11 +389,7 @@ export class DraftsTab {
 			addBtn.addEventListener('click', () => this.openAddModal(entry));
 		}
 
-		const dismissBtn = actions.createEl('button', {
-			cls: 'wl-btn wl-btn-sm wl-drafts-dismiss',
-			text: '✕',
-			attr: { title: t('drafts.dismiss') },
-		});
+		const dismissBtn = createIconButton(actions, { icon: 'x', label: t('drafts.dismiss'), cls: 'wl-drafts-dismiss' });
 		dismissBtn.addEventListener('click', () => void this.dismissEntry(entry.titleKey));
 	}
 

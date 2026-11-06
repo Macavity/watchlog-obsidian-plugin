@@ -1,5 +1,6 @@
 import { Notice, setIcon } from 'obsidian';
 import { t, type TranslationKey } from './i18n';
+import { createIconButton } from './ui/IconButton';
 import { readingStatusLabel } from './i18n/labels';
 import { apiErrorMessage } from './ApiService';
 import { fetchReadingCoverById } from './coverRefresh';
@@ -368,11 +369,11 @@ export class ReadingTab {
 	private renderSelectionActionBar(parent: HTMLElement): void {
 		const bar = parent.createDiv({ cls: 'wl-reading-action-bar' });
 
-		const deleteBtn = bar.createEl('button', {
+		const deleteBtn = createIconButton(bar, {
+			icon: 'x',
+			label: t('reading.toolbar.deleteSelected'),
 			cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
-			text: '✕',
 		});
-		deleteBtn.title = t('reading.toolbar.deleteSelected');
 		deleteBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			const count = this.selectedIds.size;
@@ -1441,11 +1442,11 @@ export class ReadingTab {
 		const statusBadge = cover.createSpan({ cls: 'wl-reading-card-status-badge', text: readingStatusLabel(item.status) });
 		statusBadge.style.backgroundColor = readingStatusColor(item.status, this.readingData.getSettings().statusColors);
 
-		const menuBtn = card.createEl('button', {
+		const menuBtn = createIconButton(card, {
+			icon: 'more-vertical',
+			label: t('reading.card.moreActions'),
 			cls: 'wl-reading-card-menu-btn',
-			text: '⋮',
 		});
-		menuBtn.setAttr('aria-label', t('reading.card.moreActions'));
 		menuBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			this.openCardContextMenu(card, menuBtn, item);

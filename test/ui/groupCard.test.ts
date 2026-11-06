@@ -16,6 +16,8 @@ class El {
 	dataset: Record<string, string> = {};
 	style: Record<string, string> = {};
 	attrs: Record<string, string> = {};
+	/** the obsidianStub setIcon writes data-icon here */
+	attr: Record<string, string> = {};
 	textContent = '';
 	text = '';
 	constructor(public tag = 'div', opts: { cls?: string; text?: string } = {}) {
@@ -31,6 +33,7 @@ class El {
 	}
 	addClass(c: string): void { this.classes.add(c); }
 	setAttr(k: string, v: string): void { this.attrs[k] = v; }
+	empty(): void { this.children = []; }
 	addEventListener(type: string, fn: (e: unknown) => void): void {
 		this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn]);
 	}

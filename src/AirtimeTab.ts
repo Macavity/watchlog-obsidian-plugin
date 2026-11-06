@@ -1,5 +1,6 @@
 import { App, Modal, Notice } from 'obsidian';
 import { t, type TranslationKey } from './i18n';
+import { createIconButton } from './ui/IconButton';
 import { gameStatusLabel, readingStatusLabel, statusLabel, typeLabel } from './i18n/labels';
 import { monthName } from './ui/dateNames';
 import { scheduleText } from './ui/scheduleText';
@@ -513,15 +514,13 @@ export class AirtimeTab {
 			right.createDiv({ cls: 'wl-airtime-pill wl-airtime-pill-aired', text: formatDaysAgo(title.releaseDate) });
 		}
 
-		const globeBtn = right.createEl('button', { cls: 'wl-airtime-action-btn', text: '🌐' });
-		globeBtn.title = t('airtime.actions.openPage');
+		const globeBtn = this.renderGlobeButton(right);
 		globeBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			openExternalLink(title.externalLink, 'airtime.notices.noLinkTitle');
 		});
 
-		const deleteBtn = right.createEl('button', { cls: 'wl-airtime-action-btn wl-airtime-action-btn-delete wl-btn-danger', text: '✕' });
-		deleteBtn.title = t('airtime.actions.removeFromWatchlist');
+		const deleteBtn = this.renderDeleteButton(right, t('airtime.actions.removeFromWatchlist'));
 		deleteBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			new ConfirmModal(this.plugin.app, t('airtime.confirm.removeWatchlist', { title: title.title }), () => {
@@ -592,14 +591,12 @@ export class AirtimeTab {
 			: pillClsMap[countdown.kind];
 		const right = card.createDiv({ cls: 'wl-maybe-card-right' });
 		right.createDiv({ cls: pillCls, text: mt.releaseDate ? countdown.label : '—' });
-		const globeBtn = right.createEl('button', { cls: 'wl-airtime-action-btn', text: '🌐' });
-		globeBtn.title = t('airtime.actions.openPage');
+		const globeBtn = this.renderGlobeButton(right);
 		globeBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			openExternalLink(mt.externalLink, 'airtime.notices.noLink');
 		});
-		const deleteBtn = right.createEl('button', { cls: 'wl-airtime-action-btn wl-airtime-action-btn-delete wl-btn-danger', text: '✕' });
-		deleteBtn.title = t('airtime.actions.removeFromMaybe');
+		const deleteBtn = this.renderDeleteButton(right, t('airtime.actions.removeFromMaybe'));
 		deleteBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			new ConfirmModal(this.plugin.app, t('airtime.confirm.removeMaybe', { title: mt.title }), () => {
@@ -1009,6 +1006,20 @@ export class AirtimeTab {
 			});
 	}
 
+	/** Framed globe that opens the entry's external page; the caller wires the click. */
+	private renderGlobeButton(parent: HTMLElement): HTMLButtonElement {
+		return createIconButton(parent, { icon: 'globe', label: t('airtime.actions.openPage'), cls: 'wl-airtime-action-btn' });
+	}
+
+	/** Red ✕ in the action row; the caller wires the confirm dialog. */
+	private renderDeleteButton(parent: HTMLElement, label: string): HTMLButtonElement {
+		return createIconButton(parent, {
+			icon: 'x',
+			label,
+			cls: 'wl-airtime-action-btn wl-airtime-action-btn-delete wl-btn-danger',
+		});
+	}
+
 	/** The green tick button; confirms advancing the entry to its next episode/chapter. */
 	private renderTickButton(
 		parent: HTMLElement,
@@ -1017,8 +1028,7 @@ export class AirtimeTab {
 		r: ResolvedUpcoming,
 		isFinalEpisode: boolean,
 	): void {
-		const tickBtn = parent.createEl('button', { cls, text: '✓' });
-		tickBtn.title = tickTooltip(r, isFinalEpisode);
+		const tickBtn = createIconButton(parent, { icon: 'check', label: tickTooltip(r, isFinalEpisode), cls });
 		tickBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			this.confirmTick(entry, r);
@@ -1139,15 +1149,17 @@ export class AirtimeTab {
 		// green tick, shown once the airtime/release passes
 		if (showTick) this.renderTickButton(actions, 'wl-airtime-action-btn wl-airtime-action-btn-tick', entry, r, isFinalEpisode);
 
-		const globeBtn = actions.createEl('button', { cls: 'wl-airtime-action-btn', text: '🌐' });
-		globeBtn.title = t('airtime.actions.openPage');
+		const globeBtn = this.renderGlobeButton(actions);
 		globeBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			openExternalLink(r.externalLink, 'airtime.notices.noLinkTitle');
 		});
 
-		const editBtn = actions.createEl('button', { cls: 'wl-airtime-action-btn', text: '✏' });
-		editBtn.title = t('airtime.actions.editSchedule');
+		const editBtn = createIconButton(actions, {
+			icon: 'pencil',
+			label: t('airtime.actions.editSchedule'),
+			cls: 'wl-airtime-action-btn',
+		});
 		editBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			if (r.source === 'reading') {
@@ -1159,11 +1171,7 @@ export class AirtimeTab {
 			}
 		});
 
-		const deleteBtn = actions.createEl('button', {
-			cls: 'wl-airtime-action-btn wl-airtime-action-btn-delete wl-btn-danger',
-			text: '✕',
-		});
-		deleteBtn.title = t('airtime.actions.removeFromUpcoming');
+		const deleteBtn = this.renderDeleteButton(actions, t('airtime.actions.removeFromUpcoming'));
 		deleteBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			this.confirmRemove(entry, r);
@@ -1453,16 +1461,22 @@ export class AirtimeTab {
 		if (showTick) this.renderTickButton(card, 'wl-tracker-tick-btn', entry, r, isFinalEpisode);
 
 		// ⋮ menu (Remove only) — stacked above the globe, bottom-right
-		const menuBtn = card.createEl('button', { cls: 'wl-card-menu-btn wl-tracker-menu-btn', text: '⋮' });
-		menuBtn.setAttr('aria-label', t('airtime.actions.moreActions'));
+		const menuBtn = createIconButton(card, {
+			icon: 'more-vertical',
+			label: t('airtime.actions.moreActions'),
+			cls: 'wl-card-menu-btn wl-tracker-menu-btn',
+		});
 		menuBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			this.openTrackerCardMenu(card, menuBtn, data);
 		});
 
 		// globe — bottom-right, opens the external page
-		const globeBtn = card.createEl('button', { cls: 'wl-card-menu-btn wl-tracker-globe-btn', text: '🌐' });
-		globeBtn.title = t('airtime.actions.openPage');
+		const globeBtn = createIconButton(card, {
+			icon: 'globe',
+			label: t('airtime.actions.openPage'),
+			cls: 'wl-card-menu-btn wl-tracker-globe-btn',
+		});
 		globeBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			openExternalLink(r.externalLink, 'airtime.notices.noLinkTitle');

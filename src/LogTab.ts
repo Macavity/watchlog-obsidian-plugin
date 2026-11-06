@@ -1,5 +1,5 @@
-import { setIcon } from 'obsidian';
 import { t, type TranslationKey } from './i18n';
+import { createIconButton } from './ui/IconButton';
 import { readingStatusLabel, statusLabel } from './i18n/labels';
 import { dayName, monthName } from './ui/dateNames';
 import type WatchLogPlugin from './main';
@@ -366,9 +366,7 @@ export class LogTab {
 
 		el.createDiv({ cls: 'wl-log-time', text: formatTime(entry.timestamp) });
 
-		const delBtn = el.createEl('button', { cls: 'wl-log-del' });
-		delBtn.setAttribute('aria-label', t('dashboard.log.deleteEvent'));
-		setIcon(delBtn, 'x');
+		const delBtn = createIconButton(el, { icon: 'x', label: t('dashboard.log.deleteEvent'), cls: 'wl-log-del' });
 		delBtn.addEventListener('click', (ev) => {
 			ev.stopPropagation();
 			this.confirmDelete(entry);
