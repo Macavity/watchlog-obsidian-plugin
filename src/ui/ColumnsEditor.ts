@@ -33,7 +33,8 @@ export function attachCardDrag(
 	drag: DragState,
 	onReorder: (from: number, to: number) => void,
 ): void {
-	const handle = card.createDiv({ cls: 'wl-editcol-card-handle', text: '⠿' });
+	const handle = card.createDiv({ cls: 'wl-editcol-card-handle' });
+	setIcon(handle, 'grip-vertical');
 	handle.title = t('ui.columns.dragToReorder');
 	handle.addEventListener('mousedown', () => card.setAttribute('draggable', 'true'));
 	card.addEventListener('dragstart', (e) => {

@@ -350,9 +350,7 @@ export class ListTab {
 		);
 		// customize-shelves gear, far right on the count line
 		countEl.addClass('wl-results-count-rows');
-		const gearBtn = countEl.createEl('button', { cls: 'wl-rows-customize-btn' });
-		gearBtn.setAttr('aria-label', t('list.rows.customize'));
-		setIcon(gearBtn, 'settings');
+		const gearBtn = createIconButton(countEl, { icon: 'settings', label: t('list.rows.customize') });
 		gearBtn.addEventListener('click', () => {
 			new RowsCustomizeModal(this.plugin.app, this.plugin, {
 				shelves: ROWS_SHELVES.map((sh) => ({ id: sh.id, label: t(`list.shelves.${sh.id}` as TranslationKey) })),

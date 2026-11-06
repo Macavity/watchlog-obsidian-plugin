@@ -1,4 +1,4 @@
-import { Notice, setIcon } from 'obsidian';
+import { Notice } from 'obsidian';
 import { t, type TranslationKey } from './i18n';
 import { createIconButton } from './ui/IconButton';
 import { readingStatusLabel } from './i18n/labels';
@@ -1102,9 +1102,7 @@ export class ReadingTab {
 		if (!this.contentEl) return;
 		const countEl = this.contentEl.createDiv({ cls: 'wl-results-count wl-results-count-rows' });
 		countEl.textContent = t('ui.group.countTitle', { count: titleCount });
-		const gearBtn = countEl.createEl('button', { cls: 'wl-rows-customize-btn' });
-		gearBtn.setAttr('aria-label', t('reading.customizeRows'));
-		setIcon(gearBtn, 'settings');
+		const gearBtn = createIconButton(countEl, { icon: 'settings', label: t('reading.customizeRows') });
 		gearBtn.addEventListener('click', () => {
 			new RowsCustomizeModal(this.plugin.app, this.plugin, {
 				shelves: READING_ROWS_SHELVES.map((sh) => ({ id: sh.id, label: t(`reading.shelves.${sh.id}` as TranslationKey) })),

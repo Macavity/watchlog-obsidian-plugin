@@ -1,7 +1,8 @@
-import { App, Modal, ToggleComponent, setIcon } from 'obsidian';
+import { App, Modal, ToggleComponent } from 'obsidian';
 import type WatchLogPlugin from './main';
 import { normalizeRowsLayout, type RowsShelfLayoutEntry } from './types';
 import { t } from './i18n';
+import { createIconButton } from './ui/IconButton';
 
 /** Wires the modal to one tab's shelf registry + persisted layout, so any tab
  *  with a Rows view (Watchlist today, others later) can reuse it. */
@@ -95,9 +96,12 @@ export class RowsCustomizeModal extends Modal {
 			row.createSpan({ cls: 'wl-rows-customize-name', text: this.labelFor(entry.id) });
 			const controls = row.createDiv({ cls: 'wl-rows-customize-controls' });
 
-			const upBtn = controls.createEl('button', { cls: 'wl-rows-customize-move' });
-			setIcon(upBtn, 'chevron-up');
-			upBtn.setAttr('aria-label', t('list.rows.moveUp'));
+			const upBtn = createIconButton(controls, {
+				icon: 'chevron-up',
+				label: t('list.rows.moveUp'),
+				cls: 'wl-rows-customize-move',
+				variant: 'framed',
+			});
 			upBtn.disabled = i === 0;
 			upBtn.addEventListener('click', () => {
 				const prev = layout[i - 1];
@@ -107,9 +111,12 @@ export class RowsCustomizeModal extends Modal {
 				this.apply();
 			});
 
-			const downBtn = controls.createEl('button', { cls: 'wl-rows-customize-move' });
-			setIcon(downBtn, 'chevron-down');
-			downBtn.setAttr('aria-label', t('list.rows.moveDown'));
+			const downBtn = createIconButton(controls, {
+				icon: 'chevron-down',
+				label: t('list.rows.moveDown'),
+				cls: 'wl-rows-customize-move',
+				variant: 'framed',
+			});
 			downBtn.disabled = i === layout.length - 1;
 			downBtn.addEventListener('click', () => {
 				const next = layout[i + 1];

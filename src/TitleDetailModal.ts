@@ -1438,8 +1438,7 @@ function buildTitleCardElement(
 		fill.style.width = `${ratio * 100}%`;
 	}
 
-	const menuBtn = card.createEl('button', { cls: 'wl-card-menu-btn', text: '⋮' });
-	menuBtn.setAttr('aria-label', t('common.edit'));
+	const menuBtn = createIconButton(card, { icon: 'more-vertical', label: t('common.edit'), cls: 'wl-card-menu-btn' });
 	menuBtn.addEventListener('click', (e) => {
 		e.stopPropagation();
 		handlers.onEdit();
