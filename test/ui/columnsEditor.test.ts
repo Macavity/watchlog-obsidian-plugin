@@ -37,11 +37,11 @@ describe('validateColumns', () => {
 		expect(validateColumns([col(), col({ type: 'select', options: ['x'] })])).toBeNull();
 	});
 	it('rejects blank labels', () => {
-		expect(validateColumns([col({ label: '  ' })])).toBe('Column names cannot be empty.');
+		expect(validateColumns([col({ label: '  ' })])).toEqual({ reason: 'emptyName' });
 	});
 	it('rejects select without options', () => {
 		expect(validateColumns([col({ type: 'select', options: [] })]))
-			.toBe('Column "A" must have at least one option.');
+			.toEqual({ reason: 'noOptions', label: 'A' });
 	});
 });
 

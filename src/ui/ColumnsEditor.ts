@@ -2,6 +2,7 @@ import { App, Notice } from 'obsidian';
 import type { CustomListColumn, CustomListRow } from '../types';
 import { DEFAULT_FIELD_COLOR } from '../types';
 import { ConfirmModal } from '../ConfirmModal';
+import { t } from '../i18n';
 import { openColorPicker, deriveFillColor, deriveBorderColor } from '../ColorPicker';
 
 /**
@@ -32,7 +33,7 @@ export function attachCardDrag(
 	onReorder: (from: number, to: number) => void,
 ): void {
 	const handle = card.createDiv({ cls: 'wl-editcol-card-handle', text: '⠿' });
-	handle.title = 'Drag to reorder';
+	handle.title = t('ui.columns.dragToReorder');
 	handle.addEventListener('mousedown', () => card.setAttribute('draggable', 'true'));
 	card.addEventListener('dragstart', (e) => {
 		drag.from = idx;
@@ -57,12 +58,14 @@ export function attachCardDrag(
 /** Text / number / select dropdown of a column card. */
 export function renderTypeSelect(card: HTMLElement, current: CustomListColumn['type']): HTMLSelectElement {
 	const typeSelect = card.createEl('select', { cls: 'wl-select wl-editcol-card-type' });
-	for (const t of ['text', 'number', 'select'] as const) {
-		const opt = typeSelect.createEl('option', {
-			value: t,
-			text: t.charAt(0).toUpperCase() + t.slice(1),
-		});
-		if (current === t) opt.selected = true;
+	const labels = {
+		text: t('ui.columns.typeText'),
+		number: t('ui.columns.typeNumber'),
+		select: t('ui.columns.typeSelect'),
+	};
+	for (const type of ['text', 'number', 'select'] as const) {
+		const opt = typeSelect.createEl('option', { value: type, text: labels[type] });
+		if (current === type) opt.selected = true;
 	}
 	return typeSelect;
 }
@@ -82,15 +85,24 @@ export function moveColumn(cols: CustomListColumn[], from: number, to: number): 
 	if (moved) cols.splice(from < to ? to - 1 : to, 0, moved);
 }
 
+export type ColumnsProblem = { reason: 'emptyName' } | { reason: 'noOptions'; label: string };
+
 /** First validation problem of a column set, or null when it can be saved. */
-export function validateColumns(cols: CustomListColumn[]): string | null {
+export function validateColumns(cols: CustomListColumn[]): ColumnsProblem | null {
 	for (const col of cols) {
-		if (!col.label.trim()) return 'Column names cannot be empty.';
+		if (!col.label.trim()) return { reason: 'emptyName' };
 		if (col.type === 'select' && (!col.options || col.options.length === 0)) {
-			return `Column "${col.label}" must have at least one option.`;
+			return { reason: 'noOptions', label: col.label };
 		}
 	}
 	return null;
+}
+
+/** Localized text of a column problem. */
+export function columnsProblemText(problem: ColumnsProblem): string {
+	return problem.reason === 'emptyName'
+		? t('ui.columns.emptyName')
+		: t('ui.columns.noOptions', { label: problem.label });
 }
 
 /** Trims labels and options and aligns option colours; mutates the columns. */
@@ -156,7 +168,7 @@ export function renderColumnsEditor(
 		onCancel: opts.onCancel,
 		onSave: () => {
 			const problem = validateColumns(state.cols);
-			if (problem) { new Notice(problem); return; }
+			if (problem) { new Notice(columnsProblemText(problem)); return; }
 			normalizeColumns(state.cols);
 			opts.onSave(state.cols);
 		},
@@ -168,8 +180,8 @@ export function renderCancelSave(
 	row: HTMLElement,
 	handlers: { onCancel: () => void; onSave: () => void },
 ): void {
-	row.createEl('button', { cls: 'wl-btn', text: 'Cancel' }).addEventListener('click', () => handlers.onCancel());
-	row.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' }).addEventListener('click', () => handlers.onSave());
+	row.createEl('button', { cls: 'wl-btn', text: t('common.cancel') }).addEventListener('click', () => handlers.onCancel());
+	row.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('common.save') }).addEventListener('click', () => handlers.onSave());
 }
 
 // Shared column list renderer (used by renderColumnsEditor)
@@ -190,16 +202,16 @@ function renderColumnList(
 	const drag: DragState = { from: -1 };
 
 	// permanent auto-included columns — non-editable, non-deletable, non-draggable
-	const renderAutoCard = (label: string): void => {
+	const renderAutoCard = (id: string, label: string): void => {
 		const card = listEl.createDiv({ cls: 'wl-editcol-card wl-editcol-card-auto' });
-		card.setAttribute('data-auto', label);
+		card.setAttribute('data-auto', id);
 		const nameWrap = card.createDiv({ cls: 'wl-editcol-card-name-wrap' });
 		nameWrap.createDiv({ cls: 'wl-editcol-card-name-label', text: label });
-		card.createDiv({ cls: 'wl-editcol-card-type-locked', text: 'Auto' });
+		card.createDiv({ cls: 'wl-editcol-card-type-locked', text: t('ui.columns.auto') });
 		card.createDiv({ cls: 'wl-editcol-card-spacer' });
 	};
-	renderAutoCard('#');
-	renderAutoCard('Name');
+	renderAutoCard('#', '#');
+	renderAutoCard('Name', t('ui.columns.autoName'));
 
 	cols.forEach((col, idx) => {
 		const card = listEl.createDiv({ cls: 'wl-editcol-card' });
@@ -208,7 +220,7 @@ function renderColumnList(
 
 		const nameInput = card.createEl('input', {
 			cls: 'wl-modal-input wl-editcol-card-name',
-			attr: { type: 'text', placeholder: 'Column name', value: col.label },
+			attr: { type: 'text', placeholder: t('ui.columns.columnName'), value: col.label },
 		});
 		nameInput.addEventListener('input', () => { col.label = nameInput.value; });
 
@@ -239,7 +251,7 @@ function renderColumnList(
 			const toggles = card.createDiv({ cls: 'wl-editcol-card-toggles' });
 			const boldBtn = toggles.createEl('button', {
 				cls: `wl-btn wl-btn-sm wl-editcol-card-toggle wl-editcols-bold-btn${col.bold ? ' is-active' : ''}`,
-				text: 'B',
+				text: t('ui.columns.bold'),
 			});
 			boldBtn.addEventListener('click', () => {
 				col.bold = !col.bold;
@@ -247,7 +259,7 @@ function renderColumnList(
 			});
 			const italicBtn = toggles.createEl('button', {
 				cls: `wl-btn wl-btn-sm wl-editcol-card-toggle wl-editcols-italic-btn${col.italic ? ' is-active' : ''}`,
-				text: 'I',
+				text: t('ui.columns.italic'),
 			});
 			italicBtn.addEventListener('click', () => {
 				col.italic = !col.italic;
@@ -258,7 +270,7 @@ function renderColumnList(
 				const autoTimeBtn = toggles.createEl('button', {
 					cls: `wl-btn wl-btn-sm wl-editcol-card-toggle wl-editcols-autotime-btn${col.autoTime ? ' is-active' : ''}`,
 					text: '⏱',
-					attr: { title: 'Auto-populate with remaining watch time from Watchlist' },
+					attr: { title: t('ui.columns.autoTime') },
 				});
 				autoTimeBtn.addEventListener('click', () => {
 					col.autoTime = !col.autoTime;
@@ -271,14 +283,14 @@ function renderColumnList(
 			cls: 'wl-btn wl-btn-sm wl-editcol-card-del',
 			text: '×',
 		});
-		delBtn.title = 'Delete this column';
+		delBtn.title = t('ui.columns.deleteColumn');
 		delBtn.addEventListener('click', () => {
 			const hasData = existingRows.some(r => {
 				const val = (r as Record<string, unknown>)[col.id];
 				return val !== undefined && val !== '' && val !== null;
 			});
 			if (hasData) {
-				new ConfirmModal(app, `Delete column "${col.label}"? This will remove all data in this column.`, () => {
+				new ConfirmModal(app, t('ui.columns.deleteConfirm', { label: col.label }), () => {
 					onDelete(idx);
 				}).open();
 			} else {
@@ -297,7 +309,7 @@ function renderColumnList(
 					const colorDot = optRow.createEl('button', {
 						cls: 'wl-reading-col-color-dot wl-editcol-opt-color-dot',
 					});
-					colorDot.title = 'Option color';
+					colorDot.title = t('ui.columns.optionColor');
 					const syncDot = (): void => {
 						const c = col.optionColors?.[col.options?.[oi] ?? ''];
 						if (c) {
@@ -332,7 +344,7 @@ function renderColumnList(
 
 					const optInput = optRow.createEl('input', {
 						cls: 'wl-modal-input wl-editcol-card-opt-input',
-						attr: { type: 'text', value: opt, placeholder: 'Option' },
+						attr: { type: 'text', value: opt, placeholder: t('ui.columns.optionPlaceholder') },
 					});
 					let prevVal = opt;
 					optInput.addEventListener('input', () => {
@@ -356,7 +368,7 @@ function renderColumnList(
 					const delOpt = optRow.createEl('button', {
 						cls: 'wl-btn wl-btn-sm wl-editcol-card-opt-del',
 						text: '×',
-						attr: { title: 'Remove this option' },
+						attr: { title: t('ui.columns.removeOption') },
 					});
 					delOpt.addEventListener('click', () => {
 						const key = col.options?.[oi];
@@ -367,7 +379,7 @@ function renderColumnList(
 				});
 				const addOpt = optsArea.createEl('button', {
 					cls: 'wl-btn wl-btn-sm wl-editcol-card-opt-add',
-					text: '+ option',
+					text: t('ui.columns.addOption'),
 				});
 				addOpt.addEventListener('click', () => {
 					if (!col.options) col.options = [];
@@ -381,7 +393,7 @@ function renderColumnList(
 
 	if (onAdd) {
 		const addCard = listEl.createDiv({ cls: 'wl-editcol-card wl-editcol-card-add' });
-		addCard.createDiv({ cls: 'wl-editcol-card-add-label', text: '+ add column' });
+		addCard.createDiv({ cls: 'wl-editcol-card-add-label', text: t('ui.columns.addColumn') });
 		addCard.addEventListener('click', () => onAdd());
 	}
 }
