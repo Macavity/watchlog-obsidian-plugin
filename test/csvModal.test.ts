@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildImportedTitle, missingTypeNames } from '../src/CsvModal';
+import { mapImportRows } from '../src/CsvModalBase';
 
 describe('buildImportedTitle', () => {
 	it('fills defaults for a bare entry', () => {
@@ -38,5 +39,23 @@ describe('missingTypeNames', () => {
 	it('adds folder-safe names marked for creation', () => {
 		const out = missingTypeNames([], ['Anime'], { 'a/b': '__create__', Anime: '__create__', x: 'Anime' });
 		expect([...out]).toEqual(['a-b']);
+	});
+});
+
+describe('mapImportRows', () => {
+	const headers = ['Title', 'Rating'];
+	const mapping = { title: 'Title', rating: 'Rating' };
+	const build = (get: (k: string) => string): { title: string } | null => (get('title') ? { title: get('title') } : null);
+
+	it('keeps each row\'s own raw rating cell when blank or skipped rows sit in between', () => {
+		const csv = [headers, ['A', 'Great'], ['', ''], ['', 'orphan'], ['B', 'Meh'], ['C', 'Ok']];
+		const rows = mapImportRows(csv, headers, mapping, build, () => false);
+		expect(rows.map((r) => r.entry.title)).toEqual(['A', 'B', 'C']);
+		expect(rows.map((r) => r.rawRating)).toEqual(['Great', 'Meh', 'Ok']);
+	});
+
+	it('yields an empty raw rating when no rating column is mapped', () => {
+		const rows = mapImportRows([headers, ['A', 'Great']], headers, { title: 'Title' }, build, () => false);
+		expect(rows[0]?.rawRating).toBe('');
 	});
 });

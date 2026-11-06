@@ -23,6 +23,43 @@ export interface CsvImportRow<E> {
 	entry: E;
 	isDuplicate: boolean;
 	selected: boolean;
+	/** Raw rating cell of the CSV row this entry came from ('' when no rating column is mapped). */
+	rawRating: string;
+}
+
+/** A mapped CSV row before the user's selection is attached. */
+export type MappedImportRow<E> = Omit<CsvImportRow<E>, 'selected'>;
+
+/**
+ * Builds one import row per non-blank CSV data row. Blank rows and rows `buildEntry` rejects are
+ * dropped, so each row keeps the raw cells it still needs (the rating, for the value-map step)
+ * instead of relying on its index lining up with `csvRows`.
+ */
+export function mapImportRows<E extends { title?: string }>(
+	csvRows: string[][],
+	headers: string[],
+	columnMapping: Record<string, string>,
+	buildEntry: (get: (fieldKey: string) => string) => E | null,
+	isDuplicate: (entry: E) => boolean,
+): MappedImportRow<E>[] {
+	if (csvRows.length < 2) return [];
+	const colIdx = (fieldKey: string): number => {
+		const colName = columnMapping[fieldKey];
+		return colName ? headers.indexOf(colName) : -1;
+	};
+	const ratingIdx = colIdx('rating');
+	const out: MappedImportRow<E>[] = [];
+	for (const values of csvRows.slice(1)) {
+		if (!values.some((c) => c.trim())) continue;
+		const entry = buildEntry((fieldKey) => {
+			const idx = colIdx(fieldKey);
+			return idx >= 0 ? (values[idx] ?? '').trim() : '';
+		});
+		if (!entry) continue;
+		const rawRating = ratingIdx >= 0 ? (values[ratingIdx] ?? '').trim() : '';
+		out.push({ entry, isDuplicate: isDuplicate(entry), rawRating });
+	}
+	return out;
 }
 
 export interface CsvExportRow {
@@ -373,35 +410,15 @@ export abstract class CsvModalBase<E extends CsvEntryBase> extends Modal {
 		});
 	}
 
-	private applyMapping(): { entry: E; isDuplicate: boolean }[] {
-		if (this.csvRows.length < 2) return [];
+	private applyMapping(): MappedImportRow<E>[] {
 		const existing = this.existingTitles();
-
-		return this.csvRows.slice(1)
-			.filter((r) => r.some((c) => c.trim()))
-			.map((values): { entry: E; isDuplicate: boolean } | null => {
-				const entry = this.buildEntry((fieldKey) => {
-					const colName = this.columnMapping[fieldKey];
-					if (!colName) return '';
-					const idx = this.csvHeaders.indexOf(colName);
-					return idx >= 0 ? (values[idx] ?? '').trim() : '';
-				});
-				if (!entry) return null;
-				const isDuplicate = !!existing.find(
-					(it) => it.title.toLowerCase() === (entry.title ?? '').toLowerCase(),
-				);
-				return { entry, isDuplicate };
-			})
-			.filter((r): r is { entry: E; isDuplicate: boolean } => r !== null);
+		return mapImportRows(this.csvRows, this.csvHeaders, this.columnMapping, (get) => this.buildEntry(get), (entry) =>
+			!!existing.find((it) => it.title.toLowerCase() === (entry.title ?? '').toLowerCase()));
 	}
 
 	/** Raw rating cell of an import row, or '' when no rating column is mapped. */
 	private rawRatingAt(row: CsvImportRow<E>): string {
-		const ratingColName = this.columnMapping['rating'];
-		const ratingIdx = ratingColName ? this.csvHeaders.indexOf(ratingColName) : -1;
-		if (ratingIdx < 0) return '';
-		const rawValues = this.csvRows[this.importRows.indexOf(row) + 1] ?? [];
-		return (rawValues[ratingIdx] ?? '').trim();
+		return row.rawRating;
 	}
 
 	private collectUnknowns(): CsvUnknowns {
