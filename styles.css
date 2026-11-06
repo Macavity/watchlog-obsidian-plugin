@@ -22,8 +22,9 @@
   padding: 8px 10px 0;
   border-bottom: 0.5px solid var(--background-modifier-border);
   flex-shrink: 0;
-  /* clip so the view can't be panned sideways */
-  overflow-x: hidden;
+  /* clip so the view can't be panned sideways; `clip` (not `hidden`) keeps this from
+     becoming a scroll container, which would show a scrollbar for the tabs' -0.5px overhang */
+  overflow-x: clip;
 }
 
 /* Mobile: icon-only tabs — 7 text labels overflow a phone panel */
@@ -32,7 +33,7 @@
   padding: 6px 4px 0;
 }
 
-.wl-tab-btn-icon {
+button.wl-tab-btn-icon {
   flex: 1 1 0;
   min-width: 0;
   display: flex;
@@ -42,13 +43,13 @@
   position: relative;
 }
 
-.wl-tab-btn-icon .svg-icon {
+button.wl-tab-btn-icon .svg-icon {
   width: 20px;
   height: 20px;
 }
 
 /* icon mode: dot instead of (N) */
-.wl-tab-btn-icon.wl-tab-has-badge::after {
+button.wl-tab-btn-icon.wl-tab-has-badge::after {
   content: '';
   position: absolute;
   top: 3px;
@@ -59,26 +60,42 @@
   background-color: #7F77DD;
 }
 
-.wl-tab-btn {
-  padding: 5px 14px;
+/* Flat tab buttons: top bar, airtime sub-tabs, reading sub-tabs.
+   element-qualified: plain .class loses to core's button:not(.clickable-icon)
+   (background, shadow, radius, height), which turns the tabs into raised buttons */
+button.wl-tab-btn,
+button.wl-inner-tab-btn,
+button.wl-reading-subtab {
+  height: auto;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
   color: var(--text-muted);
   cursor: pointer;
   font-size: var(--font-ui-small);
   font-weight: 500;
-  margin-bottom: -0.5px;
   transition: color 0.15s, border-color 0.15s;
 }
 
-.wl-tab-btn:hover {
+button.wl-tab-btn:hover,
+button.wl-inner-tab-btn:hover,
+button.wl-reading-subtab:hover {
   color: var(--text-normal);
+  background: none;
+  box-shadow: none;
 }
 
-.wl-tab-btn.is-active {
+button.wl-tab-btn.is-active,
+button.wl-inner-tab-btn.is-active {
   color: var(--text-accent);
   border-bottom-color: var(--text-accent);
+}
+
+button.wl-tab-btn {
+  padding: 5px 14px;
+  margin-bottom: -0.5px;
 }
 
 /* Tab content */
@@ -5945,22 +5962,10 @@ body.wl-cl-col-resizing {
   flex-shrink: 0;
 }
 
-.wl-inner-tab-btn {
+/* base, hover and active: see the flat tab buttons rule next to .wl-tab-bar */
+button.wl-inner-tab-btn {
   padding: 4px 12px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: var(--font-ui-small);
-  font-weight: 500;
   margin-bottom: -1px;
-}
-
-.wl-inner-tab-btn:hover { color: var(--text-normal); }
-.wl-inner-tab-btn.is-active {
-  color: var(--text-accent);
-  border-bottom-color: var(--text-accent);
 }
 
 /* Feature 1: Recently arrived label */
@@ -8037,27 +8042,16 @@ input.wl-settings-count-input {
   margin: 8px -2px 0;
 }
 
-.wl-reading-subtab {
+/* base and hover: see the flat tab buttons rule next to .wl-tab-bar */
+button.wl-reading-subtab {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px 14px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: var(--font-ui-small);
-  font-weight: 500;
   margin-bottom: -0.5px;
-  transition: color 0.15s, border-color 0.15s;
 }
 
-.wl-reading-subtab:hover {
-  color: var(--text-normal);
-}
-
-.wl-reading-subtab.is-active {
+button.wl-reading-subtab.is-active {
   color: #1D9E75;
   border-bottom-color: #1D9E75;
 }
