@@ -92,10 +92,10 @@ describe('i18n', () => {
 			const o = node as Record<string, unknown>;
 			if (typeof o.one === 'string' && typeof o.other === 'string') {
 				const extra = Object.keys(o).filter((k) => !['zero', 'one', 'other'].includes(k));
-				if (extra.length) offenders.push(`: `);
+				if (extra.length) offenders.push(`${path}: ${extra.join(', ')}`);
 				return;
 			}
-			for (const [k, v] of Object.entries(o)) walk(v, path ? `.` : k);
+			for (const [k, v] of Object.entries(o)) walk(v, path ? `${path}.${k}` : k);
 		};
 		walk(en, '');
 		walk(de, '');
