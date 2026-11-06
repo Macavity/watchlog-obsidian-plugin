@@ -1,6 +1,6 @@
-import { App, Modal, Notice } from 'obsidian';
-import { escapeCsvField, parseCSV, parseCsvDate } from './csv/csvCore';
-import { t, type TranslationKey } from './i18n';
+import type { App } from 'obsidian';
+import { CsvModalBase, rowsToCsv, type CsvFieldDef, type CsvExportRow, type CsvSelectOption } from './CsvModalBase';
+import { t } from './i18n';
 import { readingStatusLabel } from './i18n/labels';
 import type WatchLogPlugin from './main';
 import type { Book, Manga, ReadingStatus } from './types';
@@ -8,15 +8,6 @@ import { READING_STATUSES, SELECTABLE_READING_STATUSES } from './types';
 import type { ReadingCsvKind } from './ReadingCsvChoiceModal';
 
 // Schemas (Books and Manga kept fully separate)
-
-type Coercion = 'string' | 'int' | 'rating' | 'date';
-
-interface ReadingFieldDef {
-	key: string;
-	labelKey: TranslationKey;
-	coercion: Coercion;
-	autoDetect: string[];
-}
 
 // export column order (dateAdded is export-only)
 const BOOK_EXPORT_COLUMNS = [
@@ -35,21 +26,21 @@ const MANGA_EXPORT_COLUMNS = [
 ] as const;
 
 // import targets — export minus dateAdded (auto-set on insert)
-const COMMON_HEAD: ReadingFieldDef[] = [
+const COMMON_HEAD: CsvFieldDef[] = [
 	{ key: 'title',  labelKey: 'csv.fields.title',  coercion: 'string', autoDetect: ['title', 'name'] },
 	{ key: 'author', labelKey: 'csv.fields.author', coercion: 'string', autoDetect: ['author', 'writer', 'by'] },
 	{ key: 'status', labelKey: 'csv.fields.status', coercion: 'string', autoDetect: ['status'] },
 	{ key: 'rating', labelKey: 'csv.fields.rating', coercion: 'rating', autoDetect: ['rating', 'score'] },
 ];
 
-const COMMON_TAIL: ReadingFieldDef[] = [
+const COMMON_TAIL: CsvFieldDef[] = [
 	{ key: 'dateStarted',  labelKey: 'csv.fields.dateStarted',  coercion: 'date',   autoDetect: ['started', 'datestarted', 'date started', 'date_started', 'start date'] },
 	{ key: 'dateFinished', labelKey: 'csv.fields.dateFinished', coercion: 'date',   autoDetect: ['finished', 'datefinished', 'date finished', 'date_finished', 'end date', 'finish date', 'completed date'] },
 	{ key: 'releaseDate',  labelKey: 'csv.fields.releaseDate',  coercion: 'date',   autoDetect: ['releasedate', 'release date', 'release_date', 'published', 'publish date'] },
 	{ key: 'externalLink', labelKey: 'csv.fields.link',          coercion: 'string', autoDetect: ['link', 'externallink', 'external link', 'external_link', 'url'] },
 ];
 
-const BOOK_IMPORT_FIELDS: ReadingFieldDef[] = [
+const BOOK_IMPORT_FIELDS: CsvFieldDef[] = [
 	...COMMON_HEAD,
 	{ key: 'progressUnit',  labelKey: 'csv.fields.progressUnit',  coercion: 'string', autoDetect: ['progressunit', 'progress unit', 'unit'] },
 	{ key: 'pagesRead',     labelKey: 'csv.fields.pagesRead',     coercion: 'int', autoDetect: ['pagesread', 'pages read', 'read pages', 'page'] },
@@ -62,7 +53,7 @@ const BOOK_IMPORT_FIELDS: ReadingFieldDef[] = [
 	{ key: 'googleBooksId', labelKey: 'csv.fields.googleBooksId', coercion: 'string', autoDetect: ['googlebooksid', 'google books id', 'gbid', 'volumeid'] },
 ];
 
-const MANGA_IMPORT_FIELDS: ReadingFieldDef[] = [
+const MANGA_IMPORT_FIELDS: CsvFieldDef[] = [
 	...COMMON_HEAD,
 	{ key: 'chaptersRead',  labelKey: 'csv.fields.chaptersRead',  coercion: 'int', autoDetect: ['chaptersread', 'chapters read', 'read chapters'] },
 	{ key: 'totalChapters', labelKey: 'csv.fields.totalChapters', coercion: 'int', autoDetect: ['totalchapters', 'total chapters', 'chapters', 'chapter count'] },
@@ -74,7 +65,7 @@ const MANGA_IMPORT_FIELDS: ReadingFieldDef[] = [
 
 interface ReadingSchema {
 	exportColumns: readonly string[];
-	importFields: ReadingFieldDef[];
+	importFields: CsvFieldDef[];
 }
 
 function schemaFor(kind: ReadingCsvKind): ReadingSchema {
@@ -83,61 +74,20 @@ function schemaFor(kind: ReadingCsvKind): ReadingSchema {
 		: { exportColumns: MANGA_EXPORT_COLUMNS, importFields: MANGA_IMPORT_FIELDS };
 }
 
-function autoMap(fields: ReadingFieldDef[], headers: string[]): Record<string, string> {
-	const mapping: Record<string, string> = {};
-	for (const field of fields) {
-		const match = headers.find((h) => field.autoDetect.includes(h.toLowerCase()));
-		mapping[field.key] = match ?? '';
-	}
-	return mapping;
-}
 
 // Modal
 
 type ReadingEntry = Partial<Book & Manga>;
 
-export class ReadingCsvModal extends Modal {
-	private plugin: WatchLogPlugin;
-	private kind: ReadingCsvKind;
-	private mode: 'export' | 'import';
+export class ReadingCsvModal extends CsvModalBase<ReadingEntry> {
 	private schema: ReadingSchema;
 
 	private get kindLabel(): string {
 		return t(`csv.library.${this.kind}`);
 	}
 
-	private get itemNoun(): string {
-		return this.kind === 'book' ? 'book' : 'manga';
-	}
-
-	private selectedIds = new Set<string>();
-
-	private csvRows: string[][] = [];
-	private csvHeaders: string[] = [];
-	private columnMapping: Record<string, string> = {};
-	private importRows: { entry: ReadingEntry; isDuplicate: boolean; selected: boolean }[] = [];
-
-	private statusValueMap: Record<string, string> = {};  // csvValue → resolved status ('' = blank)
-	private ratingValueMap: Record<string, string> = {};  // csvValue → '1'–'5' or '' (blank)
-
-	private stepUpload: HTMLElement | null = null;
-	private stepMapping: HTMLElement | null = null;
-	private stepValueMap: HTMLElement | null = null;
-	private stepPreview: HTMLElement | null = null;
-	private importBtn: HTMLButtonElement | null = null;
-	private cancelBtn: HTMLButtonElement | null = null;
-
-	private isImporting = false;
-	private importCancelled = false;
-	private progressWrap: HTMLElement | null = null;
-	private progressBarFill: HTMLElement | null = null;
-	private progressText: HTMLElement | null = null;
-
-	constructor(app: App, plugin: WatchLogPlugin, kind: ReadingCsvKind, mode: 'export' | 'import') {
-		super(app);
-		this.plugin = plugin;
-		this.kind = kind;
-		this.mode = mode;
+	constructor(app: App, plugin: WatchLogPlugin, private kind: ReadingCsvKind, mode: 'export' | 'import') {
+		super(app, plugin, mode);
 		this.schema = schemaFor(kind);
 	}
 
@@ -147,469 +97,82 @@ export class ReadingCsvModal extends Modal {
 			: this.plugin.readingDataManager.getMangaList();
 	}
 
-	onOpen(): void {
-		const { contentEl } = this;
-		contentEl.empty();
-		contentEl.addClass('wl-csv-modal');
-		if (this.mode === 'export') this.renderExport(contentEl);
-		else this.renderImport(contentEl);
-	}
-
-	onClose(): void {
-		this.contentEl.empty();
-	}
-
 	// Export
 
-	private itemsToCsv(items: (Book | Manga)[]): string {
-		const cols = this.schema.exportColumns;
-		const header = cols.join(',');
-		const rows = items.map((it) =>
-			cols.map((col) => escapeCsvField((it as unknown as Record<string, string | number | null | undefined>)[col])).join(','),
-		);
-		return [header, ...rows].join('\n');
+	protected exportHeading(): string {
+		return t('csv.exportTitleKind', { library: this.kindLabel });
 	}
 
-	private renderExport(el: HTMLElement): void {
-		el.createEl('h2', { cls: 'wl-modal-title', text: t('csv.exportTitleKind', { library: this.kindLabel }) });
-
-		const items = this.getItems();
-		items.forEach((it) => this.selectedIds.add(it.id));
-
-		const ctrlRow = el.createDiv({ cls: 'wl-csv-ctrl-row' });
-		const selectAllBtn = ctrlRow.createEl('button', { cls: 'wl-btn', text: t('csv.selectAll') });
-		const selectNoneBtn = ctrlRow.createEl('button', { cls: 'wl-btn', text: t('csv.selectNone') });
-		const countEl = ctrlRow.createSpan({ cls: 'wl-csv-count', text: t('csv.selected', { count: items.length }) });
-
-		const listEl = el.createDiv({ cls: 'wl-csv-list' });
-		const checkboxes: HTMLInputElement[] = [];
-
-		const updateCount = (): void => {
-			countEl.textContent = t('csv.selected', { count: this.selectedIds.size });
-		};
-
-		for (const item of items) {
-			const row = listEl.createDiv({ cls: 'wl-csv-row' });
-			const cb = row.createEl('input', { attr: { type: 'checkbox' } });
-			cb.checked = true;
-			checkboxes.push(cb);
-			row.createSpan({ cls: 'wl-csv-row-title', text: item.title });
-			const meta = [item.author, readingStatusLabel(item.status)].filter(Boolean).join(' · ');
-			if (meta) row.createSpan({ cls: 'wl-csv-row-meta', text: meta });
-
-			cb.addEventListener('change', () => {
-				if (cb.checked) this.selectedIds.add(item.id);
-				else this.selectedIds.delete(item.id);
-				updateCount();
-			});
-		}
-
-		selectAllBtn.addEventListener('click', () => {
-			items.forEach((it) => this.selectedIds.add(it.id));
-			checkboxes.forEach((cb) => { cb.checked = true; });
-			updateCount();
-		});
-
-		selectNoneBtn.addEventListener('click', () => {
-			this.selectedIds.clear();
-			checkboxes.forEach((cb) => { cb.checked = false; });
-			updateCount();
-		});
-
-		const btnRow = el.createDiv({ cls: 'wl-modal-btn-row wl-csv-btn-row' });
-		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn', text: t('common.cancel') });
-		const exportBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('csv.exportButton') });
-
-		cancelBtn.addEventListener('click', () => this.close());
-		exportBtn.addEventListener('click', () => {
-			const toExport = items.filter((it) => this.selectedIds.has(it.id));
-			if (toExport.length === 0) {
-				new Notice(t(`csv.notice.noItemsSelected.${this.kind}`));
-				return;
-			}
-			const csv = this.itemsToCsv(toExport);
-			const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-			const url = URL.createObjectURL(blob);
-			const a = createEl('a');
-			const today = new Date();
-			const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-			a.href = url;
-			a.download = `watchlog-${this.itemNoun === 'book' ? 'books' : 'manga'}-export-${dateStr}.csv`;
-			a.click();
-			URL.revokeObjectURL(url);
-			new Notice(t(`csv.notice.exportedItems.${this.kind}`, { count: toExport.length }));
-			this.close();
-		});
+	protected exportRows(): CsvExportRow[] {
+		return this.getItems().map((item) => ({
+			id: item.id,
+			title: item.title,
+			meta: [item.author, readingStatusLabel(item.status)].filter(Boolean).join(' · '),
+		}));
 	}
 
-	// Import
-
-	private renderImport(el: HTMLElement): void {
-		el.createEl('h2', { cls: 'wl-modal-title', text: t('csv.importTitleKind', { library: this.kindLabel }) });
-
-		this.stepUpload = el.createDiv({ cls: 'wl-csv-step' });
-		const dropZone = this.stepUpload.createDiv({ cls: 'wl-csv-drop-zone' });
-		dropZone.createDiv({ cls: 'wl-csv-drop-label', text: t('csv.pickFile') });
-		const fileInput = dropZone.createEl('input', {
-			attr: { type: 'file', accept: '.csv' },
-			cls: 'wl-csv-file-input',
-		});
-
-		this.stepMapping = el.createDiv({ cls: 'wl-csv-step' });
-		this.stepMapping.hide();
-		this.stepValueMap = el.createDiv({ cls: 'wl-csv-step' });
-		this.stepValueMap.hide();
-		this.stepPreview = el.createDiv({ cls: 'wl-csv-step' });
-		this.stepPreview.hide();
-
-		const btnRow = el.createDiv({ cls: 'wl-modal-btn-row wl-csv-btn-row' });
-
-		this.progressWrap = btnRow.createDiv({ cls: 'wl-csv-progress-wrap' });
-		this.progressWrap.hide();
-		this.progressWrap.createSpan({ cls: 'wl-csv-bg-note', text: t('csv.bgNote') });
-		const progressTrack = this.progressWrap.createDiv({ cls: 'wl-csv-progress-track' });
-		this.progressBarFill = progressTrack.createDiv({ cls: 'wl-csv-progress-fill' });
-		this.progressText = this.progressWrap.createSpan({ cls: 'wl-csv-progress-text', text: '0 / 0' });
-
-		this.cancelBtn = btnRow.createEl('button', { cls: 'wl-btn', text: t('common.cancel') });
-		this.importBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('csv.importSelected') });
-		this.importBtn.disabled = true;
-		this.importBtn.hide();
-
-		this.cancelBtn.addEventListener('click', () => {
-			if (this.isImporting) {
-				this.importCancelled = true;
-				if (this.cancelBtn) {
-					this.cancelBtn.disabled = true;
-					this.cancelBtn.textContent = t('csv.cancelling');
-				}
-			} else {
-				this.close();
-			}
-		});
-		this.importBtn.addEventListener('click', () => void this.doImport());
-
-		fileInput.addEventListener('change', () => {
-			const file = fileInput.files?.[0];
-			if (!file) return;
-			const reader = new FileReader();
-			reader.onload = (ev) => {
-				const text = ev.target?.result as string;
-				this.csvRows = parseCSV(text);
-				this.csvHeaders = (this.csvRows[0] ?? []).map((h) => h.trim());
-				this.columnMapping = autoMap(this.schema.importFields, this.csvHeaders);
-				this.showMappingStep();
-			};
-			reader.readAsText(file);
-		});
+	protected exportSelection(ids: Set<string>): { csv: string; count: number } {
+		const toExport = this.getItems().filter((it) => ids.has(it.id));
+		const csv = rowsToCsv(this.schema.exportColumns, toExport, (it, col) =>
+			(it as unknown as Record<string, string | number | null | undefined>)[col]);
+		return { csv, count: toExport.length };
 	}
 
-	// Step: column mapping
-
-	private showMappingStep(): void {
-		if (!this.stepUpload || !this.stepMapping) return;
-		this.stepUpload.hide();
-		this.stepMapping.show();
-		this.renderMappingStep(this.stepMapping);
+	protected exportFilePrefix(): string {
+		return `watchlog-${this.kind === 'book' ? 'books' : 'manga'}`;
 	}
 
-	private renderMappingStep(el: HTMLElement): void {
-		el.empty();
-		el.createDiv({ cls: 'wl-csv-step-title', text: t('csv.map.title') });
-		el.createDiv({
-			cls: 'wl-csv-step-desc',
-			text: t('csv.map.descReading', { kind: t(`csv.kind.${this.kind}`) }),
-		});
-		el.createDiv({
-			cls: 'wl-csv-info-note',
-			text: t('csv.map.noteReading'),
-		});
-
-		const SKIP_VALUE = '';
-		const grid = el.createDiv({ cls: 'wl-csv-map-grid' });
-		const selectEls: Record<string, HTMLSelectElement> = {};
-
-		for (const field of this.schema.importFields) {
-			const row = grid.createDiv({ cls: 'wl-csv-map-row' });
-			row.createSpan({ cls: 'wl-csv-map-label', text: t(field.labelKey) });
-			const sel = row.createEl('select', { cls: 'wl-select wl-csv-map-select' });
-			selectEls[field.key] = sel;
-			sel.createEl('option', { value: SKIP_VALUE, text: t('csv.skip') });
-			for (const col of this.csvHeaders) {
-				sel.createEl('option', { value: col, text: col });
-			}
-			sel.value = this.columnMapping[field.key] ?? SKIP_VALUE;
-		}
-
-		const previewBtn = el.createEl('button', { cls: 'wl-btn wl-btn-primary wl-csv-preview-btn', text: t('csv.next') });
-		previewBtn.addEventListener('click', () => {
-			for (const field of this.schema.importFields) {
-				this.columnMapping[field.key] = selectEls[field.key]?.value ?? '';
-			}
-			this.importRows = this.applyMapping()
-				.map((r) => ({ ...r, selected: !r.isDuplicate }));
-
-			// unknown statuses and non-numeric ratings → the value-mapping step
-			const knownStatuses = new Set<string>(READING_STATUSES as string[]);
-			const unknownStatuses: string[] = [];
-			const unknownRatings: string[] = [];
-			const seenStatuses = new Set<string>();
-			const seenRatings = new Set<string>();
-
-			const headers = (this.csvRows[0] ?? []).map((h) => h.trim());
-			const ratingColName = this.columnMapping['rating'];
-			const ratingIdx = ratingColName ? headers.indexOf(ratingColName) : -1;
-
-			for (const r of this.importRows) {
-				const sv = (r.entry.status as string | undefined)?.trim();
-				if (sv && !knownStatuses.has(sv) && !seenStatuses.has(sv)) {
-					unknownStatuses.push(sv);
-					seenStatuses.add(sv);
-				}
-				if (ratingIdx >= 0) {
-					const lineIdx = this.importRows.indexOf(r);
-					const rawValues = this.csvRows[lineIdx + 1] ?? [];
-					const rawRating = (rawValues[ratingIdx] ?? '').trim();
-					if (rawRating && isNaN(parseFloat(rawRating)) && !seenRatings.has(rawRating)) {
-						unknownRatings.push(rawRating);
-						seenRatings.add(rawRating);
-					}
-				}
-			}
-
-			if (unknownStatuses.length > 0 || unknownRatings.length > 0) {
-				this.showValueMapStep(unknownStatuses, unknownRatings);
-			} else {
-				this.showPreviewStep();
-			}
-		});
+	protected noneSelectedNotice(): string {
+		return t(`csv.notice.noItemsSelected.${this.kind}`);
 	}
 
-	private applyMapping(): { entry: ReadingEntry; isDuplicate: boolean }[] {
-		if (this.csvRows.length < 2) return [];
-		const headers = (this.csvRows[0] ?? []).map((h) => h.trim());
-		const existing = this.getItems();
-
-		return this.csvRows.slice(1)
-			.filter((r) => r.some((c) => c.trim()))
-			.map((values): { entry: ReadingEntry; isDuplicate: boolean } | null => {
-				const get = (fieldKey: string): string => {
-					const colName = this.columnMapping[fieldKey];
-					if (!colName) return '';
-					const idx = headers.indexOf(colName);
-					return idx >= 0 ? (values[idx] ?? '').trim() : '';
-				};
-
-				const entry: ReadingEntry = {};
-				for (const field of this.schema.importFields) {
-					const raw = get(field.key);
-					if (!raw) continue;
-					switch (field.coercion) {
-						case 'string':
-							(entry as Record<string, unknown>)[field.key] = raw;
-							break;
-						case 'int':
-							(entry as Record<string, unknown>)[field.key] = parseInt(raw, 10) || 0;
-							break;
-						case 'rating': {
-							const v = parseFloat(raw) || 0;
-							entry.rating = Math.max(0, Math.min(5, v));
-							break;
-						}
-						case 'date': {
-							const d = parseCsvDate(raw);
-							if (d) (entry as Record<string, unknown>)[field.key] = d;
-							break;
-						}
-					}
-				}
-
-				if (!entry.title || !entry.title.trim()) return null;
-
-				const isDuplicate = !!existing.find(
-					(it) => it.title.toLowerCase() === (entry.title ?? '').toLowerCase(),
-				);
-				return { entry, isDuplicate };
-			})
-			.filter((r): r is { entry: ReadingEntry; isDuplicate: boolean } => r !== null);
+	protected exportedNotice(count: number): string {
+		return t(`csv.notice.exportedItems.${this.kind}`, { count });
 	}
 
-	// Step: value mapping
+	// Import schema
 
-	private showValueMapStep(unknownStatuses: string[], unknownRatings: string[]): void {
-		if (!this.stepMapping || !this.stepValueMap) return;
-		this.stepMapping.hide();
-		this.stepValueMap.show();
-		this.renderValueMapStep(this.stepValueMap, unknownStatuses, unknownRatings);
+	protected importHeading(): string {
+		return t('csv.importTitleKind', { library: this.kindLabel });
 	}
 
-	private renderValueMapStep(el: HTMLElement, unknownStatuses: string[], unknownRatings: string[]): void {
-		el.empty();
-		el.createDiv({ cls: 'wl-csv-step-title', text: t('csv.values.title') });
-		el.createDiv({
-			cls: 'wl-csv-step-desc',
-			text: t('csv.values.descReading'),
-		});
-
-		// reading statuses are a fixed set — no "create new status" option, unlike watch types
-		const statusSelects: Record<string, HTMLSelectElement> = {};
-		const ratingSelects: Record<string, HTMLSelectElement> = {};
-
-		if (unknownStatuses.length > 0) {
-			el.createDiv({ cls: 'wl-csv-valmap-section-title', text: t('csv.fields.status') });
-			for (const sv of unknownStatuses) {
-				const row = el.createDiv({ cls: 'wl-csv-valmap-row' });
-				row.createSpan({ cls: 'wl-csv-valmap-orig', text: `"${sv}"` });
-				row.createSpan({ cls: 'wl-csv-valmap-arrow', text: '→' });
-				const sel = row.createEl('select', { cls: 'wl-select wl-csv-valmap-select' });
-				statusSelects[sv] = sel;
-				sel.createEl('option', { value: '', text: t('csv.leaveBlank') });
-				for (const name of SELECTABLE_READING_STATUSES) {
-					sel.createEl('option', { value: name, text: readingStatusLabel(name) });
-				}
-				const lc = sv.toLowerCase();
-				const match = SELECTABLE_READING_STATUSES.find((s) => s.toLowerCase() === lc);
-				if (match) sel.value = match;
-			}
-		}
-
-		if (unknownRatings.length > 0) {
-			el.createDiv({ cls: 'wl-csv-valmap-section-title', text: t('csv.fields.rating') });
-			for (const rv of unknownRatings) {
-				const row = el.createDiv({ cls: 'wl-csv-valmap-row' });
-				row.createSpan({ cls: 'wl-csv-valmap-orig', text: `"${rv}"` });
-				row.createSpan({ cls: 'wl-csv-valmap-arrow', text: '→' });
-				const sel = row.createEl('select', { cls: 'wl-select wl-csv-valmap-select' });
-				ratingSelects[rv] = sel;
-				sel.createEl('option', { value: '', text: t('csv.leaveBlank') });
-				for (let i = 1; i <= 5; i++) {
-					sel.createEl('option', { value: String(i), text: `${i}/5` });
-				}
-			}
-		}
-
-		const btnRow = el.createDiv({ cls: 'wl-csv-valmap-btn-row' });
-		const backBtn = btnRow.createEl('button', { cls: 'wl-btn', text: t('csv.back') });
-		const confirmBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('csv.preview') });
-
-		backBtn.addEventListener('click', () => {
-			if (!this.stepValueMap || !this.stepMapping) return;
-			this.stepValueMap.hide();
-			this.stepMapping.show();
-		});
-
-		confirmBtn.addEventListener('click', () => {
-			this.statusValueMap = {};
-			for (const sv of unknownStatuses) this.statusValueMap[sv] = statusSelects[sv]?.value ?? '';
-			this.ratingValueMap = {};
-			for (const rv of unknownRatings) this.ratingValueMap[rv] = ratingSelects[rv]?.value ?? '';
-			this.applyValueMapsToRows();
-			this.showPreviewStep();
-		});
+	protected importFields(): readonly CsvFieldDef[] {
+		return this.schema.importFields;
 	}
 
-	private applyValueMapsToRows(): void {
-		const headers = (this.csvRows[0] ?? []).map((h) => h.trim());
-		const ratingColName = this.columnMapping['rating'];
-		const ratingIdx = ratingColName ? headers.indexOf(ratingColName) : -1;
-
-		for (const r of this.importRows) {
-			const sv = (r.entry.status as string | undefined)?.trim() ?? '';
-			if (sv && Object.prototype.hasOwnProperty.call(this.statusValueMap, sv)) {
-				const resolved = this.statusValueMap[sv] ?? '';
-				r.entry.status = (resolved || undefined) as ReadingStatus | undefined;
-			}
-
-			if (ratingIdx >= 0) {
-				const rowIdx = this.importRows.indexOf(r);
-				const rawValues = this.csvRows[rowIdx + 1] ?? [];
-				const rawRating = (rawValues[ratingIdx] ?? '').trim();
-				if (rawRating && Object.prototype.hasOwnProperty.call(this.ratingValueMap, rawRating)) {
-					const resolved = this.ratingValueMap[rawRating] ?? '';
-					r.entry.rating = resolved ? parseInt(resolved, 10) : 0;
-				}
-			}
-		}
+	protected mapDescription(): string {
+		return t('csv.map.descReading', { kind: t(`csv.kind.${this.kind}`) });
 	}
 
-	// Step: preview
-
-	private showPreviewStep(): void {
-		if (!this.stepValueMap || !this.stepMapping || !this.stepPreview || !this.importBtn) return;
-		this.stepValueMap.hide();
-		this.stepMapping.hide();
-		this.stepPreview.show();
-		this.importBtn.show();
-		this.importBtn.disabled = this.importRows.filter((r) => r.selected).length === 0;
-		this.renderPreviewStep(this.stepPreview);
+	protected mapNote(): string {
+		return t('csv.map.noteReading');
 	}
 
-	private renderPreviewStep(el: HTMLElement): void {
-		el.empty();
+	protected valuesDescription(): string {
+		return t('csv.values.descReading');
+	}
 
-		const dupeCount = this.importRows.filter((r) => r.isDuplicate).length;
-		if (dupeCount > 0) {
-			el.createDiv({
-				cls: 'wl-csv-dupe-warning',
-				text: t('csv.duplicates', { count: dupeCount }),
-			});
-		}
+	protected existingTitles(): { title: string }[] {
+		return this.getItems();
+	}
 
-		const ctrlRow = el.createDiv({ cls: 'wl-csv-ctrl-row' });
-		const backBtn = ctrlRow.createEl('button', { cls: 'wl-btn', text: t('csv.back') });
-		const selectAllBtn = ctrlRow.createEl('button', { cls: 'wl-btn', text: t('csv.selectAll') });
-		const selectNoneBtn = ctrlRow.createEl('button', { cls: 'wl-btn', text: t('csv.selectNone') });
-		const countEl = ctrlRow.createSpan({ cls: 'wl-csv-count', text: '' });
+	protected buildEntry(get: (fieldKey: string) => string): ReadingEntry | null {
+		const entry = this.coerceFields(get) as ReadingEntry;
+		return entry.title && entry.title.trim() ? entry : null;
+	}
 
-		backBtn.addEventListener('click', () => {
-			if (!this.stepPreview || !this.stepValueMap || !this.stepMapping || !this.importBtn) return;
-			this.stepPreview.hide();
-			this.importBtn.hide();
-			this.importBtn.disabled = true;
-			const hadValueMap = Object.keys(this.statusValueMap).length > 0 || Object.keys(this.ratingValueMap).length > 0;
-			if (hadValueMap) this.stepValueMap.show();
-			else this.stepMapping.show();
-		});
+	protected previewMeta(entry: ReadingEntry): string {
+		return [entry.author, entry.status ? readingStatusLabel(entry.status) : ''].filter(Boolean).join(' · ');
+	}
 
-		const listEl = el.createDiv({ cls: 'wl-csv-list' });
-		const checkboxes: HTMLInputElement[] = [];
+	// Value mapping: reading statuses are a fixed set, with no "create new" option as for watch types
 
-		const updateCount = (): void => {
-			const sel = this.importRows.filter((r) => r.selected).length;
-			countEl.textContent = t('csv.selectedOf', { selected: sel, total: this.importRows.length });
-			if (this.importBtn) this.importBtn.disabled = sel === 0;
-		};
+	protected isKnownStatus(status: string): boolean {
+		return (READING_STATUSES as string[]).includes(status);
+	}
 
-		for (let i = 0; i < this.importRows.length; i++) {
-			const r = this.importRows[i]!;
-			const row = listEl.createDiv({ cls: `wl-csv-row${r.isDuplicate ? ' wl-csv-row-dupe' : ''}` });
-			const cb = row.createEl('input', { attr: { type: 'checkbox' } });
-			cb.checked = r.selected;
-			checkboxes.push(cb);
-			row.createSpan({ cls: 'wl-csv-row-title', text: r.entry.title ?? t('csv.noTitle') });
-			const metaParts = [r.entry.author, r.entry.status ? readingStatusLabel(r.entry.status) : ''].filter(Boolean).join(' · ');
-			if (metaParts) row.createSpan({ cls: 'wl-csv-row-meta', text: metaParts });
-			if (r.isDuplicate) row.createSpan({ cls: 'wl-csv-dupe-badge', text: t('csv.duplicate') });
-			const idx = i;
-			cb.addEventListener('change', () => {
-				this.importRows[idx]!.selected = cb.checked;
-				updateCount();
-			});
-		}
-
-		selectAllBtn.addEventListener('click', () => {
-			this.importRows.forEach((r) => { r.selected = true; });
-			checkboxes.forEach((cb) => { cb.checked = true; });
-			updateCount();
-		});
-
-		selectNoneBtn.addEventListener('click', () => {
-			this.importRows.forEach((r) => { r.selected = false; });
-			checkboxes.forEach((cb) => { cb.checked = false; });
-			updateCount();
-		});
-
-		updateCount();
+	protected statusChoices(): CsvSelectOption[] {
+		return SELECTABLE_READING_STATUSES.map((name) => ({ value: name, label: readingStatusLabel(name) }));
 	}
 
 	// Import
@@ -674,70 +237,36 @@ export class ReadingCsvModal extends Modal {
 		};
 	}
 
-	private async doImport(): Promise<void> {
-		const toImport = this.importRows.filter((r) => r.selected && r.entry.title?.trim());
-		if (toImport.length === 0) {
-			new Notice(t(`csv.notice.noItemsToImport.${this.kind}`));
-			return;
-		}
+	protected async doImport(): Promise<void> {
+		const toImport = this.rowsToImport(t(`csv.notice.noItemsToImport.${this.kind}`));
+		if (!toImport) return;
 
-		this.isImporting = true;
-		this.importCancelled = false;
-		if (this.importBtn) this.importBtn.disabled = true;
-		if (this.cancelBtn) this.cancelBtn.textContent = t('csv.cancelImport');
-		if (this.progressWrap) this.progressWrap.show();
-		if (this.progressText) this.progressText.textContent = `0 / ${toImport.length}`;
-		if (this.progressBarFill) this.progressBarFill.style.width = `0%`;
+		this.startImportUi(toImport.length);
 
 		const reading = this.plugin.readingDataManager;
 		const defaultStatus: ReadingStatus = reading.getSettings().defaultStatus ?? 'Plan to Read';
 
-		const CHUNK_SIZE = 10;
 		let added = 0;
-
 		try {
-			for (let chunkStart = 0; chunkStart < toImport.length; chunkStart += CHUNK_SIZE) {
-				if (this.importCancelled) break;
-				const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, toImport.length);
-
-				if (this.kind === 'book') {
-					const chunk: Book[] = [];
-					for (let i = chunkStart; i < chunkEnd; i++) {
-						if (this.importCancelled) break;
-						chunk.push(this.buildBook(toImport[i]!.entry, defaultStatus));
-					}
-					if (chunk.length === 0) break;
-					await reading.addBookBatch(chunk);
-					added += chunk.length;
-				} else {
-					const chunk: Manga[] = [];
-					for (let i = chunkStart; i < chunkEnd; i++) {
-						if (this.importCancelled) break;
-						chunk.push(this.buildManga(toImport[i]!.entry, defaultStatus));
-					}
-					if (chunk.length === 0) break;
-					await reading.addMangaBatch(chunk);
-					added += chunk.length;
-				}
-
-				const pct = Math.round((added / toImport.length) * 100);
-				if (this.progressBarFill) this.progressBarFill.style.width = `${pct}%`;
-				if (this.progressText) this.progressText.textContent = `${added} / ${toImport.length}`;
-			}
+			added = this.kind === 'book'
+				? await this.importInChunks(
+					toImport,
+					(r) => this.buildBook(r.entry, defaultStatus),
+					(chunk) => reading.addBookBatch(chunk),
+				)
+				: await this.importInChunks(
+					toImport,
+					(r) => this.buildManga(r.entry, defaultStatus),
+					(chunk) => reading.addMangaBatch(chunk),
+				);
 		} finally {
 			this.isImporting = false;
 			reading.notifyChange();
 		}
 
-		if (this.importCancelled) {
-			if (this.progressText) this.progressText.textContent = t('csv.cancelled', { done: added, total: toImport.length });
-			if (this.cancelBtn) { this.cancelBtn.disabled = false; this.cancelBtn.textContent = t('common.close'); }
-			new Notice(t(`csv.notice.importCancelledItems.${this.kind}`, { count: added }));
-		} else {
-			if (this.progressText) this.progressText.textContent = t('csv.done', { count: added });
-			if (this.cancelBtn) { this.cancelBtn.disabled = false; this.cancelBtn.textContent = t('common.close'); }
-			new Notice(t(`csv.notice.importedItems.${this.kind}`, { count: added }));
-			this.close();
-		}
+		this.finishImportUi(added, toImport.length, {
+			cancelled: t(`csv.notice.importCancelledItems.${this.kind}`, { count: added }),
+			done: t(`csv.notice.importedItems.${this.kind}`, { count: added }),
+		});
 	}
 }
