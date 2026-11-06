@@ -1,13 +1,13 @@
 import { App, Modal, Notice } from 'obsidian';
 import { t, type TranslationKey } from './i18n';
-import { statusLabel, typeLabel } from './i18n/labels';
+import { gameStatusLabel, readingStatusLabel, statusLabel, typeLabel } from './i18n/labels';
 import { monthName } from './ui/dateNames';
 import { scheduleText } from './ui/scheduleText';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { ReadingDataManager } from './ReadingDataManager';
 import type { GameDataManager } from './GameDataManager';
-import type { WatchLogTitle, AirtimeEntry, AirtimeSchedule, MaybeTitle, Book, Manga, Game } from './types';
+import type { WatchLogTitle, AirtimeEntry, AirtimeSchedule, MaybeTitle, Book, Manga, Game, ReadingStatus } from './types';
 import { getThemedColor, getReadingTypeColor, getDisplayPoster, isReleaseDateFuture, formatDateDisplay, todayIso, toIsoDate, GAME_AUTO_STATUS } from './types';
 import {
 	type ScheduleFormState,
@@ -210,9 +210,16 @@ function tickTooltip(r: ResolvedUpcoming, isFinalEpisode: boolean): string {
 	return t(chapter ? 'airtime.actions.markChapter' : 'airtime.actions.markEpisode');
 }
 
+/** The plan status a single-release tick reverts to, in the UI language of its library. */
+function planStatusLabel(r: ResolvedUpcoming): string {
+	if (r.unit === 'release') return gameStatusLabel(r.planStatus);
+	if (r.unit === 'chapter') return readingStatusLabel(r.planStatus as ReadingStatus);
+	return statusLabel(r.planStatus);
+}
+
 /** Confirm text of a tick: single release, final unit, an out unit being tracked, or the next unit. */
 function tickConfirmMessage(r: ResolvedUpcoming, current: number | undefined, isFinal: boolean, tracked: boolean): string {
-	if (r.isSingle) return t('airtime.confirm.released', { title: r.title, status: statusLabel(r.planStatus) });
+	if (r.isSingle) return t('airtime.confirm.released', { title: r.title, status: planStatusLabel(r) });
 	const unit = r.unit === 'chapter' ? 'chapter' : 'episode';
 	const kind = isFinal ? 'final' : tracked ? 'out' : 'next';
 	return t(`airtime.confirm.${unit}.${kind}` as TranslationKey, { title: r.title, n: current ?? '' });
