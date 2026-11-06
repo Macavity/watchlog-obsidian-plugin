@@ -57,7 +57,7 @@ const settings = {
 		},
 		size: {
 			label: 'Kartengröße',
-			help: 'Minimale Posterbreite für jedes Raster und Regal (die Karten dehnen sich etwas, um jede Zeile zu füllen). Desktop und Smartphones/Tablets sind unabhängig, beide werden wie jede andere Einstellung synchronisiert.',
+			help: 'Minimale Posterbreite für jedes Raster und Reihe (die Karten dehnen sich etwas, um jede Zeile zu füllen). Desktop und Smartphones/Tablets sind unabhängig, beide werden wie jede andere Einstellung synchronisiert.',
 		},
 		desktop: 'Desktop',
 		mobile: 'Mobil',
@@ -98,7 +98,7 @@ const settings = {
 		},
 		rewrite: {
 			name: 'Alle Notiz-Eigenschaften neu schreiben',
-			desc: 'Schreibt die YAML-Eigenschaften jeder vorhandenen Watchlist- und Lese-Notiz neu und übernimmt neuere Felder in ältere Notizen. Der Inhalt (## Notes / ## Quotes) bleibt erhalten. Notizen ohne Datei werden übersprungen; lege sie mit „Neu erzeugen“ an.',
+			desc: 'Schreibt die YAML-Eigenschaften jeder vorhandenen Watchlist- und Lese-Notiz neu und übernimmt neuere Felder in ältere Notizen. Der Inhalt (## Notes / ## Quotes) bleibt erhalten. Notizen ohne Datei werden übersprungen; lege sie mit "Neu erzeugen" an.',
 			button: 'Eigenschaften neu schreiben',
 			confirm: 'Das schreibt die YAML-Eigenschaften aller vorhandenen Notizen für {titles} Titel und {reading} Leseeinträge neu. Der Inhalt bleibt erhalten; Notizen ohne Datei werden übersprungen. Fortfahren?',
 			none: 'Keine Notizen zum Neuschreiben.',
@@ -122,7 +122,7 @@ const settings = {
 		},
 		statusBar: {
 			name: 'Demnächst-Zähler in der Statusleiste anzeigen',
-			desc: 'Zeigt einen „N fällig“-Zähler in der Statusleiste, wenn Einträge aus Demnächst fällig sind. Ein Klick öffnet den Tab Demnächst. (Nur Desktop.)',
+			desc: 'Zeigt einen "N fällig"-Zähler in der Statusleiste, wenn Einträge aus Demnächst fällig sind. Ein Klick öffnet den Tab Demnächst. (Nur Desktop.)',
 		},
 	},
 	tags: {
@@ -133,8 +133,8 @@ const settings = {
 		platform: 'Plattform',
 		namePlaceholder: 'Name',
 		add: '+ hinzufügen',
-		exists: '„{name}“ existiert bereits.',
-		removed: '„{name}“ entfernt.',
+		exists: '"{name}" existiert bereits.',
+		removed: '"{name}" entfernt.',
 		rename: '{name} umbenennen',
 		infoStatusLocked: 'Statusnamen sind gesperrt. Nur die Farbe kann geändert werden.',
 		infoTypes: 'Eingebaute Typen sind gesperrt. Eigene Typen können hinzugefügt und entfernt werden.',
@@ -172,7 +172,7 @@ const settings = {
 		},
 		rating: {
 			label: 'Bewertungssystem',
-			help: 'Farbe und Text jeder Sternebewertung in Watchlist, Lesen und Spiele. Ein ganzer Stern teilt sich eine Stufe mit dem halben Schritt darunter; z. B. gehören 2,5★ und 3★ beide zu „Good“.',
+			help: 'Farbe und Text jeder Sternebewertung in Watchlist, Lesen und Spiele. Ein ganzer Stern teilt sich eine Stufe mit dem halben Schritt darunter; z. B. gehören 2,5★ und 3★ beide zu "Good".',
 			labelAria: 'Beschriftung für {tier}-Sterne-Bewertung',
 		},
 		season: {
@@ -184,17 +184,17 @@ const settings = {
 	},
 	watchlist: {
 		main: {
-			sub: 'Episodennummerierung, Standardwerte beim Hinzufügen und Badge-Stil',
+			sub: 'Folgennummerierung, Standardwerte beim Hinzufügen und Badge-Stil',
 		},
 		numbering: {
-			name: 'Episodennummerierung',
-			desc: 'Absolut: Episoden werden über alle Staffeln von 1 bis n durchnummeriert. Pro Staffel: Jede Staffel beginnt wieder bei 1 (nur Anzeige, die Daten bleiben unverändert).',
+			name: 'Folgennummerierung',
+			desc: 'Absolut: Folgen werden über alle Staffeln von 1 bis n durchnummeriert. Pro Staffel: Jede Staffel beginnt wieder bei 1 (nur Anzeige, die Daten bleiben unverändert).',
 			absolute: 'Absolut',
 			perSeason: 'Pro Staffel',
 		},
 		defaultType: {
 			name: 'Standardtyp für neue Titel',
-			desc: 'Typ, der beim Hinzufügen eines Titels vorausgewählt ist. „Zuletzt verwendeter Typ“ folgt dem, was du zuletzt hinzugefügt hast.',
+			desc: 'Typ, der beim Hinzufügen eines Titels vorausgewählt ist. "Zuletzt verwendeter Typ" folgt dem, was du zuletzt hinzugefügt hast.',
 			last: '* Zuletzt verwendeter Typ',
 		},
 		topCredits: {
@@ -203,7 +203,7 @@ const settings = {
 		},
 		autoComplete: {
 			name: 'Bei letzter Episode automatisch abschließen',
-			desc: 'Setzt den Status auf „Abgeschlossen“, sobald alle Episoden gesehen sind.',
+			desc: 'Setzt den Status auf "Abgeschlossen", sobald alle Episoden gesehen sind.',
 		},
 		coloredBadges: {
 			name: 'Farbige Typ-Badges',
@@ -220,7 +220,7 @@ const settings = {
 		},
 		defaultStatus: {
 			name: 'Standardstatus für neue Einträge',
-			desc: 'Status, der im Dialog „Buch hinzufügen“ / „Manga hinzufügen“ vorausgewählt ist.',
+			desc: 'Status, der im Dialog "Buch hinzufügen" / "Manga hinzufügen" vorausgewählt ist.',
 		},
 		subTab: {
 			name: 'Standard-Unter-Tab',
@@ -232,13 +232,13 @@ const settings = {
 	steam: {
 		missing: 'Schlüssel oder Steam-ID fehlt',
 		badKey: 'Fehlgeschlagen; prüfe deinen API-Schlüssel',
-		private: 'Profil ist privat; stelle „Spieldetails“ auf „Öffentlich“',
+		private: 'Profil ist privat; stelle "Spieldetails" auf "Öffentlich"',
 		empty: 'Keine Spiele auf diesem Konto',
 		unreachable: 'Steam nicht erreichbar',
 		note: 'Synchronisiert Spielzeit und Erfolge aus deiner eigenen Bibliothek',
 		badge: 'Begleiter',
 		link: 'Web-API-Schlüssel holen',
-		help: 'Steam hat keinen Such-Endpunkt und ersetzt die API oben daher nie; es läuft parallel dazu. Die Datenschutzeinstellung „Spieldetails“ deines Steam-Profils muss auf „Öffentlich“ stehen, sonst liefert Steam selbst für deinen eigenen Schlüssel eine leere Bibliothek.',
+		help: 'Steam hat keinen Such-Endpunkt und ersetzt die API oben daher nie; es läuft parallel dazu. Die Datenschutzeinstellung "Spieldetails" deines Steam-Profils muss auf "Öffentlich" stehen, sonst liefert Steam selbst für deinen eigenen Schlüssel eine leere Bibliothek.',
 		apiKey: 'Web-API-Schlüssel',
 		apiKeyPlaceholder: 'Steam-Web-API-Schlüssel hier einfügen',
 		idField: 'Steam-ID oder Profil-URL',
@@ -278,7 +278,7 @@ const settings = {
 		movies: {
 			title: 'Filme & Serien',
 			sub: 'Watchlist-Metadaten, Poster, Besetzung und Bewertungen',
-			note: 'Fehlt ein Name? Mit dem + in der Zeile „Director“ oder „Cast“ eines Titels kannst du eigene hinzufügen. Manuelle Einträge sind unbegrenzt, stehen hinter den abgerufenen Namen und werden weder durch eine Aktualisierung noch durch einen API-Wechsel überschrieben.',
+			note: 'Fehlt ein Name? Mit dem + in der Zeile "Director" oder "Cast" eines Titels kannst du eigene hinzufügen. Manuelle Einträge sind unbegrenzt, stehen hinter den abgerufenen Namen und werden weder durch eine Aktualisierung noch durch einen API-Wechsel überschrieben.',
 		},
 		omdb: {
 			note: 'Bis zu 4 Darsteller und der Regisseur',
@@ -287,7 +287,7 @@ const settings = {
 		},
 		tmdb: {
 			note: 'Bis zu 10 Darsteller (Reihenfolge der Nennung) und alle genannten Regisseure',
-			help: 'TMDB wird über den „API Read Access Token“ genutzt (der lange v4-Bearer-Token), nicht über den kürzeren v3-API-Schlüssel.',
+			help: 'TMDB wird über den "API Read Access Token" genutzt (der lange v4-Bearer-Token), nicht über den kürzeren v3-API-Schlüssel.',
 			field: 'API-Lesezugriffstoken',
 			placeholder: 'TMDB-Token hier einfügen',
 		},
@@ -316,7 +316,7 @@ const settings = {
 			sub: 'Suche im Tab Lesen, Autoren und Cover',
 			google: {
 				note: 'Buchsuche, Autoren, Seitenzahlen und Cover',
-				help: 'Erstelle ein Projekt in der Google Cloud Console, aktiviere die Books API und erstelle dann unter „APIs & Services → Credentials“ einen API-Schlüssel. Ohne ihn funktioniert die Buchsuche nicht.',
+				help: 'Erstelle ein Projekt in der Google Cloud Console, aktiviere die Books API und erstelle dann unter "APIs & Services → Credentials" einen API-Schlüssel. Ohne ihn funktioniert die Buchsuche nicht.',
 				placeholder: 'Google-Books-Schlüssel hier einfügen',
 				noKey: 'Kein Schlüssel; Buchsuche ist aus',
 			},
@@ -433,8 +433,8 @@ const settings = {
 		},
 		after: {
 			name: 'Nach dem Hinzufügen eines Titels',
-			desc: 'Was mit einem Entwurf passiert, sobald du auf „Hinzufügen“ klickst und bestätigst.',
-			keep: 'Als „Hinzugefügt“ behalten',
+			desc: 'Was mit einem Entwurf passiert, sobald du auf "Hinzufügen" klickst und bestätigst.',
+			keep: 'Als "Hinzugefügt" behalten',
 		},
 	},
 	lists: {
@@ -455,16 +455,16 @@ const settings = {
 		},
 	},
 	widgets: {
-		intro: 'Füge Widgets mit dem Befehl „{command}“ in Notizen ein. Das Tastenkürzel legst du in den Obsidian-Einstellungen unter „Tastenkürzel“ fest.',
+		intro: 'Füge Widgets mit dem Befehl "{command}" in Notizen ein. Das Tastenkürzel legst du in den Obsidian-Einstellungen unter "Tastenkürzel" fest.',
 		copy: 'Kopieren',
 		copied: 'Kopiert!',
-		todo: 'Verfolgt einen bestimmten Titel inline; zeigt Typ, Status, Fortschritt und ein Kontrollkästchen „nächste Episode“.',
+		todo: 'Verfolgt einen bestimmten Titel inline; zeigt Typ, Status, Fortschritt und ein Kontrollkästchen "nächste Episode".',
 		todoFull: 'Verfolgt einen bestimmten Titel inline (volle Karte).',
 		statCompleted: 'Anzahl abgeschlossener Titel, kompakte Inline-Statistikkarte.',
-		statTime: 'Geschaute und verbleibende Zeit kombiniert (mini).',
+		statTime: 'Gesehene und verbleibende Zeit kombiniert (mini).',
 		upcomingNext: 'Nächster anstehender Titel mit Name, Typ-Badge, Erscheinungsdatum und Countdown.',
 		nowWatching: 'Aktuell angepinnter Titel mit Name, Typ-Badge und Fortschrittsbalken.',
-		statTimeCompletedFull: 'Dreifachkarte in voller Breite: Geschaute Zeit · Verbleibende Zeit · Abgeschlossen.',
+		statTimeCompletedFull: 'Dreifachkarte in voller Breite: Gesehene Zeit · Verbleibende Zeit · Abgeschlossen.',
 		nowNext: 'Doppelkarte in voller Breite: Schaue gerade · Als Nächstes.',
 	},
 	quickInfo: {
@@ -472,19 +472,19 @@ const settings = {
 			title: 'Dashboard',
 			note: {
 				heading: 'Hinweis',
-				body: 'Die Status „Noch nicht erschienen“ und „Abgebrochen“ (verbleibende Zeit) fließen in keine Berechnung ein, nur „Schaue“, „Abgeschlossen“ und „Abgebrochen“ (geschaute Zeit).',
+				body: 'Die Status "Noch nicht erschienen" und "Abgebrochen" (verbleibende Zeit) fließen in keine Berechnung ein, nur "Schaue", "Abgeschlossen" und "Abgebrochen" (gesehene Zeit).',
 			},
 			watched: {
-				heading: 'Geschaute Zeit',
-				body: 'Berechnet als: gesehene Episoden × Episodendauer, summiert über alle Titel mit Status „Schaue“ und „Abgeschlossen“.',
+				heading: 'Gesehene Zeit',
+				body: 'Berechnet als: gesehene Episoden × Episodendauer, summiert über alle Titel mit Status "Schaue" und "Abgeschlossen".',
 			},
 			remaining: {
 				heading: 'Verbleibende Zeit',
-				body: 'Berechnet als: verbleibende Episoden × Episodendauer, summiert über alle Titel mit Status „Schaue“ und „Geplant“.',
+				body: 'Berechnet als: verbleibende Episoden × Episodendauer, summiert über alle Titel mit Status "Schaue" und "Geplant".',
 			},
 			dropped: {
 				heading: 'Abgebrochen',
-				body: 'Berechnet als: gesehene Episoden × Episodendauer, summiert über alle Titel mit Status „Abgebrochen“.',
+				body: 'Berechnet als: gesehene Episoden × Episodendauer, summiert über alle Titel mit Status "Abgebrochen".',
 			},
 		},
 		watchlist: {
@@ -498,18 +498,18 @@ const settings = {
 			},
 			pin: {
 				heading: 'Oben anpinnen',
-				body: 'Ein angepinnter Titel steht unabhängig von der Sortierung ganz oben in deiner Watchlist. Angepinnte Titel erscheinen auch im Widget „Now Watching“, sodass du in deinen Notizen oder auf der Homepage schnell siehst, was du gerade schaust.',
+				body: 'Ein angepinnter Titel steht unabhängig von der Sortierung ganz oben in deiner Watchlist. Angepinnte Titel erscheinen auch im Widget "Now Watching", sodass du in deinen Notizen oder auf der Homepage schnell siehst, was du gerade schaust.',
 			},
 			season: {
 				heading: 'So fügst du eine neue Staffel hinzu',
-				body: 'Öffne den Titel und klicke unten auf „Bearbeiten“. Scrolle im Dialog zum Feld „Seasons“ und füge eine neue Zeile im Format „Staffelname: N“ hinzu (z. B. „Season 3: 10“ oder „Season name: 10“).',
+				body: 'Öffne den Titel und klicke unten auf "Bearbeiten". Scrolle im Dialog zum Feld "Seasons" und füge eine neue Zeile im Format "Staffelname: N" hinzu (z. B. "Season 3: 10" oder "Season name: 10").',
 			},
 		},
 		api: {
 			title: 'API & Suche',
 			which: {
 				heading: 'Welche API wofür genutzt wird',
-				body: 'WatchLog nutzt je Inhaltstyp eine andere API:\n• Anime: Jikan (MyAnimeList-Daten) oder AniList, je nachdem, was du unter Einstellungen → API → Anime festlegst. Für beide ist kein Schlüssel nötig.\n• Filme & Serien: OMDb oder TMDB, je nachdem, was unter Einstellungen → API aktiv ist. Beide brauchen einen kostenlosen Schlüssel bzw. Token.\n• Bücher (Lesen): Google Books. Ein kostenloser API-Schlüssel ist nötig; trage ihn unter Einstellungen → API → Bücher ein.\n• Spiele: RAWG oder IGDB, je nachdem, was du unter Einstellungen → API → Spiele festlegst. RAWG braucht einen kostenlosen Schlüssel; IGDB braucht Twitch-Client-ID und -Secret.\n• Manga (Lesen): Jikan (MyAnimeList-Daten). Kein Schlüssel nötig.\n\nDie Wahl der Anime-API betrifft nur neue Titel; bestehende Titel behalten die Quelle, mit der sie hinzugefügt wurden.\n\nWähle vor der Suche den richtigen Typ. Ist Anime gewählt und du suchst nach einem Film oder einer Serie (oder umgekehrt), wird er höchstwahrscheinlich nicht gefunden, weil jeder Typ seine eigene API abfragt. APIs sind eine Erleichterung, keine Pflicht; du kannst einen Titel immer auch manuell hinzufügen. Auch die Schaltfläche „Add from URL“ nutzt eine API.',
+				body: 'WatchLog nutzt je Inhaltstyp eine andere API:\n• Anime: Jikan (MyAnimeList-Daten) oder AniList, je nachdem, was du unter Einstellungen → API → Anime festlegst. Für beide ist kein Schlüssel nötig.\n• Filme & Serien: OMDb oder TMDB, je nachdem, was unter Einstellungen → API aktiv ist. Beide brauchen einen kostenlosen Schlüssel bzw. Token.\n• Bücher (Lesen): Google Books. Ein kostenloser API-Schlüssel ist nötig; trage ihn unter Einstellungen → API → Bücher & Manga ein.\n• Spiele: RAWG oder IGDB, je nachdem, was du unter Einstellungen → API → Spiele festlegst. RAWG braucht einen kostenlosen Schlüssel; IGDB braucht Twitch-Client-ID und -Secret.\n• Manga (Lesen): Jikan (MyAnimeList-Daten). Kein Schlüssel nötig.\n\nDie Wahl der Anime-API betrifft nur neue Titel; bestehende Titel behalten die Quelle, mit der sie hinzugefügt wurden.\n\nWähle vor der Suche den richtigen Typ. Ist Anime gewählt und du suchst nach einem Film oder einer Serie (oder umgekehrt), wird er höchstwahrscheinlich nicht gefunden, weil jeder Typ seine eigene API abfragt. APIs sind eine Erleichterung, keine Pflicht; du kannst einen Titel immer auch manuell hinzufügen. Auch die Schaltfläche "Add from URL" nutzt eine API.',
 			},
 		},
 		reading: {
@@ -519,11 +519,11 @@ const settings = {
 			},
 			statuses: {
 				heading: 'Status',
-				body: 'Leseeinträge nutzen fünf Status: „Lese“, „Abgeschlossen“, „Geplant“, „Noch nicht erschienen“ und „Abgebrochen“. „Noch nicht erschienen“ wird automatisch gesetzt, wenn ein Eintrag ein Erscheinungsdatum in der Zukunft hat, und lässt sich nicht manuell wählen; sobald das Datum verstrichen ist, wird der Eintrag wieder zu „Geplant“. Einträge mit Datum in der Zukunft erscheinen auch im gemeinsamen Tab Demnächst.',
+				body: 'Leseeinträge nutzen fünf Status: "Lese", "Abgeschlossen", "Geplant", "Noch nicht erschienen" und "Abgebrochen". "Noch nicht erschienen" wird automatisch gesetzt, wenn ein Eintrag ein Erscheinungsdatum in der Zukunft hat, und lässt sich nicht manuell wählen; sobald das Datum verstrichen ist, wird der Eintrag wieder zu "Geplant". Einträge mit Datum in der Zukunft erscheinen auch im gemeinsamen Tab Demnächst.',
 			},
 			progress: {
 				heading: 'Fortschrittsverfolgung',
-				body: 'Bücher erfassen gelesene Seiten von der Gesamtzahl; oder Wörter, wenn du das bevorzugst: Der Schalter Seiten/Wörter im Abschnitt „Fortschritt“ der Detailansicht eines Buchs legt die Einheit pro Buch fest, und beide Zähler bleiben erhalten, sodass beim Hin- und Herwechseln keine Zahlen verloren gehen. Manga erfassen gelesene Kapitel von der Gesamtzahl sowie gelesene Bände von der Gesamtzahl. Der Fortschrittsbalken der Karte füllt sich nach der gewählten Einheit des Buchs (bei Manga nach Kapiteln); Einträge ohne Gesamtzahl zeigen „Kein Fortschritt“ statt eines Prozentwerts. Im Dashboard werden nach Wörtern erfasste Bücher mit 250 Wörtern pro Seite in den Bücher-Ring eingerechnet, damit ein Ring beide Einheiten abdeckt.',
+				body: 'Bücher erfassen gelesene Seiten von der Gesamtzahl; oder Wörter, wenn du das bevorzugst: Der Schalter Seiten/Wörter im Abschnitt "Fortschritt" der Detailansicht eines Buchs legt die Einheit pro Buch fest, und beide Zähler bleiben erhalten, sodass beim Hin- und Herwechseln keine Zahlen verloren gehen. Manga erfassen gelesene Kapitel von der Gesamtzahl sowie gelesene Bände von der Gesamtzahl. Der Fortschrittsbalken der Karte füllt sich nach der gewählten Einheit des Buchs (bei Manga nach Kapiteln); Einträge ohne Gesamtzahl zeigen "Kein Fortschritt" statt eines Prozentwerts. Im Dashboard werden nach Wörtern erfasste Bücher mit 250 Wörtern pro Seite in den Bücher-Ring eingerechnet, damit ein Ring beide Einheiten abdeckt.',
 			},
 			notes: {
 				heading: 'Notizen & Lieblingszitate',
@@ -531,7 +531,7 @@ const settings = {
 			},
 			covers: {
 				heading: 'Cover',
-				body: 'Cover werden automatisch abgerufen, sobald Karten ins Bild scrollen; Google Books für Bücher, Jikan für Manga. Fehlt ein Cover oder ist es falsch, nutze „Cover aktualisieren“ im ⋮-Menü einer Karte. (Zum Aktualisieren eines Buchcovers wird der Google-Books-API-Schlüssel benötigt.)',
+				body: 'Cover werden automatisch abgerufen, sobald Karten ins Bild scrollen; Google Books für Bücher, Jikan für Manga. Fehlt ein Cover oder ist es falsch, nutze "Cover aktualisieren" im ⋮-Menü einer Karte. (Zum Aktualisieren eines Buchcovers wird der Google-Books-API-Schlüssel benötigt.)',
 			},
 			columns: {
 				heading: 'Eigene Spalten',
@@ -541,7 +541,7 @@ const settings = {
 		upcoming: {
 			how: {
 				heading: 'So funktioniert Demnächst',
-				body: 'Jeder Titel mit einem Erscheinungsdatum in der Zukunft wird automatisch als „Noch nicht erschienen“ markiert und erscheint in diesem Tab. Dieser Status lässt sich nicht manuell setzen; er ergibt sich allein aus dem eingegebenen Erscheinungsdatum. Läuft ein Titel schon, aber nur ein Teil der Episoden ist erschienen (z. B. eine laufende Serie), erscheint er hier nicht automatisch; du musst ihn über die Schaltfläche „Hinzufügen“ im Tab Demnächst manuell ergänzen.',
+				body: 'Jeder Titel mit einem Erscheinungsdatum in der Zukunft wird automatisch als "Noch nicht erschienen" markiert und erscheint in diesem Tab. Dieser Status lässt sich nicht manuell setzen; er ergibt sich allein aus dem eingegebenen Erscheinungsdatum. Läuft ein Titel schon, aber nur ein Teil der Episoden ist erschienen (z. B. eine laufende Serie), erscheint er hier nicht automatisch; du musst ihn über die Schaltfläche "Hinzufügen" im Tab Demnächst manuell ergänzen.',
 			},
 		},
 	},

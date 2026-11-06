@@ -3,12 +3,12 @@ import type { DeepPartial } from '../index';
 
 const ui = {
 	typeName: {
-		reserved: '„{name}“ ist ein reservierter Ordnername.',
-		unsafe: '„{name}“ kann nicht als Ordnername verwendet werden; versuche „{safe}“.',
+		reserved: '"{name}" ist ein reservierter Ordnername.',
+		unsafe: '"{name}" kann nicht als Ordnername verwendet werden; versuche "{safe}".',
 	},
 	columns: {
 		emptyName: 'Spaltennamen dürfen nicht leer sein.',
-		noOptions: 'Spalte „{label}“ braucht mindestens eine Option.',
+		noOptions: 'Spalte "{label}" braucht mindestens eine Option.',
 		dragToReorder: 'Zum Umsortieren ziehen',
 		typeText: 'Text',
 		typeNumber: 'Zahl',
@@ -17,7 +17,7 @@ const ui = {
 		italic: 'K',
 		autoTime: 'Automatisch mit der verbleibenden Sehzeit aus der Watchlist füllen',
 		deleteColumn: 'Diese Spalte löschen',
-		deleteConfirm: 'Spalte „{label}“ löschen? Alle Daten dieser Spalte gehen verloren.',
+		deleteConfirm: 'Spalte "{label}" löschen? Alle Daten dieser Spalte gehen verloren.',
 		optionColor: 'Optionsfarbe',
 		optionPlaceholder: 'Option',
 		removeOption: 'Diese Option entfernen',
@@ -29,8 +29,8 @@ const ui = {
 	},
 	duplicate: {
 		continue: 'Weiter',
-		addAnyway: '„{name}“ existiert bereits. Trotzdem hinzufügen?',
-		saveAnyway: '„{name}“ existiert bereits. Trotzdem speichern?',
+		addAnyway: '"{name}" existiert bereits. Trotzdem hinzufügen?',
+		saveAnyway: '"{name}" existiert bereits. Trotzdem speichern?',
 	},
 	form: {
 		none: '— keine —',
@@ -41,7 +41,7 @@ const ui = {
 		titlePlaceholder: 'Titelname',
 		externalLink: 'Externer Link',
 		releaseDate: 'Erscheinungsdatum',
-		episodes: 'Episoden',
+		episodes: 'Folgen',
 		episodeDuration: 'Dauer (Min.)',
 	},
 	group: {

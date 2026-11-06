@@ -29,10 +29,10 @@ const app = {
 	widgets: {
 		todoFull: 'Titel tracken (voll)',
 		todoMini: 'Titel tracken (kompakt)',
-		statWatched: 'Geschaute Zeit (mini)',
+		statWatched: 'Gesehene Zeit (mini)',
 		statCompleted: 'Abgeschlossene Titel (mini)',
 		statRemaining: 'Verbleibende Zeit (mini)',
-		statTime: 'Geschaut + verbleibend (mini)',
+		statTime: 'Gesehen + verbleibend (mini)',
 		upcomingNext: 'Nächste Neuerscheinung (mini)',
 		statTimeCompletedFull: 'Karte mit Zeit · Verbleibend · Abgeschlossen',
 		nowNext: 'Karte mit Aktuell und Als Nächstes',

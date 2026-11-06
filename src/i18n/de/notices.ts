@@ -7,7 +7,7 @@ const notices = {
 		invalidYaml: '"{file}" konnte nicht aktualisiert werden: Die Eigenschaften sind kein gültiges YAML.',
 		renameTargetExists: '"{target}" existiert bereits; die Notiz behält ihren alten Dateinamen.',
 		apiKeyNeeded: 'API-Schlüssel nötig, um Episoden zu laden',
-		episodesLoading: 'Episoden von "{title}" werden noch geladen.',
+		episodesLoading: 'Folgen von "{title}" werden noch geladen.',
 		sharedConfigUnreadable: 'Watchlog: Der Einstellungsblock in WatchLog.base ist nicht lesbar; Einstellungen wurden nicht gespeichert.',
 	},
 	api: {

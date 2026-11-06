@@ -50,10 +50,10 @@ const games = {
 		emptyByGenre: 'Noch keine Spiele; hinzugefügte Spiele werden hier nach Genre gruppiert.',
 		emptyByStatus: 'Noch keine Spiele; hinzugefügte Spiele werden hier nach Status gruppiert.',
 	},
-	noMatchesQuery: 'Keine Treffer für „{query}“.',
+	noMatchesQuery: 'Keine Treffer für "{query}".',
 	noMatchesFilters: 'Keine Spiele passen zu den aktuellen Filtern.',
 	customizeRows: 'Reihen anpassen',
-	customizeHint: 'Sortiere die Bereiche um oder schalte sie aus. „Nach Genre“ und „Nach Status“ sind die gruppierten Rasterbereiche; nur einer kann aktiv sein, sind beide aus, werden die Spiele als ein flaches Raster angezeigt.',
+	customizeHint: 'Sortiere die Bereiche um oder schalte sie aus. "Nach Genre" und "Nach Status" sind die gruppierten Rasterbereiche; nur einer kann aktiv sein, sind beide aus, werden die Spiele als ein flaches Raster angezeigt.',
 	deleteSelected: 'Auswahl löschen',
 	deleteSelectedConfirm: {
 		one: '{count} ausgewählten Eintrag löschen? Die Notizdateien gelöschter Spiele landen im Papierkorb; beim Löschen einer Gruppe kehren ihre Spiele in die Hauptliste zurück.',
@@ -67,8 +67,8 @@ const games = {
 		removeFromWishlist: 'Von der Wunschliste entfernen',
 		refreshCover: 'Cover aktualisieren',
 		openNote: 'Notiz öffnen',
-		deleteConfirm: '„{title}“ löschen? Die Notizdatei landet im Papierkorb.',
-		deleteGroupConfirm: 'Gruppe „{name}“ löschen? Alle enthaltenen Spiele kehren in die Hauptliste zurück.',
+		deleteConfirm: '"{title}" löschen? Die Notizdatei landet im Papierkorb.',
+		deleteGroupConfirm: 'Gruppe "{name}" löschen? Alle enthaltenen Spiele kehren in die Hauptliste zurück.',
 	},
 	notices: {
 		coverFetchFailed: 'Cover konnte nicht geladen werden; prüfe den Titel des Spiels und deine Einstellungen → API → Spiele.',

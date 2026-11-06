@@ -34,7 +34,7 @@ const steam = {
 	failure: {
 		missing: 'Hinterlege zuerst Steam-API-Schlüssel und Steam-ID unter Einstellungen → API → Spiele.',
 		badKey: 'Steam hat den API-Schlüssel abgelehnt. Prüfe ihn unter Einstellungen → API → Spiele.',
-		private: 'Steam hat keine Bibliothek geliefert. Die Datenschutzeinstellung „Spieldetails“ deines Profils muss auf „Öffentlich“ stehen; sonst verbirgt Steam die Spiele, auch vor deinem eigenen API-Schlüssel.',
+		private: 'Steam hat keine Bibliothek geliefert. Die Datenschutzeinstellung "Spieldetails" deines Profils muss auf "Öffentlich" stehen; sonst verbirgt Steam die Spiele, auch vor deinem eigenen API-Schlüssel.',
 		empty: 'Steam meldet keine Spiele für dieses Konto. Prüfe, ob die Steam-ID stimmt.',
 		unreachable: 'Steam nicht erreichbar. Prüfe deine Verbindung und versuche es erneut.',
 	},
