@@ -1,4 +1,5 @@
 import { createDatePicker } from '../DatePicker';
+import { t } from '../i18n';
 
 /** A labelled form row: [label][fields...]. */
 export function makeRow(parent: HTMLElement, label: string): HTMLElement {
@@ -63,7 +64,7 @@ export function nameSelect(
 	empty = false,
 ): HTMLSelectElement {
 	const select = parent.createEl('select', { cls: 'wl-select' });
-	if (empty) select.createEl('option', { text: '— none —', value: '' });
+	if (empty) select.createEl('option', { text: t('ui.form.none'), value: '' });
 	for (const name of names) {
 		const opt = select.createEl('option', { text: name, value: name });
 		if (name === selected) opt.selected = true;
@@ -84,7 +85,7 @@ function renderGroupSelect(
 	selectedId: string,
 ): HTMLSelectElement {
 	const select = row.createEl('select', { cls: 'wl-select' });
-	select.createEl('option', { text: '— none —', value: '' });
+	select.createEl('option', { text: t('ui.form.none'), value: '' });
 	for (const g of groups) {
 		const opt = select.createEl('option', { text: g.name, value: g.id });
 		if (g.id === selectedId) opt.selected = true;
@@ -101,10 +102,10 @@ export function renderGroupPicker(
 	groups: Array<{ id: string; name: string }>,
 	state: GroupPickerState,
 ): void {
-	const groupSelect = renderGroupSelect(makeRow(parent, 'Add to group'), groups, state.selectedGroupId);
-	const newGroupInput = textInput(makeRow(parent, 'Or create new group'), {
+	const groupSelect = renderGroupSelect(makeRow(parent, t('ui.form.addToGroup')), groups, state.selectedGroupId);
+	const newGroupInput = textInput(makeRow(parent, t('ui.form.orCreateGroup')), {
 		value: state.newGroupName,
-		placeholder: 'New group name...',
+		placeholder: t('ui.form.newGroupPlaceholder'),
 		onInput: (v) => {
 			state.newGroupName = v;
 			const filled = v.trim() !== '';
@@ -137,7 +138,7 @@ export function titleField(
 	placeholder: string | undefined,
 	onInput: (v: string) => void,
 ): void {
-	textInput(makeRow(form, 'Title'), { value, placeholder, onInput });
+	textInput(makeRow(form, t('ui.form.title')), { value, placeholder, onInput });
 }
 
 /** "External link" row with a URL input. */
@@ -147,7 +148,7 @@ export function linkField(
 	placeholder: string,
 	onInput: (v: string) => void,
 ): void {
-	textInput(makeRow(form, 'External link'), { value, type: 'url', placeholder, onInput });
+	textInput(makeRow(form, t('ui.form.externalLink')), { value, type: 'url', placeholder, onInput });
 }
 
 /**
@@ -156,7 +157,7 @@ export function linkField(
  */
 export function releaseDateField(form: HTMLElement, value: string, onChange: (iso: string) => void): void {
 	createDatePicker({
-		parent: makeRow(form, 'Release date').createDiv({ cls: 'wl-modal-input-stack' }),
+		parent: makeRow(form, t('ui.form.releaseDate')).createDiv({ cls: 'wl-modal-input-stack' }),
 		inputCls: 'wl-modal-input',
 		value: value || null,
 		lenient: true,
@@ -178,19 +179,19 @@ export interface MediaFields {
  * 50/50 on one row; otherwise they get a row each with a narrow input.
  */
 export function renderMediaFields(form: HTMLElement, f: MediaFields, paired: boolean): void {
-	titleField(form, f.title, 'Title name', (v) => { f.title = v; });
+	titleField(form, f.title, t('ui.form.titlePlaceholder'), (v) => { f.title = v; });
 
 	const episodes = { value: f.episodes, min: 0, placeholder: '0', onInput: (v: number) => { f.episodes = v; } };
 	const duration = { value: f.duration, min: 0, placeholder: '24', onInput: (v: number) => { f.duration = v; } };
 	if (paired) {
 		// reclaims vertical space
 		const row = form.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
-		numberInput(makeCell(row, 'Episodes'), episodes);
-		numberInput(makeCell(row, 'Ep. duration (min)', true), duration);
+		numberInput(makeCell(row, t('ui.form.episodes')), episodes);
+		numberInput(makeCell(row, t('ui.form.episodeDuration'), true), duration);
 	} else {
 		const cls = 'wl-modal-input wl-modal-input-sm';
-		numberInput(makeRow(form, 'Episodes'), { ...episodes, cls });
-		numberInput(makeRow(form, 'Ep. duration (min)'), { ...duration, cls });
+		numberInput(makeRow(form, t('ui.form.episodes')), { ...episodes, cls });
+		numberInput(makeRow(form, t('ui.form.episodeDuration')), { ...duration, cls });
 	}
 
 	releaseDateField(form, f.releaseDate, (v) => { f.releaseDate = v; });

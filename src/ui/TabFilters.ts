@@ -1,4 +1,5 @@
 import { toggleFilterPanel, type FilterPanelConfig, type FilterSection } from '../FilterPanel';
+import { t } from '../i18n';
 import { formatPriorityOpt, priorityFilterOpts, type TagDefinition } from '../types';
 
 /**
@@ -52,9 +53,9 @@ export function buildFilterSections(input: FilterSectionsInput): FilterSection[]
 	const sections: FilterSection[] = [
 		...input.lead,
 		{
-			label: 'Status', opts: input.statusOpts, excludeSet: draft.statusExclude,
+			label: t('ui.filters.status'), opts: input.statusOpts, excludeSet: draft.statusExclude,
 			specials: [{
-				text: '✦ Recently arrived',
+				text: `✦ ${t('ui.filters.recentlyArrived')}`,
 				spanCls: 'wl-recently-arrived-filter',
 				get: () => draft.filterRecentlyArrivedOnly,
 				set: (v) => { draft.filterRecentlyArrivedOnly = v; },
@@ -63,26 +64,26 @@ export function buildFilterSections(input: FilterSectionsInput): FilterSection[]
 			}],
 		},
 		{
-			label: 'Rating', opts: input.ratingOpts, excludeSet: draft.ratingExclude,
+			label: t('ui.filters.rating'), opts: input.ratingOpts, excludeSet: draft.ratingExclude,
 			formatOpt: formatRatingOpt,
 			specials: [{
-				text: 'Empty',
+				text: t('ui.filters.empty'),
 				get: () => draft.filterRatingEmptyOnly,
 				set: (v) => { draft.filterRatingEmptyOnly = v; },
 				mode: 'exclusive',
 			}],
 		},
 		{
-			label: 'Priority', opts: priorityFilterOpts(input.priorities), excludeSet: draft.priorityExclude,
+			label: t('ui.filters.priority'), opts: priorityFilterOpts(input.priorities), excludeSet: draft.priorityExclude,
 			formatOpt: formatPriorityOpt,
 		},
 		...(input.middle ?? []),
 	];
 	if (input.groupOpts.length > 0) {
 		sections.push({
-			label: 'Group', opts: input.groupOpts, excludeSet: draft.groupExclude,
+			label: t('ui.filters.group'), opts: input.groupOpts, excludeSet: draft.groupExclude,
 			specials: [{
-				text: '◇ Groups only',
+				text: `◇ ${t('ui.filters.groupsOnly')}`,
 				spanCls: 'wl-recently-arrived-filter',
 				get: () => draft.filterGroupsOnly,
 				set: (v) => { draft.filterGroupsOnly = v; },
@@ -127,10 +128,10 @@ export interface FiltersDropdownOptions {
 /** "Filters ▼" button with its active dot, the "✕ clear" button next to it, and the panel wiring. */
 export function renderFiltersDropdown(parent: HTMLElement, opts: FiltersDropdownOptions): void {
 	const wrap = parent.createDiv({ cls: 'wl-add-btn-wrap' });
-	const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Filters ▼' });
+	const btn = wrap.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('ui.filters.button') });
 	const dotEl = btn.createSpan({ cls: 'wl-filter-dot' });
-	const clearBtn = parent.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-clear-filters', text: '✕ clear' });
-	clearBtn.title = 'Clear all filters';
+	const clearBtn = parent.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-clear-filters', text: t('ui.filters.clear') });
+	clearBtn.title = t('ui.filters.clearTip');
 	const syncIndicators = (): void => {
 		if (opts.hasActiveFilter()) { dotEl.show(); clearBtn.show(); } else { dotEl.hide(); clearBtn.hide(); }
 	};
