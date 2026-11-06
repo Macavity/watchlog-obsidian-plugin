@@ -17,8 +17,6 @@ const sentenceCaseOptions = {
 		'Google', 'MAL', 'TSV', 'URLs', 'APIs', 'Steam', 'Tenrai', 'English',
 		// Stored type name and the default rating-tier label
 		'Book', 'Good',
-		// Stored type name, Steam's privacy option and the default rating-tier label
-		'Book', 'Public', 'Good',
 	],
 	ignoreRegex: [
 		'^DD/MM/YYYY$',            // date format mask
@@ -26,7 +24,6 @@ const sentenceCaseOptions = {
 		'^Season \\d',             // season-spec example placeholder
 		'\\(Season 1 = color 1',    // season example inside the help text
 		'"Game details" to Public', // Steam's own profile privacy wording
-		'\\(Season 1 = color 1',    // season example inside the help text
 		'^p\\. 123',               // quote-location example placeholder
 		'^APIs & Services',        // Google Cloud console path
 		'"N due"',                 // N is a number placeholder
@@ -38,6 +35,12 @@ const sentenceCaseOptions = {
 		'^TV Show$',
 		'^Korean TV Show$',
 		'^Plan to Read$',
+		// Reading / Games locale leaves that the rule misreads: lowercase unit nouns that follow a number,
+		// a link fragment that continues a sentence, and a hint that quotes section names
+		'^pages$',
+		'^words$',
+		'^add your first (book|manga)$',
+		'^Reorder the sections or switch them off\\. "By ',
 		// list area: lowercase stat captions under a value, and quoted stored status/section names
 		'^(left|watched|episodes|progress)$',
 		'^Nothing to recommend; add titles to "Plan to watch" or "Watching"\\.$',
@@ -47,6 +50,10 @@ const sentenceCaseOptions = {
 		'^(NOW WATCHING|UPCOMING NEXT)$',
 		'^Missing id field\\.$',
 		'^These columns are pre-populated when creating a new list\\.',
+		// airtime area: lowercase unit word that follows a number (uppercased in code), quoted section name, time zone note
+		'^(day|days)$',
+		'^No "Maybe" titles yet\\.',
+		'^JST —$',
 		'^TSV pastes into spreadsheets',
 		'^Paste tab-separated values copied from a spreadsheet',
 	],

@@ -1,6 +1,79 @@
 import type enGames from '../en/games';
 import type { DeepPartial } from '../index';
 
-const games = {} satisfies DeepPartial<typeof enGames>;
+const games = {
+	empty: 'Noch keine Spiele; klicke auf + Hinzufügen, um dein erstes Spiel zu erfassen.',
+	searchPlaceholder: 'Titel, Entwickler, Plattform suchen…',
+	countGroup: { one: '{count} Gruppe', other: '{count} Gruppen' },
+	fields: {
+		title: 'Titel',
+		developer: 'Entwickler',
+		publisher: 'Publisher',
+		platform: 'Plattform',
+		year: 'Jahr',
+		rating: 'Bewertung',
+		hours: 'Spielstunden',
+	},
+	sort: {
+		title: 'Titel',
+		dateAdded: 'Hinzugefügt am',
+		progress: 'Fortschritt',
+		playtime: 'Spielzeit',
+		rating: 'Bewertung',
+		priority: 'Priorität',
+		started: 'Begonnen',
+		status: 'Status',
+		dateFinished: 'Beendet am',
+		releaseDate: 'Erscheinungsdatum',
+	},
+	filters: {
+		genre: 'Genre',
+		platform: 'Plattform',
+		wishlist: 'Wunschliste',
+	},
+	shelves: {
+		favorites: 'Favoriten',
+		recommended: 'Empfohlen',
+		recentlyAdded: 'Zuletzt hinzugefügt',
+		recentlyPlayed: 'Zuletzt gespielt',
+		recentlyReleased: 'Kürzlich erschienen',
+		groups: 'Gruppen',
+		byGenre: 'Nach Genre',
+		byStatus: 'Nach Status',
+		allGames: 'Alle Spiele',
+		emptyFavorites: 'Noch keine Favoriten; nutze das ⋮-Menü einer Karte, um ein Spiel zu favorisieren.',
+		emptyRecommended: 'Nichts zu empfehlen; füge Spiele hinzu, die du spielen willst.',
+		emptyRecentlyAdded: 'Noch nichts hier; hinzugefügte Spiele erscheinen in dieser Reihe.',
+		emptyRecentlyPlayed: 'Noch nichts gespielt; Spiele mit Fortschritt oder abgeschlossene erscheinen hier.',
+		emptyRecentlyReleased: 'Noch keine erschienenen Spiele; Spiele mit vergangenem Erscheinungsdatum erscheinen hier.',
+		emptyGroups: 'Noch keine Gruppen; gruppiere zusammengehörige Spiele, um ihre Cover hier zu sehen.',
+		emptyByGenre: 'Noch keine Spiele; hinzugefügte Spiele werden hier nach Genre gruppiert.',
+		emptyByStatus: 'Noch keine Spiele; hinzugefügte Spiele werden hier nach Status gruppiert.',
+	},
+	noMatchesQuery: 'Keine Treffer für „{query}“.',
+	noMatchesFilters: 'Keine Spiele passen zu den aktuellen Filtern.',
+	customizeRows: 'Reihen anpassen',
+	customizeHint: 'Sortiere die Bereiche um oder schalte sie aus. „Nach Genre“ und „Nach Status“ sind die gruppierten Rasterbereiche; nur einer kann aktiv sein, sind beide aus, werden die Spiele als ein flaches Raster angezeigt.',
+	deleteSelected: 'Auswahl löschen',
+	deleteSelectedConfirm: {
+		one: '{count} ausgewählten Eintrag löschen? Die Notizdateien gelöschter Spiele landen im Papierkorb; beim Löschen einer Gruppe kehren ihre Spiele in die Hauptliste zurück.',
+		other: '{count} ausgewählte Einträge löschen? Die Notizdateien gelöschter Spiele landen im Papierkorb; beim Löschen einer Gruppe kehren ihre Spiele in die Hauptliste zurück.',
+	},
+	card: {
+		onWishlist: 'Auf deiner Wunschliste',
+		favorite: 'Favorisieren',
+		unfavorite: 'Favorit entfernen',
+		addToWishlist: 'Zur Wunschliste hinzufügen',
+		removeFromWishlist: 'Von der Wunschliste entfernen',
+		refreshCover: 'Cover aktualisieren',
+		openNote: 'Notiz öffnen',
+		deleteConfirm: '„{title}“ löschen? Die Notizdatei landet im Papierkorb.',
+		deleteGroupConfirm: 'Gruppe „{name}“ löschen? Alle enthaltenen Spiele kehren in die Hauptliste zurück.',
+	},
+	notices: {
+		coverFetchFailed: 'Cover konnte nicht geladen werden; prüfe den Titel des Spiels und deine Einstellungen → API → Spiele.',
+		coverRefreshed: 'Cover aktualisiert.',
+	},
+} satisfies DeepPartial<typeof enGames>;
 
 export default games;

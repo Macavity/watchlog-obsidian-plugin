@@ -1,4 +1,6 @@
 import { Notice, setIcon } from 'obsidian';
+import { t } from './i18n';
+import { readingStatusLabel } from './i18n/labels';
 import { apiErrorMessage } from './ApiService';
 import { fetchReadingCoverById } from './coverRefresh';
 import type WatchLogPlugin from './main';
@@ -92,6 +94,21 @@ function bookProgress(b: Book): number {
 function mangaProgress(m: Manga): number {
 	if (m.totalChapters > 0) return Math.min(100, (m.chaptersRead / m.totalChapters) * 100);
 	return 0;
+}
+
+// Select columns hide only items whose value is an excluded option (items with no value for the
+// field are unaffected, like Status); text/number columns filter on has value / no value.
+function passesCustomFilter(item: Book | Manga, col: ReadingCustomColumn, excluded: string[] | undefined): boolean {
+	if (!excluded || excluded.length === 0) return true;
+	if (col.type === 'select') {
+		const v = item.customFields?.[col.id];
+		const sv = v === undefined || v === null ? '' : String(v);
+		return sv === '' || !excluded.includes(sv);
+	}
+	const has = customFieldHasValue(item, col.id);
+	if (has && excluded.includes(HAS_VALUE)) return false;
+	if (!has && excluded.includes(NO_VALUE)) return false;
+	return true;
 }
 
 export class ReadingTab {
@@ -192,12 +209,12 @@ export class ReadingTab {
 
 		const booksBtn = bar.createEl('button', {
 			cls: `wl-reading-subtab${this.activeSubTab === 'books' ? ' is-active' : ''}`,
-			text: 'Books',
+			text: t('reading.tabs.books'),
 		});
 
 		const mangaBtn = bar.createEl('button', {
 			cls: `wl-reading-subtab${this.activeSubTab === 'manga' ? ' is-active' : ''}`,
-			text: 'Manga',
+			text: t('reading.tabs.manga'),
 		});
 
 		booksBtn.addEventListener('click', () => {
@@ -232,17 +249,17 @@ export class ReadingTab {
 
 	private renderReadingSearch(parent: HTMLElement): void {
 		const searchWrap = parent.createDiv({ cls: 'wl-reading-search-wrap' });
-		const placeholder = this.activeSubTab === 'books' ? 'Search books...' : 'Search manga...';
+		const placeholder = t(this.activeSubTab === 'books' ? 'reading.searchPlaceholder.books' : 'reading.searchPlaceholder.manga');
 		const searchInput = searchWrap.createEl('input', {
 			cls: 'wl-reading-search-input',
 			attr: { type: 'text', placeholder },
 		});
 		searchInput.value = this.searchQuery;
-		renderSearchHelpButton(searchWrap, this.plugin.app, this.activeSubTab === 'books' ? 'Books' : 'Manga', () => this.searchFields());
+		renderSearchHelpButton(searchWrap, this.plugin.app, t(this.activeSubTab === 'books' ? 'reading.tabs.books' : 'reading.tabs.manga'), () => this.searchFields());
 		// clear button — only while there is text
 		const clearBtn = searchWrap.createEl('button', {
 			cls: 'wl-search-clear',
-			attr: { type: 'button', 'aria-label': 'Clear search' },
+			attr: { type: 'button', 'aria-label': t('ui.toolbar.clearSearch') },
 		});
 		setIcon(clearBtn, 'x');
 		const syncClear = () => clearBtn.toggleClass('is-visible', searchInput.value.length > 0);
@@ -271,7 +288,7 @@ export class ReadingTab {
 			this.savedFilterActive = this.filtersMatchSaved(savedFilter);
 			const savedBtn = parent.createEl('button', {
 				cls: `wl-btn wl-btn-sm${this.savedFilterActive ? ' wl-btn-preset-active' : ''}`,
-				text: 'Saved filter',
+				text: t('ui.toolbar.savedFilter'),
 			});
 			this.savedFilterBtnEl = savedBtn;
 			savedBtn.addEventListener('click', () => {
@@ -291,7 +308,7 @@ export class ReadingTab {
 
 		this.filterBtn = parent.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-reading-filter-btn',
-			text: 'Filter',
+			text: t('reading.toolbar.filter'),
 		});
 		this.refreshFilterButtonBadge();
 		this.filterBtn.addEventListener('click', (e) => {
@@ -301,7 +318,7 @@ export class ReadingTab {
 
 		this.resetBtn = parent.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-reading-reset-btn',
-			text: 'Reset',
+			text: t('reading.toolbar.reset'),
 		});
 		this.resetBtn.addEventListener('click', () => {
 			ReadingTab.sessionFilters[this.activeSubTab] = defaultFilters();
@@ -315,7 +332,7 @@ export class ReadingTab {
 
 		this.sortBtn = parent.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-reading-sort-btn',
-			text: 'Sort',
+			text: t('reading.toolbar.sort'),
 		});
 		this.sortBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
@@ -330,9 +347,9 @@ export class ReadingTab {
 			const hasAny = this.selectedIds.size > 0;
 			const selAllBtn = parent.createEl('button', {
 				cls: 'wl-btn wl-btn-sm',
-				text: hasAny ? 'None' : 'All',
+				text: hasAny ? t('common.none') : t('ui.toolbar.all'),
 			});
-			selAllBtn.title = hasAny ? 'Deselect all' : 'Select all visible';
+			selAllBtn.title = hasAny ? t('ui.toolbar.deselectAll') : t('ui.toolbar.selectAllVisible');
 			selAllBtn.addEventListener('click', () => {
 				if (this.selectedIds.size > 0) {
 					this.selectedIds.clear();
@@ -351,7 +368,7 @@ export class ReadingTab {
 		// in selection mode the button is the way out — red Cancel
 		const selBtn = parent.createEl('button', {
 			cls: `wl-btn wl-btn-sm${this.selectionMode ? ' wl-btn-cancel' : ''}`,
-			text: this.selectionMode ? 'Cancel' : 'Select',
+			text: this.selectionMode ? t('common.cancel') : t('ui.toolbar.select'),
 		});
 		selBtn.addEventListener('click', () => {
 			this.selectionMode = !this.selectionMode;
@@ -362,7 +379,7 @@ export class ReadingTab {
 		const right = parent.createDiv({ cls: 'wl-reading-toolbar-right' });
 		const manageBtn = right.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-reading-manage-btn',
-			attr: { 'aria-label': 'Manage columns', title: 'Manage columns' },
+			attr: { 'aria-label': t('reading.toolbar.manageColumns'), title: t('reading.toolbar.manageColumns') },
 			text: '⚙',
 		});
 		manageBtn.addEventListener('click', () => this.openManageColumns());
@@ -371,7 +388,7 @@ export class ReadingTab {
 	private renderReadingAddButton(parent: HTMLElement): HTMLButtonElement {
 		const addBtn = parent.createEl('button', {
 			cls: 'wl-reading-add-btn wl-btn-success',
-			text: this.activeSubTab === 'books' ? '+ Add book' : '+ Add manga',
+			text: `+ ${t(this.activeSubTab === 'books' ? 'reading.toolbar.addBook' : 'reading.toolbar.addManga')}`,
 		});
 		addBtn.addEventListener('click', () => this.openAddModal());
 		return addBtn;
@@ -384,13 +401,13 @@ export class ReadingTab {
 			cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
 			text: '✕',
 		});
-		deleteBtn.title = 'Delete selected';
+		deleteBtn.title = t('reading.toolbar.deleteSelected');
 		deleteBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			const count = this.selectedIds.size;
 			new ConfirmModal(
 				this.plugin.app,
-				`Delete ${count} selected item${count !== 1 ? 's' : ''}? This cannot be undone.`,
+				t('reading.deleteSelectedConfirm', { count }),
 				() => {
 					void (async () => {
 						const ids = Array.from(this.selectedIds);
@@ -408,9 +425,9 @@ export class ReadingTab {
 		});
 
 		const statusSelect = bar.createEl('select', { cls: 'wl-select wl-select-sm' });
-		statusSelect.createEl('option', { text: 'Status…', value: '' });
+		statusSelect.createEl('option', { text: t('ui.actionBar.status'), value: '' });
 		for (const s of SELECTABLE_READING_STATUSES) {
-			statusSelect.createEl('option', { text: s, value: s });
+			statusSelect.createEl('option', { text: readingStatusLabel(s), value: s });
 		}
 		statusSelect.addEventListener('change', () => {
 			void (async () => {
@@ -443,7 +460,7 @@ export class ReadingTab {
 		if (!this.filterBtn) return;
 		const count = filtersActive(this.filters);
 		this.filterBtn.empty();
-		this.filterBtn.createSpan({ text: 'Filter' });
+		this.filterBtn.createSpan({ text: t('reading.toolbar.filter') });
 		if (count > 0) {
 			this.filterBtn.createSpan({ cls: 'wl-reading-filter-badge', text: String(count) });
 		}
@@ -591,11 +608,12 @@ export class ReadingTab {
 		content: HTMLElement,
 		options: string[],
 		excludeSet: Set<string>,
+		labelOf: (option: string) => string = (o) => o,
 	): SectionController {
 		const cbs: HTMLInputElement[] = [];
 		const allRow = content.createDiv({ cls: 'wl-filter-checkbox-row' });
 		const allCb = allRow.createEl('input', { attr: { type: 'checkbox' } });
-		allRow.createSpan({ cls: 'wl-filter-all-toggle', text: '◆ All' });
+		allRow.createSpan({ cls: 'wl-filter-all-toggle', text: `◆ ${t('ui.toolbar.all')}` });
 
 		const syncAll = (): void => {
 			allCb.checked = cbs.length > 0 && cbs.every((c) => c.checked);
@@ -605,7 +623,7 @@ export class ReadingTab {
 			const row = content.createDiv({ cls: 'wl-filter-checkbox-row' });
 			const cb = row.createEl('input', { attr: { type: 'checkbox' } });
 			cb.checked = !excludeSet.has(opt);
-			row.createSpan({ text: opt });
+			row.createSpan({ text: labelOf(opt) });
 			cbs.push(cb);
 			cb.addEventListener('change', () => {
 				if (cb.checked) excludeSet.delete(opt);
@@ -642,7 +660,7 @@ export class ReadingTab {
 	// "Has value" / "No value" section body for text/number custom fields.
 	private addHasValueBody(content: HTMLElement, excludeSet: Set<string>): SectionController {
 		const entries: Array<{ key: string; cb: HTMLInputElement }> = [];
-		for (const [key, label] of [[HAS_VALUE, 'Has value'], [NO_VALUE, 'No value']] as const) {
+		for (const [key, label] of [[HAS_VALUE, t('reading.filters.hasValue')], [NO_VALUE, t('reading.filters.noValue')]] as const) {
 			const row = content.createDiv({ cls: 'wl-filter-checkbox-row' });
 			const cb = row.createEl('input', { attr: { type: 'checkbox' } });
 			cb.checked = !excludeSet.has(key);
@@ -673,12 +691,12 @@ export class ReadingTab {
 		// ── Global buttons row (Select all / Deselect all / Save-or-Delete) ──
 		const globalRow = el.createDiv({ cls: 'wl-filter-global-btns' });
 
-		const selectAllBtn = globalRow.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Select all' });
+		const selectAllBtn = globalRow.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('reading.filters.selectAll') });
 		selectAllBtn.addEventListener('click', (ev) => {
 			ev.stopPropagation();
 			for (const c of controllers) c.selectAll();
 		});
-		const deselectAllBtn = globalRow.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Deselect all' });
+		const deselectAllBtn = globalRow.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('ui.toolbar.deselectAll') });
 		deselectAllBtn.addEventListener('click', (ev) => {
 			ev.stopPropagation();
 			for (const c of controllers) c.deselectAll();
@@ -687,16 +705,17 @@ export class ReadingTab {
 		// Save / Delete — a single saved filter, exactly like the Watchlist popover.
 		// Save stores the current draft (without applying it); Delete clears it. Both
 		// re-render so the external "Saved filter" button appears/disappears.
+		const hasSavedFilter = this.getSavedFilter() !== null;
 		const saveDeleteBtn = globalRow.createEl('button', {
 			cls: 'wl-btn wl-btn-sm',
-			text: this.getSavedFilter() ? 'Delete' : 'Save',
+			text: hasSavedFilter ? t('common.delete') : t('common.save'),
 		});
 		saveDeleteBtn.addEventListener('click', (ev) => {
 			ev.stopPropagation();
 			void (async () => {
 				// Preserve the other sub-tab's saved filter when updating this one.
 				const current = { ...(this.readingData.getSettings().savedFilters ?? {}) };
-				if (saveDeleteBtn.textContent === 'Save') {
+				if (!hasSavedFilter) {
 					current[this.activeSubTab] = {
 						name: 'Saved filter',
 						// Stored in include shape: the statuses that remain visible.
@@ -716,16 +735,16 @@ export class ReadingTab {
 		});
 
 		// ── Status section (multi-select with "All") ──
-		this.addFilterSection(el, collapsed, 'Status', 'Status', (content) => {
-			controllers.push(this.addMultiSelectBody(content, READING_STATUSES, draft.statusExclude));
+		this.addFilterSection(el, collapsed, 'Status', t('ui.filters.status'), (content) => {
+			controllers.push(this.addMultiSelectBody(content, READING_STATUSES, draft.statusExclude, (o) => readingStatusLabel(o as ReadingStatus)));
 		});
 
 		// ── Rating section (single-select mode; not part of Select/Deselect all) ──
-		this.addFilterSection(el, collapsed, 'Rating', 'Rating', (content) => {
+		this.addFilterSection(el, collapsed, 'Rating', t('ui.filters.rating'), (content) => {
 			const ratingOpts: Array<{ key: 'all' | 'has' | 'none'; label: string }> = [
-				{ key: 'all', label: 'All' },
-				{ key: 'has', label: 'Has rating' },
-				{ key: 'none', label: 'No rating' },
+				{ key: 'all', label: t('ui.toolbar.all') },
+				{ key: 'has', label: t('reading.filters.hasRating') },
+				{ key: 'none', label: t('reading.filters.noRating') },
 			];
 			const groupName = `wl-reading-rating-${Date.now()}`;
 			for (const opt of ratingOpts) {
@@ -756,7 +775,7 @@ export class ReadingTab {
 		const applyWrap = el.createDiv({ cls: 'wl-filter-apply-wrap' });
 		const applyBtn = applyWrap.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-filter-apply-btn',
-			text: 'Apply',
+			text: t('reading.filters.apply'),
 		});
 		applyBtn.addEventListener('click', (ev) => {
 			ev.stopPropagation();
@@ -779,14 +798,14 @@ export class ReadingTab {
 
 	private buildSortPopover(el: HTMLElement): void {
 		const keys: Array<{ key: SortKey; label: string }> = [
-			{ key: 'dateAdded', label: 'Date added' },
-			{ key: 'title', label: 'Title' },
-			{ key: 'author', label: 'Author' },
-			{ key: 'rating', label: 'Rating' },
-			{ key: 'progress', label: 'Progress' },
-			{ key: 'status', label: 'Status' },
-			{ key: 'dateStarted', label: 'Date started' },
-			{ key: 'dateFinished', label: 'Date finished' },
+			{ key: 'dateAdded', label: t('reading.sort.dateAdded') },
+			{ key: 'title', label: t('reading.sort.title') },
+			{ key: 'author', label: t('reading.sort.author') },
+			{ key: 'rating', label: t('reading.sort.rating') },
+			{ key: 'progress', label: t('reading.sort.progress') },
+			{ key: 'status', label: t('reading.sort.status') },
+			{ key: 'dateStarted', label: t('reading.sort.dateStarted') },
+			{ key: 'dateFinished', label: t('reading.sort.dateFinished') },
 		];
 		// Append custom fields for the active sub-tab as `custom:<columnId>` keys.
 		for (const col of this.activeColumns()) {
@@ -804,7 +823,7 @@ export class ReadingTab {
 			const sel = row.createEl('select', { cls: 'wl-select' });
 
 			if (!isPrimary) {
-				const noneOpt = sel.createEl('option', { text: 'None', value: 'none' });
+				const noneOpt = sel.createEl('option', { text: t('common.none'), value: 'none' });
 				if (currentKey === 'none') noneOpt.selected = true;
 			}
 			for (const k of keys) {
@@ -817,8 +836,8 @@ export class ReadingTab {
 				text: currentDir === 'asc' ? '↑' : '↓',
 			});
 			dirBtn.title = currentDir === 'asc'
-				? 'Ascending; click to switch to descending'
-				: 'Descending; click to switch to ascending';
+				? t('reading.sort.ascending')
+				: t('reading.sort.descending');
 
 			sel.addEventListener('change', () => {
 				if (isPrimary) {
@@ -844,8 +863,8 @@ export class ReadingTab {
 			});
 		};
 
-		addRow('Sort by', this.sort.key, this.sort.dir, true);
-		addRow('Then by', this.sort.secondKey, this.sort.secondDir, false);
+		addRow(t('reading.sort.sortBy'), this.sort.key, this.sort.dir, true);
+		addRow(t('reading.sort.thenBy'), this.sort.secondKey, this.sort.secondDir, false);
 	}
 
 	private applyFilters(items: Array<Book | Manga>): Array<Book | Manga> {
@@ -855,22 +874,7 @@ export class ReadingTab {
 			if (f.statusExclude.includes(it.status)) return false;
 			if (f.ratingMode === 'has' && !(it.rating > 0)) return false;
 			if (f.ratingMode === 'none' && it.rating > 0) return false;
-			for (const col of columns) {
-				const ex = f.customExclude[col.id];
-				if (!ex || ex.length === 0) continue;
-				if (col.type === 'select') {
-					// Like Status: only items whose value is an excluded option are
-					// hidden; items with no value for this field are unaffected.
-					const v = it.customFields?.[col.id];
-					const sv = v === undefined || v === null ? '' : String(v);
-					if (sv !== '' && ex.includes(sv)) return false;
-				} else {
-					const has = customFieldHasValue(it, col.id);
-					if (has && ex.includes(HAS_VALUE)) return false;
-					if (!has && ex.includes(NO_VALUE)) return false;
-				}
-			}
-			return true;
+			return columns.every((col) => passesCustomFilter(it, col, f.customExclude[col.id]));
 		});
 	}
 
@@ -882,13 +886,13 @@ export class ReadingTab {
 	searchFields(): SearchFieldSpec<Book | Manga>[] {
 		const isBooks = this.activeSubTab === 'books';
 		const fields: SearchFieldSpec<Book | Manga>[] = [
-			{ name: 'title', label: 'Title', weight: 0.6, text: (i) => [i.title] },
-			{ name: 'author', label: 'Author', weight: 0.25, text: (i) => [i.author] },
-			{ name: 'year', label: 'Year', weight: 0.05, text: (i) => { const y = yearOf(i.releaseDate); return y ? [String(y)] : []; }, number: (i) => yearOf(i.releaseDate) },
-			{ name: 'rating', label: 'Rating', number: (i) => i.rating },
+			{ name: 'title', label: t('reading.fields.title'), weight: 0.6, text: (i) => [i.title] },
+			{ name: 'author', label: t('reading.fields.author'), weight: 0.25, text: (i) => [i.author] },
+			{ name: 'year', label: t('reading.fields.year'), weight: 0.05, text: (i) => { const y = yearOf(i.releaseDate); return y ? [String(y)] : []; }, number: (i) => yearOf(i.releaseDate) },
+			{ name: 'rating', label: t('reading.fields.rating'), number: (i) => i.rating },
 			{
 				name: isBooks ? 'pages' : 'chapters',
-				label: isBooks ? 'Pages' : 'Chapters',
+				label: isBooks ? t('reading.fields.pages') : t('reading.fields.chapters'),
 				number: (i) => (isBooks ? (i as Book).totalPages : (i as Manga).totalChapters) || null,
 			},
 		];
@@ -1015,7 +1019,7 @@ export class ReadingTab {
 			const q = this.searchQuery.trim();
 			this.contentEl.createDiv({
 				cls: 'wl-reading-empty-search',
-				text: q ? `No matches for "${q}".` : 'No items match the current filters.',
+				text: q ? t('reading.noMatchesQuery', { query: q }) : t('reading.noMatchesFilters'),
 			});
 			return;
 		}
@@ -1060,8 +1064,8 @@ export class ReadingTab {
 				// newest favorite first — this shelf ignores the tab sort
 				const favorites = sortByFavorited(items.filter((i) => i.favorite === true && itemVisible(i)));
 				renderShelf(
-					scroll, 'Favorites', favorites,
-					`No favorites yet; open a ${isBooks ? 'book' : 'manga'} and tap the heart.`,
+					scroll, t('reading.shelves.favorites'), favorites,
+					t(isBooks ? 'reading.shelves.emptyFavoritesBook' : 'reading.shelves.emptyFavoritesManga'),
 					filtering, renderCard, this.shelfSelect(favorites),
 				);
 			},
@@ -1071,16 +1075,16 @@ export class ReadingTab {
 					.slice(0, 10)
 					.filter(itemVisible);
 				renderShelf(
-					scroll, 'Recently Added', recentlyAdded,
-					'Nothing here yet; added items will show up in this row.',
+					scroll, t('reading.shelves.recentlyAdded'), recentlyAdded,
+					t('reading.shelves.emptyRecentlyAdded'),
 					filtering, renderCard, this.shelfSelect(recentlyAdded),
 				);
 			},
 			recentlyRead: () => {
 				const recentlyRead = this.getRecentlyReadItems(items).filter(itemVisible);
 				renderShelf(
-					scroll, 'Recently Read', recentlyRead,
-					'Nothing read yet; items you progress or finish show up here.',
+					scroll, t('reading.shelves.recentlyRead'), recentlyRead,
+					t('reading.shelves.emptyRecentlyRead'),
 					filtering, renderCard, this.shelfSelect(recentlyRead),
 				);
 			},
@@ -1100,8 +1104,8 @@ export class ReadingTab {
 					.slice(0, 10)
 					.filter(itemVisible);
 				renderShelf(
-					scroll, 'Recently Released', recentlyReleased,
-					'No released items yet; items with a past release date show up here.',
+					scroll, t('reading.shelves.recentlyReleased'), recentlyReleased,
+					t('reading.shelves.emptyRecentlyReleased'),
 					filtering, renderCard, this.shelfSelect(recentlyReleased),
 				);
 			},
@@ -1141,9 +1145,9 @@ export class ReadingTab {
 	private renderResultsCount(titleCount: number): void {
 		if (!this.contentEl) return;
 		const countEl = this.contentEl.createDiv({ cls: 'wl-results-count wl-results-count-rows' });
-		countEl.textContent = `${titleCount} title${titleCount !== 1 ? 's' : ''}`;
+		countEl.textContent = t('ui.group.countTitle', { count: titleCount });
 		const gearBtn = countEl.createEl('button', { cls: 'wl-rows-customize-btn' });
-		gearBtn.setAttr('aria-label', 'Customize rows');
+		gearBtn.setAttr('aria-label', t('reading.customizeRows'));
 		setIcon(gearBtn, 'settings');
 		gearBtn.addEventListener('click', () => {
 			new RowsCustomizeModal(this.plugin.app, this.plugin, {
@@ -1155,7 +1159,7 @@ export class ReadingTab {
 				// (quiet: onChanged re-renders this tab itself).
 				persist: () => this.readingData.persistQuiet(),
 				onChanged: () => this.renderContent(),
-				hint: 'Reorder the sections or switch them off. "By status" is the grouped grid section; with it off the items show as one flat grid.',
+				hint: t('reading.customizeHint'),
 				// Reading has a single grouped-grid section — nothing to be
 				// mutually exclusive with.
 				exclusiveGroups: [],
@@ -1245,14 +1249,14 @@ export class ReadingTab {
 		isBooks: boolean,
 	): void {
 		const section = parent.createDiv({ cls: 'wl-rows-bytype' });
-		section.createDiv({ cls: 'wl-rows-bytype-title', text: 'By status' });
+		section.createDiv({ cls: 'wl-rows-bytype-title', text: t('reading.shelves.byStatus') });
 
 		let rendered = 0;
 		for (const status of READING_STATUSES) {
 			const bucket = this.applySort(items.filter((i) => i.status === status && itemVisible(i)));
 			if (bucket.length === 0) continue;
 			rendered++;
-			renderShelfTitle(section, status, bucket.length, this.shelfSelect(bucket));
+			renderShelfTitle(section, readingStatusLabel(status), bucket.length, this.shelfSelect(bucket));
 			this.addReadingGridSection(section, bucket, isBooks);
 		}
 		if (rendered === 0) {
@@ -1262,7 +1266,7 @@ export class ReadingTab {
 			}
 			section.createDiv({
 				cls: 'wl-rows-shelf-empty',
-				text: 'No items yet; added items are grouped by status here.',
+				text: t('reading.shelves.emptyByStatus'),
 			});
 		}
 	}
@@ -1278,7 +1282,7 @@ export class ReadingTab {
 	): void {
 		if (sortedItems.length === 0) return;
 		const section = parent.createDiv({ cls: 'wl-rows-bytype' });
-		if (titled) renderShelfTitle(section, isBooks ? 'All books' : 'All manga', sortedItems.length, this.shelfSelect(sortedItems));
+		if (titled) renderShelfTitle(section, t(isBooks ? 'reading.shelves.allBooks' : 'reading.shelves.allManga'), sortedItems.length, this.shelfSelect(sortedItems));
 		this.addReadingGridSection(section, sortedItems, isBooks);
 	}
 
@@ -1371,7 +1375,8 @@ export class ReadingTab {
 
 	private renderBookCard(grid: HTMLElement, book: Book): void {
 		const { card, textHost } = this.renderCardShell(grid, book, '📖');
-		const { read, total, label } = bookUnitProgress(book);
+		const { read, total, label: unit } = bookUnitProgress(book);
+		const label = t(unit === 'words' ? 'reading.card.units.words' : 'reading.card.units.pages');
 		const progress = total > 0 ? Math.min(100, Math.round((read / total) * 100)) : 0;
 		this.renderProgressBar(textHost, progress, book.status);
 		const text = textHost.createDiv({ cls: 'wl-reading-card-progress-text' });
@@ -1380,7 +1385,7 @@ export class ReadingTab {
 		} else if (read > 0) {
 			text.textContent = `${formatCount(read)} ${label}`;
 		} else {
-			text.textContent = 'No progress';
+			text.textContent = t('reading.card.noProgress');
 		}
 		this.bindCardClick(card, 'book', book.id);
 	}
@@ -1393,14 +1398,14 @@ export class ReadingTab {
 		this.renderProgressBar(textHost, progress, manga.status);
 		const text = textHost.createDiv({ cls: 'wl-reading-card-progress-text' });
 		const chPart = manga.totalChapters > 0
-			? `Ch. ${manga.chaptersRead}/${manga.totalChapters}`
-			: manga.chaptersRead > 0 ? `Ch. ${manga.chaptersRead}` : '';
+			? t('reading.card.chapters', { read: manga.chaptersRead, total: manga.totalChapters })
+			: manga.chaptersRead > 0 ? t('reading.card.chaptersRead', { read: manga.chaptersRead }) : '';
 		const volPart = manga.totalVolumes > 0
-			? `Vol. ${manga.volumesRead}/${manga.totalVolumes}`
-			: manga.volumesRead > 0 ? `Vol. ${manga.volumesRead}` : '';
+			? t('reading.card.volumes', { read: manga.volumesRead, total: manga.totalVolumes })
+			: manga.volumesRead > 0 ? t('reading.card.volumesRead', { read: manga.volumesRead }) : '';
 		if (chPart) text.createSpan({ cls: 'wl-reading-card-progress-piece', text: chPart });
 		if (volPart) text.createSpan({ cls: 'wl-reading-card-progress-piece', text: volPart });
-		if (!chPart && !volPart) text.textContent = 'No progress';
+		if (!chPart && !volPart) text.textContent = t('reading.card.noProgress');
 		this.bindCardClick(card, 'manga', manga.id);
 	}
 
@@ -1478,14 +1483,14 @@ export class ReadingTab {
 			}
 		}
 
-		const statusBadge = cover.createSpan({ cls: 'wl-reading-card-status-badge', text: item.status });
+		const statusBadge = cover.createSpan({ cls: 'wl-reading-card-status-badge', text: readingStatusLabel(item.status) });
 		statusBadge.style.backgroundColor = readingStatusColor(item.status, this.readingData.getSettings().statusColors);
 
 		const menuBtn = card.createEl('button', {
 			cls: 'wl-reading-card-menu-btn',
 			text: '⋮',
 		});
-		menuBtn.setAttr('aria-label', 'More actions');
+		menuBtn.setAttr('aria-label', t('reading.card.moreActions'));
 		menuBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			this.openCardContextMenu(card, menuBtn, item);
@@ -1514,7 +1519,7 @@ export class ReadingTab {
 		openCardMenu(
 			card,
 			anchorBtn,
-			[{ label: 'Refresh cover', onClick: () => this.refreshCover(item) }],
+			[{ label: t('reading.card.refreshCover'), onClick: () => this.refreshCover(item) }],
 			{ container: this.container, cleanups: this.activeCleanups },
 			'wl-reading-card',
 		);
@@ -1527,24 +1532,24 @@ export class ReadingTab {
 		if (kind === 'book') {
 			const book = item as Book;
 			if (!book.googleBooksId) {
-				new Notice('No Google Books ID; cannot refresh cover.');
+				new Notice(t('reading.notices.noGoogleBooksId'));
 				return;
 			}
 			if (!this.plugin.apiService.hasGoogleBooksKey()) {
-				new Notice('Google Books API key required; add one in Settings → API → Books.');
+				new Notice(t('reading.notices.googleBooksKeyRequired'));
 				return;
 			}
 			void (async () => {
 				try {
 					const coverUrl = await fetchReadingCoverById(this.plugin.apiService, 'book', book);
 					if (!coverUrl) {
-						new Notice('Could not fetch cover from API.');
+						new Notice(t('reading.notices.coverFetchFailed'));
 						return;
 					}
 					const fresh = this.readingData.getBook(book.id);
 					if (!fresh) return;
 					await this.readingData.updateBook({ ...fresh, coverUrl });
-					new Notice('Cover refreshed.');
+					new Notice(t('reading.notices.coverRefreshed'));
 				} catch (err) {
 					new Notice(apiErrorMessage(err));
 				}
@@ -1552,22 +1557,22 @@ export class ReadingTab {
 		} else {
 			const manga = item as Manga;
 			if (!manga.malId) {
-				new Notice('No MAL ID; cannot refresh cover.');
+				new Notice(t('reading.notices.noMalId'));
 				return;
 			}
 			void (async () => {
 				try {
 					const coverUrl = await fetchReadingCoverById(this.plugin.apiService, 'manga', manga);
 					if (!coverUrl) {
-						new Notice('Could not fetch cover from API.');
+						new Notice(t('reading.notices.coverFetchFailed'));
 						return;
 					}
 					const fresh = this.readingData.getManga(manga.id);
 					if (!fresh) return;
 					await this.readingData.updateManga({ ...fresh, coverUrl });
-					new Notice('Cover refreshed.');
+					new Notice(t('reading.notices.coverRefreshed'));
 				} catch {
-					new Notice('Failed to refresh cover.');
+					new Notice(t('reading.notices.refreshFailed'));
 				}
 			})();
 		}
@@ -1586,10 +1591,10 @@ export class ReadingTab {
 		const isBooks = this.activeSubTab === 'books';
 		empty.createSpan({ cls: 'wl-reading-empty-icon', text: isBooks ? '📖' : '📓' });
 		const msg = empty.createDiv({ cls: 'wl-reading-empty-msg' });
-		msg.createSpan({ text: isBooks ? 'No books yet; ' : 'No manga yet; ' });
+		msg.createSpan({ text: t(isBooks ? 'reading.empty.noBooks' : 'reading.empty.noManga') });
 		const link = msg.createEl('a', {
 			cls: 'wl-reading-empty-link',
-			text: isBooks ? 'add your first book' : 'add your first manga',
+			text: t(isBooks ? 'reading.empty.linkBook' : 'reading.empty.linkManga'),
 		});
 		link.addEventListener('click', (e) => {
 			e.preventDefault();
