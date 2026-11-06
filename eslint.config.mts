@@ -64,6 +64,7 @@ export default defineConfig(
 	},
 	globalIgnores([
 		"node_modules",
+		".claude/worktrees",
 		"dist",
 		"esbuild.config.mjs",
 		"eslint.config.js",

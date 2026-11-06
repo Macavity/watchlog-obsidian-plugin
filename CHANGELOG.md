@@ -3,11 +3,12 @@
 All notable changes to WatchLog Sync are documented here. Versions up to 3.1.2 are the upstream
 [WatchLog](https://github.com/Shynkro/watchlog-obsidian-plugin) by BogdanS.
 
-## [4.1.0] - 2026-10-30
+## [4.1.0] - 2026-11-06
 
 ##### Fixed
 
 * Anime and manga search, details, posters and airing data work again after the public Jikan API shut down. MyAnimeList data now comes from [Tenrai](https://tenrai.org/), a Jikan-compatible API, by default.
+* Add title: the search results panel no longer collapses on phones.
 
 ##### Added
 
