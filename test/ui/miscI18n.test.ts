@@ -18,11 +18,10 @@ function findByClass(root: El, cls: string): El | undefined {
 }
 
 describe('misc modal i18n', () => {
-	it('localizes the confirm modal title and confirm button', () => {
+	it('localizes the confirm button', () => {
 		setLocale('de');
 		const modal = new ConfirmModal({} as never, 'Eintrag entfernen?', () => {});
 		modal.open();
-		expect(modal.titleEl.text).toBe('Bist du sicher?');
 		expect(findByClass(modal.contentEl, 'wl-btn-danger')?.text).toBe('Bestätigen');
 	});
 });

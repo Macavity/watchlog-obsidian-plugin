@@ -1,6 +1,5 @@
 const misc = {
 	confirm: {
-		title: 'Are you sure?',
 		confirm: 'Confirm',
 	},
 	maybeAdd: {

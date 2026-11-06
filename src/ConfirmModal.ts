@@ -24,7 +24,6 @@ export class ConfirmModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
-		this.titleEl.setText(t('misc.confirm.title'));
 		contentEl.createDiv({ cls: 'wl-confirm-msg', text: this.message });
 		const btnRow = contentEl.createDiv({ cls: 'wl-modal-btn-row' });
 		btnRow.createEl('button', { cls: 'wl-btn wl-btn-danger', text: t('misc.confirm.confirm') })

@@ -3,7 +3,6 @@ import type { DeepPartial } from '../index';
 
 const misc = {
 	confirm: {
-		title: 'Bist du sicher?',
 		confirm: 'Bestätigen',
 	},
 	maybeAdd: {
