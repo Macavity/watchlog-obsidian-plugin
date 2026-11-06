@@ -17,6 +17,8 @@ const sentenceCaseOptions = {
 		'Google', 'MAL', 'TSV', 'URLs', 'APIs', 'Steam', 'Tenrai', 'English',
 		// Stored type name and the default rating-tier label
 		'Book', 'Good',
+		// API provider names (proper nouns)
+		'RAWG', 'TMDB', 'OMDb', 'IGDB', 'Twitch', 'Jikan', 'AniList', 'MyAnimeList',
 	],
 	ignoreRegex: [
 		'^DD/MM/YYYY$',            // date format mask
@@ -24,6 +26,10 @@ const sentenceCaseOptions = {
 		'^Season \\d',             // season-spec example placeholder
 		'\\(Season 1 = color 1',    // season example inside the help text
 		'"Game details" to Public', // Steam's own profile privacy wording
+		// settings area: external service wording and stored status names named inside the text
+		'^(Get a Web API key|Paste your Steam Web API key here|Movies & TV shows|Not a Jikan-compatible API|Register a Twitch app|— Not set —|Keep as Added)$',
+		'^(Steam has no search endpoint|Missing a name\\? Use the|TMDB is used through|Anime and manga data from MyAnimeList|Create a project in the Google Cloud|RAWG also carries|IGDB authenticates through|Choose which API group|Anime API \\(|Movie / TV API \\()',
+		'^(Full-width (triple|double) card: |Statuses To be released or Dropped|Calculated as: |Groups let you combine|Pinning a title moves|Open the title and click Edit|WatchLog uses a different API|Reading entries use five statuses|Books track pages read|Covers are fetched automatically|Any title with a release date)',
 		'^p\\. 123',               // quote-location example placeholder
 		'^APIs & Services',        // Google Cloud console path
 		'"N due"',                 // N is a number placeholder
