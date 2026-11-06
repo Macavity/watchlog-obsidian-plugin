@@ -1,7 +1,10 @@
 import { setIcon } from 'obsidian';
 
-/** `framed` adds a border (rating row refresh); `lg` is the 28px card-menu size. */
-export type IconButtonVariant = 'framed' | 'lg';
+/**
+ * `framed` adds a border (rating row refresh); `lg` is the 28px card-menu size;
+ * `sm` is the 16px inline affordance next to text (add / remove on a credits row).
+ */
+export type IconButtonVariant = 'framed' | 'lg' | 'sm';
 
 export interface IconButtonOptions {
 	/** Lucide icon name, e.g. `refresh-cw`. */

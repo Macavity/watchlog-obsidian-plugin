@@ -20,6 +20,7 @@ import type { TmdbCollectionDetail } from './types';
 import { t } from './i18n';
 import { paintFavoriteButton, renderGroupDetailHeader, episodeGridText } from './ui/detailShared';
 import { priorityLabel, statusLabel, typeLabel } from './i18n/labels';
+import { createIconButton } from './ui/IconButton';
 
 // titles whose credits backfill is in flight — de-dupes rapid modal re-opens
 const creditsBackfillInFlight = new Set<string>();
@@ -707,11 +708,12 @@ export class TitleDetailModal extends Modal {
 			});
 			return;
 		}
-		const refreshBtn = container.createEl('button', {
-			cls: 'wl-community-refresh wl-trailer-refresh',
-			attr: { type: 'button', title: t('detail.trailer.fetch'), 'aria-label': t('detail.trailer.fetch') },
+		const refreshBtn = createIconButton(container, {
+			icon: 'refresh-cw',
+			label: t('detail.trailer.fetch'),
+			cls: 'wl-trailer-refresh',
+			variant: 'framed',
 		});
-		setIcon(refreshBtn, 'refresh-cw');
 		refreshBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			void this.refreshTrailer(refreshBtn, container);
@@ -1107,9 +1109,12 @@ export function renderCreditsRefreshButton(
 	title: WatchLogTitle,
 	onDone: (changed: boolean) => void,
 ): void {
-	const btn = parent.createEl('button', { cls: 'wl-credits-refresh', text: '⟳' });
-	btn.title = t('detail.credits.refresh');
-	btn.setAttr('aria-label', t('detail.credits.refresh'));
+	const btn = createIconButton(parent, {
+		icon: 'refresh-cw',
+		label: t('detail.credits.refresh'),
+		cls: 'wl-credits-refresh',
+		variant: 'framed',
+	});
 	if (creditsRefreshInFlight.has(title.id)) btn.addClass('is-loading');
 	btn.addEventListener('click', () => {
 		if (creditsRefreshInFlight.has(title.id)) return;
@@ -1187,10 +1192,12 @@ export function renderCreditsRows(
 
 		// studio has no add path — AddCreditModal's pool and labels are director/cast only
 		if (onAddCredits && field !== 'studio') {
-			const addBtn = labelEl.createEl('button', { cls: 'wl-credits-add', text: '+' });
-			const addLabel = t(field === 'director' ? 'detail.credits.addDirector' : 'detail.credits.addCast');
-			addBtn.title = addLabel;
-			addBtn.setAttr('aria-label', addLabel);
+			const addBtn = createIconButton(labelEl, {
+				icon: 'plus',
+				label: t(field === 'director' ? 'detail.credits.addDirector' : 'detail.credits.addCast'),
+				cls: 'wl-credits-add',
+				variant: 'sm',
+			});
 			addBtn.addEventListener('click', (e) => {
 				e.stopPropagation();
 				onAddCredits(field);
@@ -1220,10 +1227,12 @@ export function renderCreditsRows(
 				});
 			}
 			if (isManual && onRemoveManual) {
-				const del = el.createEl('button', { cls: 'wl-credits-name-del', text: '✕' });
-				const removeLabel = t('detail.credits.removeName', { name });
-				del.title = removeLabel;
-				del.setAttr('aria-label', removeLabel);
+				const del = createIconButton(el, {
+					icon: 'x',
+					label: t('detail.credits.removeName', { name }),
+					cls: 'wl-credits-name-del',
+					variant: 'sm',
+				});
 				del.addEventListener('click', (e) => {
 					e.stopPropagation();
 					onRemoveManual(field, name);

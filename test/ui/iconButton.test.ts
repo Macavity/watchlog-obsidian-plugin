@@ -27,6 +27,11 @@ describe('createIconButton', () => {
 		expect(btn.classes.has('wl-bar')).toBe(true);
 	});
 
+	it('maps the sm variant to its class', () => {
+		const btn = build({ icon: 'plus', label: 'Add', variant: 'sm' });
+		expect(btn.classes.has('wl-icon-btn-sm')).toBe(true);
+	});
+
 	it('maps the lg variant to its class', () => {
 		const btn = build({ icon: 'more-vertical', label: 'Menu', variant: 'lg' });
 		expect(btn.classes.has('wl-icon-btn-lg')).toBe(true);

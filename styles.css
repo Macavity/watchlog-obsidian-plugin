@@ -114,6 +114,77 @@ button.wl-tab-btn {
   height: var(--wl-pinned-tab-height);
 }
 
+/* ══ ICON BUTTONS ══ */
+
+/* Icon-only buttons, built by src/ui/IconButton.ts. element-qualified: a plain .class
+   loses to core's button:not(.clickable-icon) (background, shadow, radius, height).
+   Kept near the top so a component's own `button.wl-x` rule wins by source order. */
+button.wl-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+}
+
+button.wl-icon-btn .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+button.wl-icon-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+
+/* bordered, the rating-row look */
+button.wl-icon-btn-framed {
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* inline next to text: add / remove on a credits row */
+button.wl-icon-btn-sm {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+}
+
+button.wl-icon-btn-sm .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+
+/* card menus and the mobile toolbar */
+button.wl-icon-btn-lg {
+  width: 28px;
+  height: 28px;
+}
+
+button.wl-icon-btn-lg .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* refresh in flight; the caller toggles the class */
+button.wl-icon-btn.is-loading {
+  animation: wl-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+
+/* core's .is-tablet button:not(.clickable-icon) padding would squeeze the icon out */
+body.is-tablet button.wl-icon-btn {
+  padding: 0;
+}
+
 /* ══ DASHBOARD TAB ══ */
 
 /* Dashboard container */
@@ -6730,33 +6801,9 @@ button.wl-inner-tab-btn {
   margin-top: 2px;
 }
 
-/* manual credits re-fetch; spins while in flight */
+/* manual credits re-fetch (icon button); sits at the start of the credits column */
 .wl-credits-refresh {
   align-self: flex-start;
-  background: none;
-  border: none;
-  box-shadow: none;
-  border-radius: 4px;
-  width: 44px;
-  height: 8px;
-  padding: 0;
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.wl-credits-refresh:hover {
-  color: var(--text-normal);
-  background-color: var(--background-modifier-hover);
-}
-
-.wl-credits-refresh.is-loading {
-  animation: wl-spin 0.9s linear infinite;
-  pointer-events: none;
 }
 
 .wl-credits-row {
@@ -6785,29 +6832,10 @@ button.wl-inner-tab-btn {
   text-decoration: underline;
 }
 
-/* Leading + on each credits row — opens the add-credit modal for that field. */
+/* Leading + on each credits row (sm icon button) — opens the add-credit modal for that field. */
 .wl-credits-add {
-  background: none;
-  border: none;
-  box-shadow: none;
-  border-radius: 4px;
-  width: 16px;
-  height: 16px;
-  padding: 0;
   margin-right: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   vertical-align: -3px;
-}
-
-.wl-credits-add:hover {
-  color: var(--text-normal);
-  background-color: var(--background-modifier-hover);
 }
 
 /* User-added names: a dotted underline marks them apart from fetched credits. */
@@ -6815,37 +6843,26 @@ button.wl-inner-tab-btn {
   border-bottom: 1px dotted var(--text-faint);
 }
 
-/* ✕ on a user-added name, revealed on hover so the row stays quiet at rest. */
-.wl-credits-name-del {
-  background: none;
-  border: none;
-  box-shadow: none;
-  padding: 0;
+/* ✕ on a user-added name (sm icon button), revealed on hover so the row stays quiet at rest.
+   element-qualified to outrank the base's display */
+button.wl-credits-name-del {
   margin-left: 3px;
-  width: 12px;
-  height: 12px;
-  font-size: 9px;
-  line-height: 1;
-  cursor: pointer;
-  color: var(--text-faint);
-  display: none;
-  align-items: center;
-  justify-content: center;
   vertical-align: 1px;
+  display: none;
 }
 
-.wl-credits-name:hover .wl-credits-name-del {
+.wl-credits-name:hover button.wl-credits-name-del {
   display: inline-flex;
 }
 
 /* no hover on touch — the remove control has to be there from the start */
 @media (hover: none) {
-  .wl-credits-name-del {
+  button.wl-credits-name-del {
     display: inline-flex;
   }
 }
 
-.wl-credits-name-del:hover {
+button.wl-credits-name-del:hover {
   color: var(--text-error, var(--text-accent));
 }
 
@@ -6969,24 +6986,12 @@ button.wl-inner-tab-btn {
   white-space: nowrap;
 }
 
+/* sm icon button at the end of a staged-name chip */
 .wl-credit-chip-del {
-  background: none;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-  width: 14px;
-  height: 14px;
   flex: 0 0 auto;
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
 }
 
-.wl-credit-chip-del:hover {
+button.wl-credit-chip-del:hover {
   color: var(--text-error, var(--text-accent));
 }
 
@@ -7615,32 +7620,6 @@ button.wl-inner-tab-btn {
   font-style: italic;
 }
 
-.wl-community-refresh {
-  background: transparent;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 4px;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.wl-community-refresh:hover {
-  color: var(--text-normal);
-  background-color: var(--background-modifier-hover);
-}
-
-.wl-community-refresh.is-loading {
-  animation: wl-spin 0.9s linear infinite;
-  pointer-events: none;
-}
-
 /* Trailer control at the tail of the rating row (rating badge → refresh → YouTube). */
 .wl-trailer-control {
   display: inline-flex;
@@ -7677,13 +7656,9 @@ button.wl-inner-tab-btn {
   height: 22px;
 }
 
+/* framed icon button after the rating badge */
 .wl-trailer-refresh {
   margin-left: 8px;
-}
-
-.wl-trailer-refresh .svg-icon {
-  width: 14px;
-  height: 14px;
 }
 
 /* Store button — the trailer-button frame with a store glyph (Games). */
@@ -7842,65 +7817,6 @@ button.wl-seg-toggle-btn.is-active {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
-
-/* ══ ICON BUTTONS ══ */
-
-/* Icon-only buttons, built by src/ui/IconButton.ts. element-qualified: a plain .class
-   loses to core's button:not(.clickable-icon) (background, shadow, radius, height). */
-button.wl-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 4px;
-  box-shadow: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  line-height: 1;
-}
-
-button.wl-icon-btn .svg-icon {
-  width: 14px;
-  height: 14px;
-}
-
-button.wl-icon-btn:hover {
-  color: var(--text-normal);
-  background: var(--background-modifier-hover);
-  box-shadow: none;
-}
-
-/* bordered, the rating-row look */
-button.wl-icon-btn-framed {
-  border: 1px solid var(--background-modifier-border);
-}
-
-/* card menus and the mobile toolbar */
-button.wl-icon-btn-lg {
-  width: 28px;
-  height: 28px;
-}
-
-button.wl-icon-btn-lg .svg-icon {
-  width: 18px;
-  height: 18px;
-}
-
-/* refresh in flight; the caller toggles the class */
-button.wl-icon-btn.is-loading {
-  animation: wl-spin 0.9s linear infinite;
-  pointer-events: none;
-}
-
-/* core's .is-tablet button:not(.clickable-icon) padding would squeeze the icon out */
-body.is-tablet button.wl-icon-btn {
-  padding: 0;
-}
-
 /* Small numeric settings input (e.g. top directors/actors count): ~3 digits wide. */
 input.wl-settings-count-input {
   width: 64px;
@@ -10949,7 +10865,8 @@ button.wl-reading-subtab.is-active {
   --icon-size: 16px;
 }
 
-.wl-detail-mobile .wl-detail-badge-row .wl-acc-link-icon svg {
+.wl-detail-mobile .wl-detail-badge-row .wl-acc-link-icon svg,
+.wl-detail-mobile .wl-detail-badge-row .wl-credits-refresh .svg-icon {
   width: 16px;
   height: 16px;
 }
@@ -11368,11 +11285,6 @@ button.wl-search-help-btn:focus {
    button's own rule. */
 body.is-tablet button.wl-airtime-action-btn,
 body.is-tablet button.wl-card-menu-btn,
-body.is-tablet button.wl-community-refresh,
-body.is-tablet button.wl-credit-chip-del,
-body.is-tablet button.wl-credits-add,
-body.is-tablet button.wl-credits-name-del,
-body.is-tablet button.wl-credits-refresh,
 body.is-tablet button.wl-datepicker-nav,
 body.is-tablet button.wl-editcol-card-del,
 body.is-tablet button.wl-editcol-card-opt-del,

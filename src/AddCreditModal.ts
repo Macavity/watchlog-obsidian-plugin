@@ -3,6 +3,7 @@ import type WatchLogPlugin from './main';
 import { t } from './i18n';
 import type { WatchLogTitle, CreditsField } from './types';
 import { getDisplayCredits, getManualCredits, getTitleCredits } from './types';
+import { createIconButton } from './ui/IconButton';
 
 /** A name offered by the search pane, with how often it appears in each field library-wide. */
 interface CreditSuggestion {
@@ -297,10 +298,12 @@ export class AddCreditModal extends Modal {
 		this.staged.forEach((name, idx) => {
 			const chip = wrap.createDiv({ cls: 'wl-credit-chip' });
 			chip.createSpan({ cls: 'wl-credit-chip-name', text: name });
-			const del = chip.createEl('button', { cls: 'wl-credit-chip-del', text: '✕' });
-			const removeLabel = t('add.credit.removeName', { name });
-			del.title = removeLabel;
-			del.setAttr('aria-label', removeLabel);
+			const del = createIconButton(chip, {
+				icon: 'x',
+				label: t('add.credit.removeName', { name }),
+				cls: 'wl-credit-chip-del',
+				variant: 'sm',
+			});
 			del.addEventListener('click', () => {
 				this.staged.splice(idx, 1);
 				this.renderResults();
