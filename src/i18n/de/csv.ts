@@ -34,6 +34,7 @@ const csv = {
 	},
 	cancelled: 'Abgebrochen: {done} / {total} importiert',
 	done: 'Fertig: {count} importiert',
+	failed: 'Fehlgeschlagen: {done} / {total} importiert',
 	map: {
 		title: 'Spalten zuordnen',
 		descWatch: 'Ordne jedes WatchLog-Feld einer Spalte deiner CSV zu. Wähle "Überspringen", um ein Feld leer zu lassen.',
@@ -75,6 +76,7 @@ const csv = {
 		malId: 'MAL-ID',
 	},
 	notice: {
+		importFailed: 'Import nach {done} von {total} Zeilen abgebrochen: eine Notiz konnte nicht geschrieben werden. Siehe Entwicklerkonsole.',
 		noTitlesSelected: 'Keine Titel ausgewählt.',
 		noTitlesToImport: 'Keine Titel zum Import ausgewählt.',
 		exportedTitles: { one: '{count} Titel exportiert.', other: '{count} Titel exportiert.' },

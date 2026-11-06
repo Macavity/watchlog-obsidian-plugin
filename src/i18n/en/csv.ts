@@ -31,6 +31,7 @@ const csv = {
 	},
 	cancelled: 'Cancelled: {done} / {total} imported',
 	done: 'Done: {count} imported',
+	failed: 'Failed: {done} / {total} imported',
 	map: {
 		title: 'Map your columns',
 		descWatch: 'Match each WatchLog field to a column from your CSV. Select "Skip" to leave a field empty.',
@@ -72,6 +73,7 @@ const csv = {
 		malId: 'MAL ID',
 	},
 	notice: {
+		importFailed: 'Import stopped after {done} of {total} rows: a note could not be written. See the developer console.',
 		noTitlesSelected: 'No titles selected.',
 		noTitlesToImport: 'No titles selected to import.',
 		exportedTitles: { one: 'Exported {count} title.', other: 'Exported {count} titles.' },

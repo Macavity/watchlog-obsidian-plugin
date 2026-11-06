@@ -159,6 +159,8 @@ export abstract class CsvModalBase<E extends CsvEntryBase> extends Modal {
 
 	protected isImporting = false;
 	protected importCancelled = false;
+	/** Set when a batch write threw: the rows before it are stored, the rest are not. */
+	protected importFailed = false;
 	private progressWrap: HTMLElement | null = null;
 	private progressBarFill: HTMLElement | null = null;
 	private progressText: HTMLElement | null = null;
@@ -632,6 +634,7 @@ export abstract class CsvModalBase<E extends CsvEntryBase> extends Modal {
 	protected startImportUi(total: number): void {
 		this.isImporting = true;
 		this.importCancelled = false;
+		this.importFailed = false;
 		if (this.importBtn) this.importBtn.disabled = true;
 		if (this.cancelBtn) this.cancelBtn.textContent = t('csv.cancelImport');
 		if (this.progressWrap) this.progressWrap.show();
@@ -641,7 +644,8 @@ export abstract class CsvModalBase<E extends CsvEntryBase> extends Modal {
 
 	/**
 	 * Builds and stores the rows in chunks, honouring cancel between entries; returns how many were
-	 * added.
+	 * added. A batch that throws ends the import: the count stays at the rows stored so far and
+	 * `importFailed` is set, so the finish step can say the import is partial.
 	 */
 	protected async importInChunks<X>(
 		toImport: CsvImportRow<E>[],
@@ -650,39 +654,59 @@ export abstract class CsvModalBase<E extends CsvEntryBase> extends Modal {
 		onProgress?: (added: number) => void,
 	): Promise<number> {
 		let added = 0;
-		for (let chunkStart = 0; chunkStart < toImport.length; chunkStart += CHUNK_SIZE) {
-			if (this.importCancelled) break;
-			const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, toImport.length);
-			const chunk: X[] = [];
-			for (let i = chunkStart; i < chunkEnd; i++) {
-				if (this.importCancelled) break;
-				chunk.push(build(toImport[i]!));
-			}
-			if (chunk.length === 0) break;
-			await addBatch(chunk);
+		for (let chunkStart = 0; chunkStart < toImport.length && !this.importCancelled; chunkStart += CHUNK_SIZE) {
+			const chunk = this.buildChunk(toImport, chunkStart, build);
+			if (chunk.length === 0 || !(await this.storeBatch(addBatch, chunk))) break;
 			added += chunk.length;
-
-			onProgress?.(added);
-			const pct = Math.round((added / toImport.length) * 100);
-			if (this.progressBarFill) this.progressBarFill.style.width = `${pct}%`;
-			if (this.progressText) this.progressText.textContent = `${added} / ${toImport.length}`;
+			this.showImportProgress(added, toImport.length, onProgress);
 		}
 		return added;
 	}
 
-	/** Final progress text, button state and notice; closes the modal unless cancelled. */
+	/** Builds up to `CHUNK_SIZE` entries from `start`, stopping early when the user cancels. */
+	private buildChunk<X>(toImport: CsvImportRow<E>[], start: number, build: (row: CsvImportRow<E>) => X): X[] {
+		const end = Math.min(start + CHUNK_SIZE, toImport.length);
+		const chunk: X[] = [];
+		for (let i = start; i < end && !this.importCancelled; i++) chunk.push(build(toImport[i]!));
+		return chunk;
+	}
+
+	/** Writes one batch; a throw marks the import as failed and returns false. */
+	private async storeBatch<X>(addBatch: (chunk: X[]) => Promise<void>, chunk: X[]): Promise<boolean> {
+		try {
+			await addBatch(chunk);
+			return true;
+		} catch (err) {
+			console.error('Watchlog: CSV import batch failed', err);
+			this.importFailed = true;
+			return false;
+		}
+	}
+
+	private showImportProgress(added: number, total: number, onProgress?: (added: number) => void): void {
+		onProgress?.(added);
+		const pct = Math.round((added / total) * 100);
+		if (this.progressBarFill) this.progressBarFill.style.width = `${pct}%`;
+		if (this.progressText) this.progressText.textContent = `${added} / ${total}`;
+	}
+
+	/** Final progress text, button state and notice; closes the modal unless cancelled or failed. */
 	protected finishImportUi(added: number, total: number, notices: { cancelled: string; done: string }): void {
-		const cancelled = this.importCancelled;
+		const stopped = this.importCancelled || this.importFailed;
 		if (this.progressText) {
-			this.progressText.textContent = cancelled
-				? t('csv.cancelled', { done: added, total })
-				: t('csv.done', { count: added });
+			this.progressText.textContent = this.importFailed
+				? t('csv.failed', { done: added, total })
+				: this.importCancelled
+					? t('csv.cancelled', { done: added, total })
+					: t('csv.done', { count: added });
 		}
 		if (this.cancelBtn) {
 			this.cancelBtn.disabled = false;
 			this.cancelBtn.textContent = t('common.close');
 		}
-		new Notice(cancelled ? notices.cancelled : notices.done);
-		if (!cancelled) this.close();
+		new Notice(this.importFailed
+			? t('csv.notice.importFailed', { done: added, total })
+			: this.importCancelled ? notices.cancelled : notices.done);
+		if (!stopped) this.close();
 	}
 }
