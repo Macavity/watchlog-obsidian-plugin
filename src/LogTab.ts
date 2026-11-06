@@ -1,11 +1,12 @@
 import { setIcon } from 'obsidian';
 import { t, type TranslationKey } from './i18n';
+import { readingStatusLabel, statusLabel } from './i18n/labels';
 import { dayName, monthName } from './ui/dateNames';
 import type WatchLogPlugin from './main';
 import type { HistoryEntry } from './HistoryManager';
 import { inferHistoryAction, inferHistorySource } from './HistoryManager';
 import { ConfirmModal } from './ConfirmModal';
-import { getActiveDateFormat } from './types';
+import { getActiveDateFormat, type ReadingStatus } from './types';
 
 type SourceFilter = 'all' | 'Watchlist' | 'Reading' | 'Games';
 
@@ -26,8 +27,15 @@ const SOURCE_COLORS: Record<string, string> = {
 	Games: '#8B5CF6',
 };
 
+/** The stored status of a history line, shown in the UI language: watch statuses first, then reading ones; anything else as stored. */
+function storedStatusLabel(status: string): string {
+	const watch = statusLabel(status);
+	return watch !== status ? watch : readingStatusLabel(status as ReadingStatus);
+}
+
 // the patterns match the stored History.md lines; only the label built from them is localized
-function actionLabel(entry: HistoryEntry): string {
+/** Exported for tests. */
+export function actionLabel(entry: HistoryEntry): string {
 	const action = inferHistoryAction(entry);
 	const m = entry.message;
 	switch (action) {
@@ -41,7 +49,7 @@ function actionLabel(entry: HistoryEntry): string {
 		}
 		case 'status': {
 			const sm = m.match(/status changed to (.+)$/);
-			return sm ? t('dashboard.log.action.status', { status: sm[1]! }) : t('dashboard.log.action.statusChanged');
+			return sm ? t('dashboard.log.action.status', { status: storedStatusLabel(sm[1]!) }) : t('dashboard.log.action.statusChanged');
 		}
 		case 'completed': return t('dashboard.log.action.completed');
 		case 'watched': {

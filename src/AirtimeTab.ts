@@ -194,8 +194,9 @@ function progressBadgeText(entry: AirtimeEntry, r: ResolvedUpcoming): string {
 	if (entry.currentSeason !== undefined) {
 		parts.push(t(r.group === 'volume' ? 'airtime.badge.volume' : 'airtime.badge.season', { n: entry.currentSeason }));
 	}
-	if (entry.currentEpisode !== undefined) {
-		parts.push(t(`airtime.badge.${r.unit}` as TranslationKey, { n: entry.currentEpisode }));
+	// games are single releases: they carry no episode counter, and there is no badge leaf for 'release'
+	if (entry.currentEpisode !== undefined && r.unit !== 'release') {
+		parts.push(t(r.unit === 'episode' ? 'airtime.badge.episode' : 'airtime.badge.chapter', { n: entry.currentEpisode }));
 	}
 	parts.push(t(`airtime.badge.${r.next}` as TranslationKey));
 	return parts.join(' · ');

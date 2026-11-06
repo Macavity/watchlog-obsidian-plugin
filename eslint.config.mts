@@ -15,8 +15,6 @@ const sentenceCaseOptions = {
 		'Notes', 'Quotes', 'Regenerate', 'Settings', 'Add', 'Last',
 		// External services / acronyms not in the rule defaults
 		'Google', 'MAL', 'TSV', 'URLs', 'APIs', 'Steam', 'Tenrai',
-		// Stored type name and the default rating-tier label
-		'Book', 'Good',
 		// API provider names (proper nouns)
 		'RAWG', 'TMDB', 'OMDb', 'IGDB', 'Twitch', 'Jikan', 'AniList', 'MyAnimeList',
 	],
@@ -37,6 +35,8 @@ const sentenceCaseOptions = {
 		'"Last type used"',        // quotes that sentinel option's label
 		'^#\\w+$',                 // tag placeholder (#watchlog)
 		'^\\d+h$',                 // duration placeholder (0h)
+		'a Book or a Manga',       // stored type name quoted inside a help text
+		'are both "Good"',        // default rating-tier label quoted inside a help text
 		// Label values that must match stored values letter-for-letter
 		'^TV Show$',
 		'^Korean TV Show$',

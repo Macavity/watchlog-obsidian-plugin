@@ -85,6 +85,23 @@ describe('i18n', () => {
 		}
 		expect(missing).toEqual([]);
 	});
+	it('plural leaves carry only zero, one and other', () => {
+		const offenders: string[] = [];
+		const walk = (node: unknown, path: string): void => {
+			if (typeof node !== 'object' || node === null) return;
+			const o = node as Record<string, unknown>;
+			if (typeof o.one === 'string' && typeof o.other === 'string') {
+				const extra = Object.keys(o).filter((k) => !['zero', 'one', 'other'].includes(k));
+				if (extra.length) offenders.push(`: `);
+				return;
+			}
+			for (const [k, v] of Object.entries(o)) walk(v, path ? `.` : k);
+		};
+		walk(en, '');
+		walk(de, '');
+		expect(offenders).toEqual([]);
+	});
+
 	it('no de leaf without an en counterpart', () => {
 		expect([...deLeaves.keys()].filter((p) => !enLeaves.has(p))).toEqual([]);
 	});
