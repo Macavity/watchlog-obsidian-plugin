@@ -1,3 +1,4 @@
 import common from './common';
+import labels from './labels';
 
-export default { common } as const;
+export default { common, labels } as const;
