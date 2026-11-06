@@ -1,5 +1,6 @@
 import { App, Modal } from 'obsidian';
 import { t } from './i18n';
+import { renderChoiceGrid } from './ui/choiceGrid';
 
 export type DraftAddChoice = 'watchlist' | 'book' | 'manga' | 'game';
 
@@ -25,21 +26,19 @@ export class DraftChoiceModal extends Modal {
 		this.titleEl.setText(this.heading);
 		contentEl.createDiv({ cls: 'wl-draft-choice-subtitle', text: this.draftText });
 
-		const grid = contentEl.createDiv({ cls: 'wl-draft-choice-grid' });
-
-		const makeOption = (label: string, choice: DraftAddChoice): void => {
-			const btn = grid.createEl('button', { cls: 'wl-draft-choice-btn' });
-			btn.createDiv({ cls: 'wl-draft-choice-label', text: label });
-			btn.addEventListener('click', () => {
+		renderChoiceGrid<DraftAddChoice>(
+			contentEl,
+			[
+				{ label: t('misc.draftChoice.addWatchlist'), choice: 'watchlist' },
+				{ label: t('misc.draftChoice.addBook'), choice: 'book' },
+				{ label: t('misc.draftChoice.addManga'), choice: 'manga' },
+				{ label: t('misc.draftChoice.addGame'), choice: 'game' },
+			],
+			(choice) => {
 				this.close();
 				this.onChoice(choice);
-			});
-		};
-
-		makeOption(t('misc.draftChoice.addWatchlist'), 'watchlist');
-		makeOption(t('misc.draftChoice.addBook'), 'book');
-		makeOption(t('misc.draftChoice.addManga'), 'manga');
-		makeOption(t('misc.draftChoice.addGame'), 'game');
+			},
+		);
 	}
 
 	onClose(): void {

@@ -1,4 +1,5 @@
 import { App, Modal, Notice } from 'obsidian';
+import { t } from './i18n';
 import { blockDuplicate, createDuplicateGuard } from './ui/DuplicateGuard';
 import {
 	linkField,
@@ -133,7 +134,7 @@ export class EditTitleModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.titleEl.setText(`Edit: ${this.original.title}`);
+		this.titleEl.setText(t('edit.heading', { title: this.original.title }));
 		this.contentEl.addClass('wl-add-modal');
 		this.buildUI();
 	}
@@ -150,13 +151,13 @@ export class EditTitleModal extends Modal {
 
 		titleField(content, this.fieldTitle, undefined, (v) => { this.fieldTitle = v; });
 
-		nameSelect(makeRow('Type'), this.plugin.settings.types.map((t) => t.name), this.fieldType,
+		nameSelect(makeRow(t('edit.type')), this.plugin.settings.types.map((t) => t.name), this.fieldType,
 			(v) => { this.fieldType = v; });
 
 		// total episodes + ep. duration paired on one row (episodes keeps its seasons skip/watch inline
 		// labels — only the layout changed)
 		const epsDurRow = content.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
-		const epsCell = makeCell(epsDurRow, 'Total episodes');
+		const epsCell = makeCell(epsDurRow, t('edit.totalEpisodes'));
 		numberInput(epsCell, {
 			value: this.fieldEpisodes,
 			min: 0,
@@ -177,11 +178,11 @@ export class EditTitleModal extends Modal {
 				return;
 			}
 			const toWatch = Math.max(0, this.fieldEpisodes - totalSkipped);
-			epsSkipLabel.textContent = `· ${totalSkipped} to skip`;
-			epsWatchLabel.textContent = `· ${toWatch} to watch`;
+			epsSkipLabel.textContent = t('edit.toSkip', { count: totalSkipped });
+			epsWatchLabel.textContent = t('edit.toWatch', { count: toWatch });
 		};
 
-		numberInput(makeCell(epsDurRow, 'Ep. duration (min)', true), {
+		numberInput(makeCell(epsDurRow, t('edit.episodeDuration'), true), {
 			value: this.fieldDuration,
 			min: 0,
 			onInput: (v) => { this.fieldDuration = v; },
@@ -190,7 +191,7 @@ export class EditTitleModal extends Modal {
 		linkField(content, this.fieldLink, 'HTTPS://...', (v) => { this.fieldLink = v; });
 
 		// poster URL (the note's `poster` field)
-		const posterRow = makeRow('Poster URL');
+		const posterRow = makeRow(t('edit.posterUrl'));
 		const posterStack = posterRow.createDiv({ cls: 'wl-modal-input-stack' });
 		const posterInput = posterStack.createEl('input', {
 			cls: 'wl-modal-input',
@@ -200,11 +201,11 @@ export class EditTitleModal extends Modal {
 		posterInput.addEventListener('input', () => { this.fieldPosterUrl = posterInput.value; });
 		posterStack.createDiv({
 			cls: 'wl-modal-info',
-			text: 'Stored in the note. Leave blank to let WatchLog fetch one again.',
+			text: t('edit.posterHelp'),
 		});
 
 		// trailer URL (manual override)
-		const trailerRow = makeRow('Trailer URL');
+		const trailerRow = makeRow(t('edit.trailerUrl'));
 		const trailerStack = trailerRow.createDiv({ cls: 'wl-modal-input-stack' });
 		const trailerInput = trailerStack.createEl('input', {
 			cls: 'wl-modal-input',
@@ -214,13 +215,13 @@ export class EditTitleModal extends Modal {
 		trailerInput.addEventListener('input', () => { this.fieldTrailerUrl = trailerInput.value; });
 		trailerStack.createDiv({
 			cls: 'wl-modal-info',
-			text: 'Override the auto-fetched trailer. Leave blank to use the fetched one.',
+			text: t('edit.trailerHelp'),
 		});
 
 		// group assignment (move / create), seeded with the title's current group
 		renderGroupPicker(content, this.dataManager.getGroups(), this.group);
 
-		const seasonsRow = makeRow('Seasons');
+		const seasonsRow = makeRow(t('edit.seasons'));
 		const seasonsHelp = seasonsRow.createDiv({ cls: 'wl-modal-input-stack' });
 		const seasonsInput = seasonsHelp.createEl('textarea', {
 			cls: 'wl-modal-textarea',
@@ -234,8 +235,8 @@ export class EditTitleModal extends Modal {
 			const total = parsed.reduce((sum, s) => sum + s.episodes, 0);
 			const totalSkipped = parsed.reduce((sum, s) => sum + (s.skippedEpisodes?.length ?? 0), 0);
 			totalPreviewEl.textContent = totalSkipped > 0
-				? `Total episodes: ${total} · ${totalSkipped} to skip`
-				: `Total episodes: ${total}`;
+				? t('edit.totalPreviewSkip', { total, skipped: totalSkipped })
+				: t('edit.totalPreview', { total });
 		};
 		updateTotalPreview();
 		updateSkipCounts();
@@ -248,28 +249,28 @@ export class EditTitleModal extends Modal {
 
 		seasonsHelp.createDiv({
 			cls: 'wl-modal-info',
-			text: 'Format: "Season Name: N" (e.g. "Season 1: 12")',
+			text: t('edit.formatHelp'),
 		});
 		seasonsHelp.createDiv({
 			cls: 'wl-modal-info',
-			text: 'Skip episodes: add "(1,3,5-10)" after count (e.g. "Season 1: 48 (33-37)")',
+			text: t('edit.skipHelp'),
 		});
 		seasonsHelp.createDiv({
 			cls: 'wl-modal-info',
-			text: 'Note: when adding a new season, remember to update "Total Episodes" so progress calculates correctly.',
+			text: t('edit.totalNote'),
 		});
 
 		const btnRow = content.createDiv({ cls: 'wl-modal-btn-row' });
-		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn', text: 'Cancel' });
+		const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn', text: t('common.cancel') });
 		cancelBtn.addEventListener('click', () => this.close());
-		const saveBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save changes' });
+		const saveBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('edit.saveChanges') });
 		saveBtn.addEventListener('click', () => void this.saveTitle());
 	}
 
 	private async saveTitle(): Promise<void> {
 		const titleName = this.fieldTitle.trim();
 		if (!titleName) {
-			new Notice('Title name cannot be empty.');
+			new Notice(t('edit.emptyName'));
 			return;
 		}
 
@@ -335,7 +336,7 @@ export class EditTitleModal extends Modal {
 			// else: moved to "— none —" — detached only
 		}
 
-		new Notice(`"${titleName}" updated.`);
+		new Notice(t('edit.updated', { name: titleName }));
 		this.close();
 		this.onSaved();
 	}
