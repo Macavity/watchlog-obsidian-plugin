@@ -1,4 +1,6 @@
 import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, parseYaml, setIcon, stringifyYaml } from 'obsidian';
+import { t } from './i18n';
+import type { ManagerNotice } from './storage/storageTypes';
 import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, setActiveDateFormat } from './types';
 import { cardSizeToMinWidth } from './VirtualGrid';
 import type { CardStyleTab, WatchLogData } from './types';
@@ -57,6 +59,7 @@ export default class WatchLogPlugin extends Plugin {
 		() => this.layout,
 		this.yaml,
 		(ref) => this.registerEvent(ref),
+		(n) => this.notifyManager(n),
 	);
 	private index = new EntryIndex(this.app, () => this.layout, this.local, (ref) => this.registerEvent(ref));
 	dataManager: DataManager = new DataManager(this, {
@@ -64,18 +67,21 @@ export default class WatchLogPlugin extends Plugin {
 		local: this.local,
 		shared: this.shared,
 		layout: () => this.layout,
+		notify: (n) => this.notifyManager(n),
 	});
 	readingDataManager: ReadingDataManager = new ReadingDataManager(this, {
 		index: this.index,
 		local: this.local,
 		shared: this.shared,
 		layout: () => this.layout,
+		notify: (n) => this.notifyManager(n),
 	});
 	gameDataManager: GameDataManager = new GameDataManager(this, {
 		index: this.index,
 		local: this.local,
 		shared: this.shared,
 		layout: () => this.layout,
+		notify: (n) => this.notifyManager(n),
 	});
 	apiService: ApiService = new ApiService('', '');
 	/** TMDB/OMDb key snapshot of the last settings save; null before onload set it */
@@ -206,6 +212,12 @@ export default class WatchLogPlugin extends Plugin {
 		const statusBarListener = (): void => this.updateStatusBar();
 		activeDocument.addEventListener('watchlog-data-changed', statusBarListener);
 		this.register(() => activeDocument.removeEventListener('watchlog-data-changed', statusBarListener));
+	}
+
+	/** Renders a manager notice in the active language. */
+	notifyManager(n: ManagerNotice): void {
+		const { code, ...params } = n;
+		new Notice(t(`notices.manager.${code}`, params));
 	}
 
 	onunload(): void {

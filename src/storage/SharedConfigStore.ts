@@ -1,5 +1,5 @@
-import { Notice, TFile, type App, type EventRef } from 'obsidian';
-import type { SharedConfig, YamlIO } from './storageTypes';
+import { TFile, type App, type EventRef } from 'obsidian';
+import type { Notify, SharedConfig, YamlIO } from './storageTypes';
 import type { VaultLayout } from './VaultLayout';
 import {
 	createBaseFile, findInFolderPath, hasWatchlogKey, readWatchlogBlock, replaceInFolderPath, writeWatchlogBlock,
@@ -81,6 +81,7 @@ export class SharedConfigStore {
 		private layout: () => VaultLayout,
 		private yaml: YamlIO,
 		private register: (ref: EventRef) => void = () => {},
+		private notify: Notify = () => {},
 	) {}
 
 	private file(): TFile | null {
@@ -153,7 +154,7 @@ export class SharedConfigStore {
 		});
 		if (!written) {
 			console.warn('[WL] unreadable watchlog block in the base; settings not written');
-			new Notice('Watchlog: the settings block in WatchLog.base is unreadable; settings were not saved.');
+			this.notify({ code: 'sharedConfigUnreadable' });
 			return;
 		}
 		// only after a successful write, so the next save diffs against the file state and retries

@@ -155,7 +155,7 @@ describe('DataManager on vault storage', () => {
 			'W/Books/Dune.md': '---\ntitle: Dune\ntype: book\nstatus: To be released\nreleaseDate: 2099-01-01\n---\n',
 			'W/Games/Halo.md': '---\ntitle: Halo\ntype: game\nstatus: To be released\nreleaseDate: 2099-01-01\n---\n',
 		});
-		const deps = { index, local, shared, layout: () => layout };
+		const deps = { index, local, shared, layout: () => layout, notify: () => {} };
 		const p = plugin as unknown as Record<string, unknown>;
 		p.readingDataManager = new ReadingDataManager(plugin, deps);
 		p.gameDataManager = new GameDataManager(plugin, deps);
@@ -208,7 +208,7 @@ describe('DataManager on vault storage', () => {
 		const { dm, f, plugin, index, shared, local, layout } = await setupDataManager({
 			'W/Books/Dune.md': '---\ntitle: Dune\ntype: book\nstatus: To be released\nreleaseDate: 2099-01-01\nairtimeRecurrence: monthly\nairtimeDay: 5\n---\n',
 		});
-		const deps = { index, local, shared, layout: () => layout };
+		const deps = { index, local, shared, layout: () => layout, notify: () => {} };
 		const p = plugin as unknown as Record<string, unknown>;
 		p.readingDataManager = new ReadingDataManager(plugin, deps);
 		await (p.readingDataManager as ReadingDataManager).init();
