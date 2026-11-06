@@ -12,6 +12,13 @@ All notable changes to WatchLog Sync are documented here. Versions up to 3.1.2 a
 ##### Changed
 
 * Headings, buttons and labels use sentence case throughout (for example "Recently added", "Time watched", "Backup & restore").
+* Icon-only buttons (refresh, card menus, add/remove, row actions, date picker arrows) share one style and use Lucide icons instead of text glyphs, so they line up in size and all carry an accessible label.
+
+##### Fixed
+
+* The tab bar no longer shows a stray vertical scrollbar, and tabs render as flat text with the active underline sitting on the bar line instead of as raised buttons.
+* The "Refresh director & cast" button in the title detail was a flat 44×8 pill; it is a regular icon button now.
+* The two refresh buttons in the rating row had different icon sizes.
 
 ## [4.1.0] - 2026-11-06
 
