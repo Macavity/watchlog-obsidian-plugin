@@ -64,3 +64,8 @@ export function setIcon(el: El, icon: string): void {
 
 /** Network stand-in; tests set the response with mockResolvedValue and read the sent params from mock.calls. */
 export const requestUrl = vi.fn(async (_params: unknown) => ({ status: 200, text: '{}', json: {} as unknown }));
+
+/** App language stand-in: getLanguage() returns the code Obsidian reports ('en', 'de', 'de-AT'). */
+export let language = 'en';
+export function getLanguage(): string { return language; }
+export function setStubLanguage(l: string): void { language = l; }
