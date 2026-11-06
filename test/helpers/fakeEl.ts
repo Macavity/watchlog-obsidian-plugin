@@ -29,10 +29,13 @@ export interface FakeDom {
 	empty(): void;
 	addClass(...cs: string[]): void;
 	removeClass(c: string): void;
+	removeClasses(cs: string[]): void;
+	show(): void;
+	toggle(on: boolean): void;
 	toggleClass(c: string, on: boolean): void;
 	setAttr(k: string, v: string): void;
 	setAttribute(k: string, v: string): void;
-	readonly textContent: string;
+	textContent: string;
 	scrollTo(): void;
 	querySelector(selector: string): El | null;
 }
@@ -91,14 +94,18 @@ export class El implements FakeDom {
 		for (const fn of this.listeners.get(type) ?? []) fn(e);
 	}
 	hide(): void { this.hidden = true; }
+	show(): void { this.hidden = false; }
+	toggle(on: boolean): void { this.hidden = !on; }
 	focus(): void {}
 	empty(): void { for (const c of this.children) c.parent = null; this.children = []; }
 	addClass(...cs: string[]): void { for (const c of cs) this.classes.add(c); }
 	removeClass(c: string): void { this.classes.delete(c); }
+	removeClasses(cs: string[]): void { for (const c of cs) this.classes.delete(c); }
 	toggleClass(c: string, on: boolean): void { if (on) this.classes.add(c); else this.classes.delete(c); }
 	setAttr(k: string, v: string): void { this.attr[k] = v; }
 	setAttribute(k: string, v: string): void { this.attr[k] = v; }
 	get textContent(): string { return this.text; }
+	set textContent(v: string) { this.text = v; }
 	scrollTo(): void { this.scrolled = true; }
 	has(c: string): boolean { return this.classes.has(c); }
 	find(c: string): El | undefined {

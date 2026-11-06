@@ -15,6 +15,8 @@ const sentenceCaseOptions = {
 		'Notes', 'Quotes', 'Regenerate', 'Settings', 'Add', 'Last',
 		// External services / acronyms not in the rule defaults
 		'Google', 'MAL', 'TSV', 'URLs', 'APIs', 'Steam', 'Tenrai', 'English',
+		// Stored type name and the default rating-tier label
+		'Book', 'Good',
 		// Stored type name, Steam's privacy option and the default rating-tier label
 		'Book', 'Public', 'Good',
 	],
@@ -22,6 +24,8 @@ const sentenceCaseOptions = {
 		'^DD/MM/YYYY$',            // date format mask
 		'^https://',               // URL placeholder
 		'^Season \\d',             // season-spec example placeholder
+		'\\(Season 1 = color 1',    // season example inside the help text
+		'"Game details" to Public', // Steam's own profile privacy wording
 		'\\(Season 1 = color 1',    // season example inside the help text
 		'^p\\. 123',               // quote-location example placeholder
 		'^APIs & Services',        // Google Cloud console path
