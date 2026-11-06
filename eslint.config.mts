@@ -15,11 +15,14 @@ const sentenceCaseOptions = {
 		'Notes', 'Quotes', 'Regenerate', 'Settings', 'Add', 'Last',
 		// External services / acronyms not in the rule defaults
 		'Google', 'MAL', 'TSV', 'URLs', 'APIs', 'Steam', 'Tenrai', 'English',
+		// Stored type name, Steam's privacy option and the default rating-tier label
+		'Book', 'Public', 'Good',
 	],
 	ignoreRegex: [
 		'^DD/MM/YYYY$',            // date format mask
 		'^https://',               // URL placeholder
 		'^Season \\d',             // season-spec example placeholder
+		'\\(Season 1 = color 1',    // season example inside the help text
 		'^p\\. 123',               // quote-location example placeholder
 		'^APIs & Services',        // Google Cloud console path
 		'"N due"',                 // N is a number placeholder
@@ -31,6 +34,17 @@ const sentenceCaseOptions = {
 		'^TV Show$',
 		'^Korean TV Show$',
 		'^Plan to Read$',
+		// list area: lowercase stat captions under a value, and quoted stored status/section names
+		'^(left|watched|episodes|progress)$',
+		'^Nothing to recommend; add titles to "Plan to watch" or "Watching"\\.$',
+		'^Reorder the sections or switch them off\\. "By type"',
+		// lists/widget areas: lowercase stat captions and relative-date words, uppercase card headers, prose naming UI terms
+		'^(completed|remaining|titles completed|today|tomorrow)$',
+		'^(NOW WATCHING|UPCOMING NEXT)$',
+		'^Missing id field\\.$',
+		'^These columns are pre-populated when creating a new list\\.',
+		'^TSV pastes into spreadsheets',
+		'^Paste tab-separated values copied from a spreadsheet',
 	],
 };
 

@@ -6,6 +6,7 @@
 // ReadingTab and AirtimeTab. The class prefix parameterises the CSS, so each tab keeps its styling.
 
 import { setIcon } from 'obsidian';
+import { t } from './i18n';
 
 export interface CardMenuItem {
 	label: string;
@@ -220,7 +221,7 @@ export function buildPosterCard(
 			cls: 'wl-card-menu-btn',
 			text: '⋮',
 		});
-		menuBtn.setAttr('aria-label', spec.menuAriaLabel ?? 'More actions');
+		menuBtn.setAttr('aria-label', spec.menuAriaLabel ?? t('list.card.moreActions'));
 		menuBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			openCardMenu(card, menuBtn, menuItems, menuCtx);

@@ -1,6 +1,7 @@
 import { App, Modal, ToggleComponent, setIcon } from 'obsidian';
 import type WatchLogPlugin from './main';
 import { normalizeRowsLayout, type RowsShelfLayoutEntry } from './types';
+import { t } from './i18n';
 
 /** Wires the modal to one tab's shelf registry + persisted layout, so any tab
  *  with a Rows view (Watchlist today, others later) can reuse it. */
@@ -48,7 +49,7 @@ export class RowsCustomizeModal extends Modal {
 		this.contentEl.setAttribute('data-theme', colorTheme);
 		this.contentEl.addClass('wl-view');
 		this.contentEl.addClass('wl-rows-customize');
-		this.titleEl.setText('Customize rows');
+		this.titleEl.setText(t('list.rows.customize'));
 
 		// normalize once up-front so the indices the arrow buttons swap match what gets persisted
 		this.layout = normalizeRowsLayout(this.config.getLayout(), this.config.shelves, this.config.exclusiveGroups);
@@ -56,7 +57,7 @@ export class RowsCustomizeModal extends Modal {
 
 		this.contentEl.createDiv({
 			cls: 'wl-rows-customize-hint',
-			text: this.config.hint ?? 'Reorder the sections or switch them off.',
+			text: this.config.hint ?? t('list.rows.hint'),
 		});
 		this.listEl = this.contentEl.createDiv({ cls: 'wl-rows-customize-list' });
 		this.renderList();
@@ -96,7 +97,7 @@ export class RowsCustomizeModal extends Modal {
 
 			const upBtn = controls.createEl('button', { cls: 'wl-rows-customize-move' });
 			setIcon(upBtn, 'chevron-up');
-			upBtn.setAttr('aria-label', 'Move up');
+			upBtn.setAttr('aria-label', t('list.rows.moveUp'));
 			upBtn.disabled = i === 0;
 			upBtn.addEventListener('click', () => {
 				const prev = layout[i - 1];
@@ -108,7 +109,7 @@ export class RowsCustomizeModal extends Modal {
 
 			const downBtn = controls.createEl('button', { cls: 'wl-rows-customize-move' });
 			setIcon(downBtn, 'chevron-down');
-			downBtn.setAttr('aria-label', 'Move down');
+			downBtn.setAttr('aria-label', t('list.rows.moveDown'));
 			downBtn.disabled = i === layout.length - 1;
 			downBtn.addEventListener('click', () => {
 				const next = layout[i + 1];

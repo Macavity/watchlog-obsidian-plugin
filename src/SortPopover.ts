@@ -4,6 +4,8 @@
  * any change closes the panel and reports the full new state. Used by ListTab and GamesTab.
  */
 
+import { t } from './i18n';
+
 export interface SortState {
 	key: string;
 	dir: 'asc' | 'desc';
@@ -66,7 +68,7 @@ export function toggleSortPopover(cfg: SortPopoverConfig): void {
 		const sel = row.createEl('select', { cls: 'wl-select' });
 
 		if (!isPrimary) {
-			const noneOpt = sel.createEl('option', { text: 'None', value: 'none' });
+			const noneOpt = sel.createEl('option', { text: t('common.none'), value: 'none' });
 			noneOpt.selected = current.key === 'none';
 		}
 		for (const opt of cfg.options) {
@@ -79,8 +81,8 @@ export function toggleSortPopover(cfg: SortPopoverConfig): void {
 			text: current.dir === 'asc' ? '↑' : '↓',
 		});
 		dirBtn.title = current.dir === 'asc'
-			? 'Ascending; click to switch to descending'
-			: 'Descending; click to switch to ascending';
+			? t('list.sortPopover.ascTip')
+			: t('list.sortPopover.descTip');
 
 		sel.addEventListener('change', () => {
 			const newKey = sel.value === 'none' ? 'none' : cfg.labelToKey(sel.value);
@@ -100,8 +102,8 @@ export function toggleSortPopover(cfg: SortPopoverConfig): void {
 		});
 	};
 
-	addSortRow('Sort by', state.primary, true);
-	addSortRow('Then by', state.secondary, false);
+	addSortRow(t('list.sortPopover.sortBy'), state.primary, true);
+	addSortRow(t('list.sortPopover.thenBy'), state.secondary, false);
 
 	const closer = (ev: MouseEvent): void => {
 		if (!cfg.wrap.contains(ev.target as Node)) {
