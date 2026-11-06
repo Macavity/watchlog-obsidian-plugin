@@ -1,4 +1,5 @@
 import { ItemView, Platform, setIcon, WorkspaceLeaf } from 'obsidian';
+import { t } from './i18n';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import { DashboardTab } from './DashboardTab';
@@ -59,7 +60,7 @@ export class WatchLogView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return 'Watchlog';
+		return t('app.viewTitle');
 	}
 
 	getIcon(): string {
@@ -283,14 +284,14 @@ export class WatchLogView extends ItemView {
 		this.applyColorTheme(root);
 
 		const tabBar = root.createDiv({ cls: 'wl-tab-bar' });
-		const dashBtn = this.makeTabBtn(tabBar, 'dashboard', 'Dashboard', 'layout-dashboard');
-		const listBtn = this.makeTabBtn(tabBar, 'watchlist', 'Watchlist', 'tv');
-		const readingBtn = this.makeTabBtn(tabBar, 'reading', 'Reading', 'book-open');
-		const gamesBtn = this.makeTabBtn(tabBar, 'games', 'Games', 'gamepad-2');
-		this.airtimeBtn = this.makeTabBtn(tabBar, 'upcoming', 'Upcoming', 'calendar');
-		const customListsBtn = this.makeTabBtn(tabBar, 'custom-lists', 'Custom lists', 'list');
-		this.draftsBtn = this.makeTabBtn(tabBar, 'drafts', 'Drafts', 'square-pen');
-		const logBtn = this.makeTabBtn(tabBar, 'log', 'Log', 'history');
+		const dashBtn = this.makeTabBtn(tabBar, 'dashboard', t('app.tabs.dashboard'), 'layout-dashboard');
+		const listBtn = this.makeTabBtn(tabBar, 'watchlist', t('app.tabs.watchlist'), 'tv');
+		const readingBtn = this.makeTabBtn(tabBar, 'reading', t('app.tabs.reading'), 'book-open');
+		const gamesBtn = this.makeTabBtn(tabBar, 'games', t('app.tabs.games'), 'gamepad-2');
+		this.airtimeBtn = this.makeTabBtn(tabBar, 'upcoming', t('app.tabs.upcoming'), 'calendar');
+		const customListsBtn = this.makeTabBtn(tabBar, 'custom-lists', t('app.tabs.customLists'), 'list');
+		this.draftsBtn = this.makeTabBtn(tabBar, 'drafts', t('app.tabs.drafts'), 'square-pen');
+		const logBtn = this.makeTabBtn(tabBar, 'log', t('app.tabs.log'), 'history');
 
 		const allBtns = [dashBtn, listBtn, this.airtimeBtn, readingBtn, gamesBtn, customListsBtn, this.draftsBtn, logBtn];
 		this.tabButtons = {
@@ -466,7 +467,7 @@ export class WatchLogView extends ItemView {
 		} else if (this.activeTab === 'upcoming') {
 			this.airtimeTab?.destroy();
 			this.airtimeTab = new AirtimeTab(this.tabContentEl, this.plugin, this.dataManager, (count) => {
-				this.setTabBadge(this.airtimeBtn, 'Upcoming', count);
+				this.setTabBadge(this.airtimeBtn, t('app.tabs.upcoming'), count);
 			});
 			this.airtimeTab.render();
 		} else if (this.activeTab === 'reading') {
@@ -558,11 +559,11 @@ export class WatchLogView extends ItemView {
 	private updateUpcomingBadge(): void {
 		if (!this.airtimeBtn) return;
 		const count = AirtimeTab.getAiredDueCount(this.dataManager, this.plugin.readingDataManager, this.plugin.gameDataManager) + AirtimeTab.getMaybeDueCount(this.dataManager);
-		this.setTabBadge(this.airtimeBtn, 'Upcoming', count);
+		this.setTabBadge(this.airtimeBtn, t('app.tabs.upcoming'), count);
 	}
 
 	private setDraftsBadge(count: number): void {
-		this.setTabBadge(this.draftsBtn, 'Drafts', count);
+		this.setTabBadge(this.draftsBtn, t('app.tabs.drafts'), count);
 	}
 
 	/** Count-only drafts scan, so the tab badge is correct before the Drafts tab is opened. */

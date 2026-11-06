@@ -1,5 +1,6 @@
-import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, parseYaml, setIcon, stringifyYaml } from 'obsidian';
-import { t } from './i18n';
+import { App, Editor, FuzzySuggestModal, MarkdownView, Notice, Platform, Plugin, getLanguage, parseYaml, setIcon, stringifyYaml } from 'obsidian';
+import { setLocale, t } from './i18n';
+import { statusLabel, typeLabel } from './i18n/labels';
 import type { ManagerNotice } from './storage/storageTypes';
 import { DEFAULT_SETTINGS, LAST_USED_TYPE_SENTINEL, WatchLogPluginSettings, setActiveDateFormat } from './types';
 import { cardSizeToMinWidth } from './VirtualGrid';
@@ -104,12 +105,13 @@ export default class WatchLogPlugin extends Plugin {
 	private statusBarEl: HTMLElement | null = null;
 
 	async onload(): Promise<void> {
+		setLocale(getLanguage());
 		const loaded = await this.local.load();
 		if (loaded.schema === 1) {
 			// migrated in startVaultStorage, once the vault is ready; until then its settings act as local
 			this.legacyData = loaded.legacy;
 		} else if (loaded.schema === 'newer') {
-			new Notice('Watchlog: data.json was written by a newer plugin version. Device settings are not saved until you update.', 0);
+			new Notice(t('app.notices.newerSchema'), 0);
 		} else if (this.legacySourceDir !== null) {
 			// a schema-2 data.json taken over from the original plugin: persist the copy as our own
 			this.local.queueSave();
@@ -154,19 +156,19 @@ export default class WatchLogPlugin extends Plugin {
 
 		this.widgetRenderer = new WidgetRenderer(this, this.dataManager);
 
-		this.addRibbonIcon('tv', 'Watchlog', () => {
+		this.addRibbonIcon('tv', t('app.ribbon'), () => {
 			void this.activateView();
 		});
 
 		this.addCommand({
 			id: 'open-panel',
-			name: 'Open panel',
+			name: t('app.commands.openPanel'),
 			callback: () => void this.activateView(),
 		});
 
 		this.addCommand({
 			id: 'add-title',
-			name: 'Add title',
+			name: t('app.commands.addTitle'),
 			callback: () => {
 				new AddTitleModal(this.app, this, this.dataManager, (entry) => {
 					// setting off = just reveal whatever tab was open, no modal
@@ -185,7 +187,7 @@ export default class WatchLogPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'insert-widget',
-			name: 'Insert widget',
+			name: t('app.commands.insertWidget'),
 			editorCallback: (editor: Editor, _view: MarkdownView) => {
 				this.openWidgetPalette(editor);
 			},
@@ -193,12 +195,12 @@ export default class WatchLogPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'search-title',
-			name: 'Search title',
+			name: t('app.commands.searchTitle'),
 			callback: () => {
 				const titles = this.dataManager.getTitles();
 				new InsertWidgetModal(this.app, titles, (title) => {
 					void this.activateView().then(() => {
-						new Notice(`"${title.title}" · ${title.type} · ${title.status}`);
+						new Notice(t('app.titleNotice', { title: title.title, type: typeLabel(title.type), status: statusLabel(title.status) }));
 					});
 				}).open();
 			},
@@ -262,7 +264,7 @@ export default class WatchLogPlugin extends Plugin {
 			await this.applySharedSettings();
 			this.shared.onChange(() => void this.applySharedSettings());
 			if (root !== null && (await this.shared.ensureFilter()) === 'missing') {
-				new Notice('Watchlog: the folder filter in WatchLog.base was not found; the base view may list other notes.');
+				new Notice(t('app.notices.baseFilterMissing'));
 			}
 			this.shared.start();
 			await this.index.build();
@@ -276,7 +278,7 @@ export default class WatchLogPlugin extends Plugin {
 			await this.dataManager.ensureFolders();
 		} catch (e) {
 			console.error('[WL] vault storage failed to start', e);
-			new Notice('Watchlog could not load its notes. See the developer console for details.');
+			new Notice(t('app.notices.loadFailed'));
 		}
 	}
 
@@ -310,7 +312,7 @@ export default class WatchLogPlugin extends Plugin {
 	private warnIfOriginalEnabled(): void {
 		const plugins = (this.app as unknown as { plugins?: { enabledPlugins?: Set<string> } }).plugins;
 		if (plugins?.enabledPlugins?.has(ORIGINAL_PLUGIN_ID)) {
-			new Notice('The original WatchLog plugin is still enabled. Disable it, otherwise both plugins write the same notes.', 0);
+			new Notice(t('app.notices.legacyPluginEnabled'), 0);
 		}
 	}
 
@@ -329,13 +331,13 @@ export default class WatchLogPlugin extends Plugin {
 		if (report.skipped.length > 0) console.warn('[WL] migration skipped', report.skipped);
 		if (report.errors.length > 0) {
 			console.error('[WL] migration failed; data.json is kept and the migration retried next start', report.errors);
-			new Notice('Watchlog could not migrate its data to notes. It will retry on the next start; see the developer console.', 0);
+			new Notice(t('app.notices.migrationFailed'), 0);
 			return;
 		}
 		this.legacyData = null;
 		await this.loadSettings();
-		const skipped = report.skipped.length > 0 ? ` ${report.skipped.length} item(s) were skipped, see the developer console.` : '';
-		new Notice(`Watchlog moved its data into notes (backup: data.v1-backup.json).${skipped}`, 10000);
+		const skipped = report.skipped.length > 0 ? ` ${t('app.notices.migratedSkipped', { count: report.skipped.length })}` : '';
+		new Notice(`${t('app.notices.migrated', { backup: 'data.v1-backup.json' })}${skipped}`, 10000);
 	}
 
 	/** Everything backup export and restore need. */
@@ -412,7 +414,7 @@ export default class WatchLogPlugin extends Plugin {
 		if (Platform.isMobile) return;
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.addClass('wl-statusbar-upcoming');
-		this.statusBarEl.setAttribute('aria-label', 'WatchLog: Upcoming due');
+		this.statusBarEl.setAttribute('aria-label', t('app.statusBar.label'));
 		this.statusBarEl.addEventListener('click', () => void this.activateView('upcoming'));
 		this.updateStatusBar();
 	}
@@ -437,7 +439,7 @@ export default class WatchLogPlugin extends Plugin {
 		// orange icon + "N due" (colour from .wl-statusbar-upcoming), reusing the ribbon's 'tv' icon
 		const icon = el.createSpan({ cls: 'wl-statusbar-icon' });
 		setIcon(icon, 'tv');
-		el.createSpan({ cls: 'wl-statusbar-text', text: `${count} due` });
+		el.createSpan({ cls: 'wl-statusbar-text', text: t('app.statusBar.due', { count }) });
 	}
 
 	/**
@@ -514,22 +516,22 @@ export default class WatchLogPlugin extends Plugin {
 
 	private openWidgetPalette(editor: Editor): void {
 		const widgets = [
-			{ name: 'wl-todo: Track a title (full)', id: 'wl-todo' },
-			{ name: 'wl-todo mini: Track a title (compact)', id: 'wl-todo:mini' },
-			{ name: 'wl-stat: watched: Time watched (mini)', id: 'wl-stat:watched' },
-			{ name: 'wl-stat: completed: Completed titles (mini)', id: 'wl-stat:completed' },
-			{ name: 'wl-stat: remaining: Time remaining (mini)', id: 'wl-stat:remaining' },
-			{ name: 'wl-stat: time: Watched + remaining (mini)', id: 'wl-stat:time' },
-			{ name: 'wl-upcoming: next: Next upcoming (mini)', id: 'wl-upcoming:next' },
-			{ name: 'wl-stat: time completed full: Time · Remaining · Completed card', id: 'wl-stat:time completed full' },
-			{ name: 'wl-now-next: Now Watching + Up Next card', id: 'wl-now-next' },
+			{ name: `wl-todo: ${t('app.widgets.todoFull')}`, id: 'wl-todo' },
+			{ name: `wl-todo mini: ${t('app.widgets.todoMini')}`, id: 'wl-todo:mini' },
+			{ name: `wl-stat: watched: ${t('app.widgets.statWatched')}`, id: 'wl-stat:watched' },
+			{ name: `wl-stat: completed: ${t('app.widgets.statCompleted')}`, id: 'wl-stat:completed' },
+			{ name: `wl-stat: remaining: ${t('app.widgets.statRemaining')}`, id: 'wl-stat:remaining' },
+			{ name: `wl-stat: time: ${t('app.widgets.statTime')}`, id: 'wl-stat:time' },
+			{ name: `wl-upcoming: next: ${t('app.widgets.upcomingNext')}`, id: 'wl-upcoming:next' },
+			{ name: `wl-stat: time completed full: ${t('app.widgets.statTimeCompletedFull')}`, id: 'wl-stat:time completed full' },
+			{ name: `wl-now-next: ${t('app.widgets.nowNext')}`, id: 'wl-now-next' },
 		];
 
 		new WidgetSelectModal(this.app, widgets, (selected) => {
 			if (selected.id === 'wl-todo' || selected.id === 'wl-todo:mini') {
 				const titles = this.dataManager.getTitles();
 				if (titles.length === 0) {
-					new Notice('No titles in your watchlog library yet.');
+					new Notice(t('app.notices.noTitles'));
 					return;
 				}
 				const isMini = selected.id === 'wl-todo:mini';
@@ -588,7 +590,7 @@ class WidgetSelectModal extends FuzzySuggestModal<WidgetItem> {
 		super(app);
 		this.items = items;
 		this.onSelect = onSelect;
-		this.setPlaceholder('Select a widget to insert...');
+		this.setPlaceholder(t('app.widgetPlaceholder'));
 	}
 
 	getItems(): WidgetItem[] { return this.items; }

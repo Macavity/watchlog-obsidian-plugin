@@ -53,6 +53,27 @@ export class Modal {
 	close(): void { this.onClose(); }
 }
 
+/** Bare base classes so modules that extend Obsidian types can be imported. */
+export class FuzzySuggestModal extends Modal {}
+export class ItemView {
+	containerEl = new El('root');
+	contentEl = new El('root');
+	constructor(public leaf: unknown) {}
+}
+export class Plugin {
+	app: unknown;
+	manifest: unknown;
+}
+export class PluginSettingTab {
+	containerEl = new El('root');
+	constructor(public app: unknown, public plugin: unknown) {}
+}
+export class Component {}
+export class Setting {}
+export class MarkdownView {}
+export class MarkdownRenderer {}
+export class WorkspaceLeaf {}
+
 export const Platform = { isMobile: false, isDesktop: true };
 
 /** Records the icon name as `data-icon` so tests can assert which icon was set. */
