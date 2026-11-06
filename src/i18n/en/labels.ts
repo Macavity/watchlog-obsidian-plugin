@@ -1,5 +1,5 @@
 // Keys are the stored values (never change them); values are the English display text.
-export default {
+const labels = {
 	status: {
 		Watching: 'Watching',
 		'Plan to watch': 'Plan to watch',
@@ -22,3 +22,5 @@ export default {
 		Dropped: 'Dropped',
 	},
 } as const;
+
+export default labels;
