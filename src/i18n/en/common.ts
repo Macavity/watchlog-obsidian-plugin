@@ -1,4 +1,4 @@
-export default {
+const common = {
 	cancel: 'Cancel',
 	save: 'Save',
 	delete: 'Delete',
@@ -14,3 +14,5 @@ export default {
 	testGreeting: 'Hello {name}',
 	testRows: { one: '{count} row', other: '{count} rows' },
 } as const;
+
+export default common;
