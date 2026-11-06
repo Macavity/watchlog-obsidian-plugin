@@ -4,7 +4,7 @@ import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, Season } from './types';
 import { getApiGroupForType, todayIso } from './types';
 import { t } from './i18n';
-import { statusLabel } from './i18n/labels';
+import { priorityLabel, statusLabel } from './i18n/labels';
 import { renderSearchResultRow } from './SearchThumbnail';
 import {
 	episodesLabel,
@@ -166,7 +166,7 @@ export class AddTitleModal extends SearchFormModal<TitleSearchResult> {
 		nameSelect(makeCell(statusPriRow, t('add.status')), statuses.map((s) => s.name), this.fieldStatus,
 			(v) => { this.fieldStatus = v; }, false, statusLabel);
 		nameSelect(makeCell(statusPriRow, t('add.priority'), true), this.plugin.settings.priorities.map((p) => p.name),
-			this.fieldPriority, (v) => { this.fieldPriority = v; });
+			this.fieldPriority, (v) => { this.fieldPriority = v; }, false, priorityLabel);
 
 		const ratingRow = makeRow(t('add.rating'));
 		const starsWrap = ratingRow.createDiv({ cls: 'wl-stars' });

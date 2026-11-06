@@ -21,6 +21,19 @@ const labels = {
 		'To be released': 'To be released',
 		Dropped: 'Dropped',
 	},
+	gameStatus: {
+		Playing: 'Playing',
+		'Not started': 'Not started',
+		Finished: 'Finished',
+		Dropped: 'Dropped',
+		'To be released': 'To be released',
+		TBA: 'TBA',
+	},
+	priority: {
+		Low: 'Low',
+		Medium: 'Medium',
+		High: 'High',
+	},
 } as const;
 
 export default labels;

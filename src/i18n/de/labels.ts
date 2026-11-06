@@ -23,4 +23,17 @@ export default {
 		'To be released': 'Noch nicht erschienen',
 		Dropped: 'Abgebrochen',
 	},
+	gameStatus: {
+		Playing: 'Spiele',
+		'Not started': 'Nicht begonnen',
+		Finished: 'Beendet',
+		Dropped: 'Abgebrochen',
+		'To be released': 'Noch nicht erschienen',
+		TBA: 'Noch offen',
+	},
+	priority: {
+		Low: 'Niedrig',
+		Medium: 'Mittel',
+		High: 'Hoch',
+	},
 } as const satisfies DeepPartial<typeof enLabels>;

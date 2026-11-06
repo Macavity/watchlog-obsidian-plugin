@@ -1,6 +1,6 @@
 import type WatchLogPlugin from './main';
 import { t, type TranslationKey } from './i18n';
-import { readingStatusLabel, statusLabel, typeLabel } from './i18n/labels';
+import { gameStatusLabel, readingStatusLabel, statusLabel, typeLabel } from './i18n/labels';
 import en from './i18n/en';
 import type { DataManager } from './DataManager';
 import type { ReadingDataManager } from './ReadingDataManager';
@@ -42,10 +42,11 @@ interface ReadingAggregate {
 	totalVolumes: number;
 }
 
-/** Status of any library: watch statuses first, then reading ones; user-defined values pass through. */
+/** Status of any library: watch statuses first, then reading, then game ones; user-defined values pass through. */
 function anyStatusLabel(status: string): string {
 	if (Object.prototype.hasOwnProperty.call(en.labels.status, status)) return statusLabel(status);
-	return readingStatusLabel(status as ReadingStatus);
+	if (Object.prototype.hasOwnProperty.call(en.labels.readingStatus, status)) return readingStatusLabel(status as ReadingStatus);
+	return gameStatusLabel(status);
 }
 
 /** Type bucket of the stats: watch types, the Book / Manga buckets of the reading libraries, game genres. */

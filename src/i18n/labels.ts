@@ -20,3 +20,12 @@ export function typeLabel(type: string): string {
 export function readingStatusLabel(status: ReadingStatus): string {
 	return label('readingStatus', status);
 }
+
+export function gameStatusLabel(status: string): string {
+	return label('gameStatus', status);
+}
+
+/** '' (no priority) stays '' — callers show their own "No priority" text. */
+export function priorityLabel(priority: string): string {
+	return label('priority', priority);
+}

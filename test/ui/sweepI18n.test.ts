@@ -53,7 +53,8 @@ describe('stored-value dropdowns', () => {
 	it('translates the empty priority option', () => {
 		setLocale('de');
 		expect(formatPriorityOpt('')).toBe(de.list.footer.noPriority);
-		expect(formatPriorityOpt('High')).toBe('High');
+		expect(formatPriorityOpt('High')).toBe(de.labels.priority.High);
+		expect(formatPriorityOpt('Urgent')).toBe('Urgent');
 	});
 });
 

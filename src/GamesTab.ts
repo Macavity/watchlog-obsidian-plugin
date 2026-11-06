@@ -1,5 +1,6 @@
 import { Notice, TFile, setIcon } from 'obsidian';
 import { t, type TranslationKey } from './i18n';
+import { gameStatusLabel } from './i18n/labels';
 import type WatchLogPlugin from './main';
 import type { GameDataManager } from './GameDataManager';
 import {
@@ -760,7 +761,7 @@ export class GamesTab {
 			);
 			if (bucketGames.length === 0) continue;
 			rendered++;
-			renderShelfTitle(section, def.name, bucketGames.length, this.shelfSelect(bucketGames.map((g) => g.id)));
+			renderShelfTitle(section, byType ? def.name : gameStatusLabel(def.name), bucketGames.length, this.shelfSelect(bucketGames.map((g) => g.id)));
 			const spacer = section.createDiv({ cls: 'wl-rows-bytype-spacer' });
 			const grid = spacer.createDiv({ cls: 'wl-cards-grid wl-cards-grid-virtual' });
 			const vgrid = new VirtualGrid(spacer, grid, bucketGames.length, {
@@ -984,6 +985,7 @@ export class GamesTab {
 					sections: buildFilterSections({
 						lead: [{ label: t('games.filters.genre'), opts: settings.types.map((ty) => ty.name), excludeSet: draft.genreExclude }],
 						statusOpts: settings.statuses.map((s) => s.name),
+						formatStatus: gameStatusLabel,
 						// half options appear only when a game holds that exact rating (the Watchlist rule)
 						ratingOpts: buildRatingOpts(this.gameData.getGames().map((g) => g.rating)),
 						priorities: this.plugin.settings.priorities,
@@ -1133,6 +1135,7 @@ export class GamesTab {
 				}
 				await this.gameData.saveAndNotify();
 			},
+			gameStatusLabel,
 		);
 
 		const allGroups = this.gameData.getGroups();
@@ -1184,7 +1187,7 @@ export class GamesTab {
 			cardWidth,
 			cardHeight,
 			selected: this.selectedIds.has(game.id),
-			statusLabel: game.status,
+			statusLabel: gameStatusLabel(game.status),
 			statusColor,
 			typeLabel: game.type || undefined,
 			typeColor,

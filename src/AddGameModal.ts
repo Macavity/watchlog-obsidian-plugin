@@ -5,6 +5,7 @@ import { rawgResizedCover, steamAppIdFromUrl, type GameSearchResult } from './Ap
 import { Game, GameGroup, GAME_AUTO_STATUS } from './types';
 import { renderSearchResultRow } from './SearchThumbnail';
 import { t } from './i18n';
+import { gameStatusLabel, priorityLabel } from './i18n/labels';
 import { SearchFormModal, type SearchPickerOptions } from './ui/SearchFormModal';
 import { LibraryIndex, gameResultIdKeys } from './LibraryIndex';
 import { renderModePill } from './ModePill';
@@ -211,14 +212,14 @@ export class AddGameModal extends SearchFormModal<GameSearchResult> {
 		nameSelect(makeCell(genrePriRow, t('add.game.genre')), settings.types.map((t) => t.name), this.fieldGenre,
 			(v) => { this.fieldGenre = v; });
 		nameSelect(makeCell(genrePriRow, t('add.priority'), true), this.plugin.settings.priorities.map((p) => p.name),
-			this.fieldPriority, (v) => { this.fieldPriority = v; }, true);
+			this.fieldPriority, (v) => { this.fieldPriority = v; }, true, priorityLabel);
 
 		// status + date started paired 50/50 (the auto "To be released" is excluded — it follows the
 		// release date)
 		const statusStartRow = form.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
 		const statuses = settings.statuses.filter((s) => s.name !== GAME_AUTO_STATUS);
 		nameSelect(makeCell(statusStartRow, t('add.status')), statuses.map((s) => s.name), this.fieldStatus,
-			(v) => { this.fieldStatus = v; });
+			(v) => { this.fieldStatus = v; }, false, gameStatusLabel);
 
 		const startCell = makeCell(statusStartRow, t('add.dateStarted'), true);
 		createDatePicker({

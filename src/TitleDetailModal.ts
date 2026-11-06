@@ -19,7 +19,7 @@ import { renderEpisodeGrid } from './ui/EpisodeGrid';
 import type { TmdbCollectionDetail } from './types';
 import { t } from './i18n';
 import { paintFavoriteButton, renderGroupDetailHeader, episodeGridText } from './ui/detailShared';
-import { statusLabel, typeLabel } from './i18n/labels';
+import { priorityLabel, statusLabel, typeLabel } from './i18n/labels';
 
 // titles whose credits backfill is in flight — de-dupes rapid modal re-opens
 const creditsBackfillInFlight = new Set<string>();
@@ -941,12 +941,13 @@ export class TitleDetailModal extends Modal {
 		renderTagPill({
 			wrap,
 			value: priority,
+			valueLabel: priorityLabel(priority),
 			emptyLabel: t('list.footer.noPriority'),
 			color: priority ? this.priorityColor(priority) : null,
 			tooltip: t('detail.clickToChangePriority'),
 			container: this.contentEl,
 			options: [
-				...this.plugin.settings.priorities.map((p) => p.name),
+				...this.plugin.settings.priorities.map((p) => ({ value: p.name, label: priorityLabel(p.name) })),
 				{ value: '', label: t('list.footer.noPriority') },
 			],
 			getOptionColor: (name) => (name ? this.priorityColor(name) : null),

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { setLocale } from '../../src/i18n';
 import de from '../../src/i18n/de';
 import { GamesTab } from '../../src/GamesTab';
+import { GameDetailModal } from '../../src/GameDetailModal';
+import { defaultGamesSettings, DEFAULT_SETTINGS } from '../../src/types';
 import { ReadingManageColumnsModal } from '../../src/ReadingManageColumnsModal';
 import { ReadingTab } from '../../src/ReadingTab';
 import { El } from '../helpers/fakeEl';
@@ -62,5 +64,25 @@ describe('reading and games i18n', () => {
 		(tab as unknown as { renderContent: () => void }).renderContent();
 		expect(allText(container)).toContain(de.games.empty);
 		expect(de.games.empty).not.toBe('No games yet; click + Add to track your first game.');
+	});
+
+	it('shows the game status and priority pills in German while values stay English', () => {
+		setLocale('de');
+		const game = { id: 'g1', title: 'Hades', status: 'Playing', priority: 'High', type: '', platforms: [] };
+		const modal = new GameDetailModal(
+			{} as never,
+			{ settings: { priorities: DEFAULT_SETTINGS.priorities.map((p) => ({ name: p.name })) } } as never,
+			{ getGroups: () => [], getSettings: () => ({ ...defaultGamesSettings(), statuses: defaultGamesSettings().statuses.map((s) => ({ name: s.name })) }) } as never,
+			game as never,
+		);
+		const badgeRow = new El('div') as El & { empty: () => void };
+		badgeRow.empty = () => { badgeRow.children = []; };
+		Object.assign(modal as object, { badgeRowEl: badgeRow, contentEl: new El('div'), mobile: true });
+		(modal as unknown as { renderBadgeRow: () => void }).renderBadgeRow();
+		const texts = allText(badgeRow);
+		expect(texts).toContain('Spiele');
+		expect(texts).toContain('Hoch');
+		expect(texts).not.toContain('Playing');
+		expect((modal as unknown as { draft: { status: string } }).draft.status).toBe('Playing');
 	});
 });

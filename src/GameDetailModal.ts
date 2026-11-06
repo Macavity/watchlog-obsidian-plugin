@@ -12,6 +12,7 @@ import { appendNoteLinkButton } from './NoteLinkButton';
 import { createDatePicker } from './DatePicker';
 import { pinModalFooter } from './StickyModal';
 import { t } from './i18n';
+import { gameStatusLabel, priorityLabel } from './i18n/labels';
 import { paintFavoriteButton, renderEditableTitle, renderGroupDetailHeader } from './ui/detailShared';
 
 /**
@@ -292,11 +293,13 @@ export class GameDetailModal extends Modal {
 		renderTagPill({
 			wrap: statusWrap,
 			value: this.draft.status,
+			valueLabel: gameStatusLabel(this.draft.status),
 			color: settings.statuses.find((s) => s.name === this.draft.status)?.color,
 			showDot: true,
 			tooltip: t('detail.clickToChangeStatus'),
 			container: this.contentEl,
-			options: settings.statuses.filter((s) => s.name !== GAME_AUTO_STATUS).map((s) => s.name),
+			options: settings.statuses.filter((s) => s.name !== GAME_AUTO_STATUS)
+				.map((s) => ({ value: s.name, label: gameStatusLabel(s.name) })),
 			getOptionColor: (v) => settings.statuses.find((s) => s.name === v)?.color,
 			onSelect: (v) => { this.draft.status = v; this.renderBadgeRow(); },
 		});
@@ -319,12 +322,16 @@ export class GameDetailModal extends Modal {
 		renderTagPill({
 			wrap: priorityWrap,
 			value: this.draft.priority,
+			valueLabel: priorityLabel(this.draft.priority),
 			emptyLabel: t('list.footer.noPriority'),
 			color: priorities.find((p) => p.name === this.draft.priority)?.color,
 			showDot: true,
 			tooltip: t('detail.clickToChangePriority'),
 			container: this.contentEl,
-			options: [...priorities.map((p) => p.name), { value: '', label: t('list.footer.noPriority') }],
+			options: [
+				...priorities.map((p) => ({ value: p.name, label: priorityLabel(p.name) })),
+				{ value: '', label: t('list.footer.noPriority') },
+			],
 			getOptionColor: (v) => (v ? priorities.find((p) => p.name === v)?.color : null),
 			onSelect: (v) => { this.draft.priority = v; this.renderBadgeRow(); },
 		});

@@ -1,5 +1,6 @@
 import { toggleFilterPanel, type FilterPanelConfig, type FilterSection } from '../FilterPanel';
 import { t } from '../i18n';
+import { priorityLabel } from '../i18n/labels';
 import { priorityFilterOpts, type TagDefinition } from '../types';
 
 /**
@@ -26,7 +27,7 @@ export function formatRatingOpt(opt: string): string {
 
 /** Display form of a priority option: '' (no priority set) reads as "No priority". */
 export function formatPriorityOpt(opt: string): string {
-	return opt === '' ? t('list.footer.noPriority') : opt;
+	return opt === '' ? t('list.footer.noPriority') : priorityLabel(opt);
 }
 
 /** The draft fields both tabs' filter panels share. */
