@@ -62,6 +62,20 @@ const sentenceCaseOptions = {
 		'^JST —$',
 		'^TSV pastes into spreadsheets',
 		'^Paste tab-separated values copied from a spreadsheet',
+		// csv/steam areas: lowercase badge and caption, quoted dropdown/privacy names, MAL ID acronym label
+		'^(duplicate|never played|\\(no title\\))$',
+		'^Match each WatchLog field to a column from your CSV\\. Select "Skip"',
+		'^MAL ID$',
+		'^Steam returned no library\\. Your profile.s "Game details"',
+		// add/edit areas: service URL example, IGDB wording, ISBN acronym, parenthesised fallback, abbreviation, quoted format examples
+		'^Please enter an IMDb or TMDB URL',
+		'^No IGDB credentials configured\\.',
+		'^Search by title or ISBN\\.\\.\\.$',
+		'^\\(untitled\\)$',
+		'^Ep\\. duration \\(min\\)$',
+		'^Format: "Season Name',
+		'^Skip episodes: add "',
+		'^Note: when adding a new season',
 	],
 };
 
