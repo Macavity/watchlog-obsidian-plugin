@@ -1,5 +1,7 @@
 import { App, FuzzySuggestModal } from 'obsidian';
 import type { WatchLogTitle } from './types';
+import { t } from './i18n';
+import { typeLabel } from './i18n/labels';
 
 export class InsertWidgetModal extends FuzzySuggestModal<WatchLogTitle> {
 	private onSelect: (title: WatchLogTitle) => void;
@@ -9,7 +11,7 @@ export class InsertWidgetModal extends FuzzySuggestModal<WatchLogTitle> {
 		super(app);
 		this.titles = titles;
 		this.onSelect = onSelect;
-		this.setPlaceholder('Search for a title to insert...');
+		this.setPlaceholder(t('widget.insertPlaceholder'));
 	}
 
 	getItems(): WatchLogTitle[] {
@@ -17,7 +19,7 @@ export class InsertWidgetModal extends FuzzySuggestModal<WatchLogTitle> {
 	}
 
 	getItemText(title: WatchLogTitle): string {
-		return `${title.title} (${title.type})`;
+		return `${title.title} (${typeLabel(title.type)})`;
 	}
 
 	onChooseItem(title: WatchLogTitle): void {

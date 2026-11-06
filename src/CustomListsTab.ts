@@ -8,6 +8,8 @@ import { openColorPicker, deriveFillColor, deriveBorderColor } from './ColorPick
 import { openStatusDropdown } from './StatusDropdown';
 import { openAddForTitle } from './AddRouter';
 import { cloneColumns, renderCancelSave, renderColumnsEditor } from './ui/ColumnsEditor';
+import { t } from './i18n';
+import { statusLabel, typeLabel, readingStatusLabel } from './i18n/labels';
 
 /** Row name, trimmed — the index signature types it loosely. */
 function rowName(row: CustomListRow): string {
@@ -130,7 +132,7 @@ export class CustomListManager {
 				}
 			} catch (e) {
 				console.warn('[WL] Custom list JSON parse failed for', name, e);
-				new Notice(`Custom list "${name}" has corrupt data and cannot be loaded.`);
+				new Notice(t('lists.corrupt', { name }));
 				this.corruptLists.add(name);
 				return null;
 			}
@@ -254,7 +256,7 @@ class EditColumnsModal extends Modal {
 
 	onOpen(): void {
 		this.modalEl.addClass('wl-editcol-modal');
-		this.titleEl.setText(`Table settings: ${this.list.name}`);
+		this.titleEl.setText(t('lists.tableSettingsTitle', { name: this.list.name }));
 		this.contentEl.addClass('wl-editcols-modal');
 		this.renderBody();
 	}
@@ -273,7 +275,7 @@ class EditColumnsModal extends Modal {
 
 	private renderTabColorRow(parent: HTMLElement): void {
 		const row = parent.createDiv({ cls: 'wl-editcols-tabcolor-row' });
-		row.createSpan({ cls: 'wl-editcols-tabcolor-label', text: 'Tab color' });
+		row.createSpan({ cls: 'wl-editcols-tabcolor-label', text: t('lists.tabColor') });
 
 		const dot = row.createEl('button', { cls: 'wl-reading-col-color-dot wl-editcols-tabcolor-dot' });
 
@@ -288,7 +290,7 @@ class EditColumnsModal extends Modal {
 		};
 		sync();
 
-		dot.title = 'Choose tab color';
+		dot.title = t('lists.chooseTabColor');
 		dot.addEventListener('click', (e) => {
 			e.stopPropagation();
 			openColorPicker({
@@ -356,7 +358,7 @@ export class DefaultColumnsModal extends Modal {
 
 	onOpen(): void {
 		this.modalEl.addClass('wl-editcol-modal');
-		this.titleEl.setText('Default columns');
+		this.titleEl.setText(t('lists.defaultColumns'));
 		this.contentEl.addClass('wl-editcols-modal');
 		this.renderBody();
 	}
@@ -368,7 +370,7 @@ export class DefaultColumnsModal extends Modal {
 			renderHeader: (parent) => {
 				parent.createDiv({
 					cls: 'wl-settings-info',
-					text: 'These columns are pre-populated when creating a new list. The Name column is always added automatically.',
+					text: t('lists.defaultColumnsInfo'),
 				});
 			},
 			newColumnId: (cols) => this.manager.generateColId(cols),
@@ -380,7 +382,7 @@ export class DefaultColumnsModal extends Modal {
 	private async handleSave(cols: CustomListColumn[]): Promise<void> {
 		this.plugin.settings.defaultCustomColumns = cols;
 		await this.plugin.saveSettings();
-		new Notice('Default columns saved.');
+		new Notice(t('lists.defaultColumnsSaved'));
 		this.close();
 	}
 }
@@ -399,18 +401,18 @@ class NotesModal extends Modal {
 
 	onOpen(): void {
 		this.previewComponent.load();
-		this.titleEl.setText(`Notes: ${this.listName}`);
+		this.titleEl.setText(t('lists.notesTitle', { name: this.listName }));
 		const { contentEl } = this;
 		contentEl.addClass('wl-notes-modal');
 
 		const modeBar = contentEl.createDiv({ cls: 'wl-notes-mode-bar' });
-		const editBtn = modeBar.createEl('button', { cls: 'wl-btn wl-btn-sm is-active', text: 'Edit' });
-		const previewBtn = modeBar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Preview' });
+		const editBtn = modeBar.createEl('button', { cls: 'wl-btn wl-btn-sm is-active', text: t('common.edit') });
+		const previewBtn = modeBar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('lists.preview') });
 
 		const editArea = contentEl.createDiv({ cls: 'wl-notes-edit-area' });
 		const textarea = editArea.createEl('textarea', {
 			cls: 'wl-modal-textarea wl-notes-textarea',
-			attr: { placeholder: 'Add notes, links, or any text here...' },
+			attr: { placeholder: t('lists.notesPlaceholder') },
 		});
 		textarea.value = this.initialNotes;
 		window.setTimeout(() => {
@@ -487,7 +489,7 @@ class ListNameModal extends Modal {
 	) { super(app); }
 
 	onOpen(): void {
-		this.titleEl.setText('New custom list');
+		this.titleEl.setText(t('lists.newList'));
 		const { contentEl } = this;
 
 		let value = '';
@@ -495,21 +497,21 @@ class ListNameModal extends Modal {
 		errorEl.hide();
 
 		new Setting(contentEl)
-			.setName('List name')
-			.addText((t) => {
-				t.setPlaceholder('E.g. Marvel movies')
+			.setName(t('lists.listName'))
+			.addText((tx) => {
+				tx.setPlaceholder(t('lists.listNamePlaceholder'))
 					.onChange((v) => { value = v; errorEl.hide(); });
-				window.setTimeout(() => t.inputEl.focus(), 0);
-				t.inputEl.addEventListener('keydown', (e) => {
+				window.setTimeout(() => tx.inputEl.focus(), 0);
+				tx.inputEl.addEventListener('keydown', (e) => {
 					if (e.key === 'Enter') { e.preventDefault(); submit(); }
 				});
 			});
 
 		const submit = (): void => {
 			const trimmed = value.trim();
-			if (!trimmed) { errorEl.textContent = 'Please enter a name.'; errorEl.show(); return; }
+			if (!trimmed) { errorEl.textContent = t('lists.enterName'); errorEl.show(); return; }
 			if (this.existingNames.includes(trimmed)) {
-				errorEl.textContent = `A list named "${trimmed}" already exists.`;
+				errorEl.textContent = t('lists.nameExists', { name: trimmed });
 				errorEl.show();
 				return;
 			}
@@ -518,8 +520,8 @@ class ListNameModal extends Modal {
 		};
 
 		const btnRow = contentEl.createDiv({ cls: 'wl-modal-btn-row' });
-		btnRow.createEl('button', { cls: 'wl-btn', text: 'Cancel' }).addEventListener('click', () => this.close());
-		btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Create' }).addEventListener('click', submit);
+		btnRow.createEl('button', { cls: 'wl-btn', text: t('common.cancel') }).addEventListener('click', () => this.close());
+		btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('lists.create') }).addEventListener('click', submit);
 	}
 
 	onClose(): void { this.contentEl.empty(); }
@@ -636,8 +638,8 @@ export class CustomListsTab {
 
 	private buildEmptyState(): void {
 		const es = this.container.createDiv({ cls: 'wl-cl-empty-state' });
-		es.createDiv({ cls: 'wl-cl-empty-text', text: 'No custom lists yet.' });
-		const btn = es.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Create your first list' });
+		es.createDiv({ cls: 'wl-cl-empty-text', text: t('lists.emptyText') });
+		const btn = es.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('lists.createFirst') });
 		btn.addEventListener('click', () => this.promptCreateList());
 	}
 
@@ -716,7 +718,7 @@ export class CustomListsTab {
 			if (!save) return;
 			const newName = input.value.trim();
 			if (!newName || newName === oldName) return;
-			if (this.listNames.includes(newName)) { new Notice(`A list named "${newName}" already exists.`); return; }
+			if (this.listNames.includes(newName)) { new Notice(t('lists.nameExists', { name: newName })); return; }
 			await this.manager.renameList(oldName, newName);
 			if (this.activeListName === oldName) this.activeListName = newName;
 			await this.render();
@@ -760,7 +762,7 @@ export class CustomListsTab {
 	}
 
 	private deleteList(name: string): void {
-		new ConfirmModal(this.plugin.app, `Delete list "${name}"? This cannot be undone.`, () => {
+		new ConfirmModal(this.plugin.app, t('lists.deleteConfirm', { name }), () => {
 			void (async () => {
 				await this.manager.deleteList(name);
 				if (this.activeListName === name) { this.activeListName = null; this.currentList = null; }
@@ -776,7 +778,7 @@ export class CustomListsTab {
 		const countEl = header.createSpan({ cls: 'wl-results-count wl-cl-count' });
 		const toolbar = header.createDiv({ cls: 'wl-cl-toolbar' });
 
-		const notesBtn = toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Notes' });
+		const notesBtn = toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('lists.notes') });
 		notesBtn.addEventListener('click', () => {
 			new NotesModal(
 				this.plugin.app,
@@ -789,7 +791,7 @@ export class CustomListsTab {
 			).open();
 		});
 
-		const sortBtn = toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Sort' });
+		const sortBtn = toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('lists.sort') });
 		let sortPanel: HTMLElement | null = null;
 		sortBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
@@ -798,13 +800,13 @@ export class CustomListsTab {
 			activeDocument.addEventListener('click', () => { sortPanel?.remove(); sortPanel = null; }, { once: true });
 		});
 
-		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Export' })
+		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('lists.export') })
 			.addEventListener('click', () => this.exportToClipboard(list));
 
-		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Import' })
+		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('lists.import') })
 			.addEventListener('click', () => this.openImport(list));
 
-		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Table settings' })
+		toolbar.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('lists.tableSettings') })
 			.addEventListener('click', () => {
 				new EditColumnsModal(
 					this.plugin.app,
@@ -834,7 +836,7 @@ export class CustomListsTab {
 		const searchWrap = view.createDiv({ cls: 'wl-search-wrap' });
 		const searchInput = searchWrap.createEl('input', {
 			cls: 'wl-search-input',
-			attr: { type: 'text', placeholder: 'Search...', value: this.searchQuery },
+			attr: { type: 'text', placeholder: t('lists.searchPlaceholder'), value: this.searchQuery },
 		});
 		let searchDebounce: number | null = null;
 		searchInput.addEventListener('input', () => {
@@ -852,7 +854,7 @@ export class CustomListsTab {
 		if (this.plugin.settings.showHintBanners) {
 			view.createDiv({
 				cls: 'wl-cl-draft-banner',
-				text: '⚠ This is a draft list. Titles here are not included in any stats or counts.',
+				text: `⚠ ${t('lists.draftBanner')}`,
 			});
 		}
 
@@ -864,25 +866,25 @@ export class CustomListsTab {
 		const panel = anchor.createDiv({ cls: 'wl-cl-sort-panel' });
 
 		const row1 = panel.createDiv({ cls: 'wl-filter-row' });
-		row1.createSpan({ cls: 'wl-filter-label', text: 'Sort by' });
+		row1.createSpan({ cls: 'wl-filter-label', text: t('lists.sortBy') });
 		const colSel = row1.createEl('select', { cls: 'wl-select' });
-		colSel.createEl('option', { value: 'name', text: 'Name' });
+		colSel.createEl('option', { value: 'name', text: t('lists.name') });
 		for (const col of list.columns.filter(c => !c.locked)) {
 			colSel.createEl('option', { value: col.id, text: col.label });
 		}
 		if (this.sortCol) colSel.value = this.sortCol;
 
 		const row2 = panel.createDiv({ cls: 'wl-filter-row' });
-		row2.createSpan({ cls: 'wl-filter-label', text: 'Direction' });
+		row2.createSpan({ cls: 'wl-filter-label', text: t('lists.direction') });
 		const dirSel = row2.createEl('select', { cls: 'wl-select' });
-		dirSel.createEl('option', { value: 'asc', text: 'A → z' });
-		dirSel.createEl('option', { value: 'desc', text: 'Z → a' });
+		dirSel.createEl('option', { value: 'asc', text: t('lists.ascending') });
+		dirSel.createEl('option', { value: 'desc', text: t('lists.descending') });
 		dirSel.value = this.sortDir;
 
 		const btnRow = panel.createDiv({ cls: 'wl-modal-btn-row' });
-		btnRow.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Clear sort' })
+		btnRow.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('lists.clearSort') })
 			.addEventListener('click', (e) => { e.stopPropagation(); this.sortCol = null; this.sortDir = 'asc'; onClose(); void this.render(); });
-		btnRow.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-primary', text: 'Apply' })
+		btnRow.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-primary', text: t('lists.apply') })
 			.addEventListener('click', (e) => {
 				e.stopPropagation();
 				this.sortCol = colSel.value;
@@ -924,8 +926,8 @@ export class CustomListsTab {
 			const data = this.gatherExportData(list);
 			const text = format === 'tsv' ? this.buildTsv(data) : this.buildMarkdown(data);
 			navigator.clipboard.writeText(text)
-				.then(() => new Notice('Copied to clipboard!'))
-				.catch(() => new Notice('Failed to copy to clipboard.'));
+				.then(() => new Notice(t('lists.copied')))
+				.catch(() => new Notice(t('lists.copyFailed')));
 		}).open();
 	}
 
@@ -962,7 +964,7 @@ export class CustomListsTab {
 		this._tableContainer = container;
 
 		const visibleRows = this.getFilteredSortedRows(list);
-		countEl.textContent = `${visibleRows.length} title${visibleRows.length !== 1 ? 's' : ''}`;
+		countEl.textContent = t('lists.titleCount', { count: visibleRows.length });
 
 		const nonLockedCols = list.columns.filter(c => !c.locked);
 
@@ -974,7 +976,7 @@ export class CustomListsTab {
 		const tickTh = hRow.createDiv({ cls: 'wl-cl-th wl-cl-th-tick' });
 		const allChecked = visibleRows.length > 0 && visibleRows.every(r => r.checked === true);
 		const selectAllBtn = tickTh.createDiv({ cls: `wl-cl-tick-btn${allChecked ? ' is-checked' : ''}` });
-		selectAllBtn.title = allChecked ? 'Uncheck all visible rows' : 'Check all visible rows';
+		selectAllBtn.title = allChecked ? t('lists.uncheckAll') : t('lists.checkAll');
 		selectAllBtn.textContent = allChecked ? '✓' : '○';
 		selectAllBtn.addEventListener('click', () => {
 			// only affect currently visible (filtered/searched) rows
@@ -984,7 +986,7 @@ export class CustomListsTab {
 			void this.manager.saveList(list).then(() => { container.empty(); this.buildTable(container, list, countEl); });
 		});
 		hRow.createDiv({ cls: 'wl-cl-th wl-cl-th-num', text: '#' });
-		const nameTh = hRow.createDiv({ cls: 'wl-cl-th', text: 'Name' });
+		const nameTh = hRow.createDiv({ cls: 'wl-cl-th', text: t('lists.name') });
 		nameTh.dataset.wlCol = '__name';
 		this.addResizeHandle(nameTh, '__name', list, table);
 		for (const col of nonLockedCols) {
@@ -994,7 +996,7 @@ export class CustomListsTab {
 			this.addResizeHandle(th, col.id, list, table);
 			if (col.type === 'number' && col.autoTime) {
 				const refreshBtn = th.createSpan({ cls: 'wl-cl-autotime-refresh', text: '↻' });
-				refreshBtn.title = 'Refresh remaining time values';
+				refreshBtn.title = t('lists.refreshRemaining');
 				refreshBtn.addEventListener('click', (e) => {
 					e.stopPropagation();
 					this.autoPopulateTimeColumn(list, col);
@@ -1023,7 +1025,7 @@ export class CustomListsTab {
 				plugin: this.plugin,
 				dataManager: this.dataManager,
 				title: name,
-				heading: 'Add title',
+				heading: t('lists.addTitle'),
 			});
 		});
 
@@ -1034,7 +1036,7 @@ export class CustomListsTab {
 
 			const tickCell = tr.createDiv({ cls: 'wl-cl-td wl-cl-td-tick' });
 			const tickBtn = tickCell.createDiv({ cls: `wl-cl-tick-btn${isChecked ? ' is-checked' : ''}` });
-			tickBtn.title = isChecked ? 'Uncheck row' : 'Check row';
+			tickBtn.title = isChecked ? t('lists.uncheckRow') : t('lists.checkRow');
 			tickBtn.textContent = isChecked ? '✓' : '○';
 			tickBtn.addEventListener('click', () => {
 				const realRow = list.rows.find((r) => r.id === row.id);
@@ -1058,16 +1060,16 @@ export class CustomListsTab {
 			const actCell = tr.createDiv({ cls: 'wl-cl-td wl-cl-td-actions' });
 
 			const dragHandle = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-drag-handle', text: '⠿' });
-			dragHandle.title = 'Drag to reorder';
+			dragHandle.title = t('ui.columns.dragToReorder');
 
 			// unnamed rows have nothing to send to a library
 			if (rowName(row)) {
 				const addBtn = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-add-btn', text: '+' });
-				addBtn.title = 'Add to Watchlist, Reading or Games';
+				addBtn.title = t('lists.addToLibrary');
 			}
 
 			const dupBtn = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-dup-btn', text: '⧉' });
-			dupBtn.title = 'Duplicate row';
+			dupBtn.title = t('lists.duplicateRow');
 			dupBtn.addEventListener('click', () => {
 				const realIdx = list.rows.findIndex(r => r.id === row.id);
 				if (realIdx < 0) return;
@@ -1081,7 +1083,7 @@ export class CustomListsTab {
 			});
 
 			const rowDelBtn = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-row-del', text: '×' });
-			rowDelBtn.title = 'Delete row';
+			rowDelBtn.title = t('lists.deleteRow');
 			rowDelBtn.addEventListener('click', () => {
 				list.rows = list.rows.filter(r => r.id !== row.id);
 				this.duplicatedRowIds.delete(row.id);
@@ -1115,7 +1117,7 @@ export class CustomListsTab {
 		this.applyColumnWidths(table, list);
 
 		const addRowEl = container.createDiv({ cls: 'wl-cl-add-row' });
-		addRowEl.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-success', text: '+ add row' })
+		addRowEl.createEl('button', { cls: 'wl-btn wl-btn-sm wl-btn-success', text: t('lists.addRow') })
 			.addEventListener('click', () => {
 				const newRow: CustomListRow = { id: this.manager.generateRowId(list.rows), name: '' };
 				list.rows.push(newRow);
@@ -1326,10 +1328,10 @@ export class CustomListsTab {
 			// suggestions come from every library: Watchlist, Reading (Books + Manga) and Games
 			const reading = this.plugin.readingDataManager;
 			const suggestions: { title: string; meta: string }[] = [
-				...this.dataManager.getTitles().map(t => ({ title: t.title, meta: `${t.type} · ${t.status}` })),
-				...reading.getBooks().map(b => ({ title: b.title, meta: `Book · ${b.status}` })),
-				...reading.getMangaList().map(m => ({ title: m.title, meta: `Manga · ${m.status}` })),
-				...this.plugin.gameDataManager.getGames().map(g => ({ title: g.title, meta: `Game · ${g.status}` })),
+				...this.dataManager.getTitles().map(ti => ({ title: ti.title, meta: `${typeLabel(ti.type)} · ${statusLabel(ti.status)}` })),
+				...reading.getBooks().map(b => ({ title: b.title, meta: `${t('lists.book')} · ${readingStatusLabel(b.status)}` })),
+				...reading.getMangaList().map(m => ({ title: m.title, meta: `${t('lists.manga')} · ${readingStatusLabel(m.status)}` })),
+				...this.plugin.gameDataManager.getGames().map(g => ({ title: g.title, meta: `${t('lists.game')} · ${g.status}` })),
 			]
 				.filter(s => s.title.toLowerCase().includes(q))
 				.slice(0, 10);
@@ -1640,18 +1642,18 @@ class ExportFormatModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.titleEl.setText('Export list');
+		this.titleEl.setText(t('lists.exportTitle'));
 		this.contentEl.addClass('wl-export-modal');
 
 		this.contentEl.createDiv({
 			cls: 'wl-settings-info',
-			text: 'TSV pastes into spreadsheets as columns. Markdown produces a table you can paste into notes.',
+			text: t('lists.exportInfo'),
 		});
 
 		const row = this.contentEl.createDiv({ cls: 'wl-modal-btn-row' });
-		const tsvBtn = row.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Copy as TSV' });
+		const tsvBtn = row.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('lists.copyTsv') });
 		tsvBtn.addEventListener('click', () => { this.close(); this.onChoose('tsv'); });
-		const mdBtn = row.createEl('button', { cls: 'wl-btn', text: 'Copy as Markdown' });
+		const mdBtn = row.createEl('button', { cls: 'wl-btn', text: t('lists.copyMarkdown') });
 		mdBtn.addEventListener('click', () => { this.close(); this.onChoose('md'); });
 	}
 
@@ -1697,17 +1699,17 @@ class ImportListModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.titleEl.setText('Import rows');
+		this.titleEl.setText(t('lists.importTitle'));
 		this.contentEl.addClass('wl-import-modal');
 
 		this.contentEl.createDiv({
 			cls: 'wl-settings-info',
-			text: 'Paste tab-separated values copied from a spreadsheet (Google Sheets / Excel). Rows are appended to the end of the list. Do not include an index/# column; rows are numbered automatically.',
+			text: t('lists.importInfo'),
 		});
 
 		this.textarea = this.contentEl.createEl('textarea', {
 			cls: 'wl-modal-textarea wl-import-textarea',
-			attr: { placeholder: 'Paste here…', rows: '8' },
+			attr: { placeholder: t('lists.pastePlaceholder'), rows: '8' },
 		});
 		this.textarea.addEventListener('input', () => this.refreshPreview());
 
@@ -1718,7 +1720,7 @@ class ImportListModal extends Modal {
 		});
 		headerCheckbox.checked = this.firstRowIsHeader;
 		headerToggleRow.createEl('label', {
-			text: 'First row is a header (column names, not imported as data)',
+			text: t('lists.firstRowHeader'),
 			attr: { for: 'wl-import-header-cb' },
 		});
 		headerCheckbox.addEventListener('change', () => {
@@ -1729,9 +1731,9 @@ class ImportListModal extends Modal {
 		this.previewEl = this.contentEl.createDiv({ cls: 'wl-import-preview' });
 
 		const btnRow = this.contentEl.createDiv({ cls: 'wl-modal-btn-row' });
-		this.addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add' });
+		this.addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('common.add') });
 		this.addBtn.addEventListener('click', () => void this.apply());
-		btnRow.createEl('button', { cls: 'wl-btn', text: 'Cancel' })
+		btnRow.createEl('button', { cls: 'wl-btn', text: t('common.cancel') })
 			.addEventListener('click', () => this.close());
 
 		this.refreshPreview();
@@ -1822,13 +1824,16 @@ class ImportListModal extends Modal {
 
 		if (!a) {
 			this.addBtn.disabled = true;
-			this.previewEl.createDiv({ cls: 'wl-import-counts', text: 'Paste TSV data to preview the import.' });
+			this.previewEl.createDiv({ cls: 'wl-import-counts', text: t('lists.pasteToPreview') });
 			return;
 		}
 
 		this.previewEl.createDiv({
 			cls: 'wl-import-counts',
-			text: `${a.rowCount} row${a.rowCount === 1 ? '' : 's'} × ${a.totalCols} column${a.totalCols === 1 ? '' : 's'} detected.`,
+			text: t('lists.detected', {
+				rows: t('lists.rowCount', { count: a.rowCount }),
+				cols: t('lists.columnCount', { count: a.totalCols }),
+			}),
 		});
 
 		const blocking = a.numberConflicts.length > 0;
@@ -1836,28 +1841,28 @@ class ImportListModal extends Modal {
 		if (a.newColCount > 0) {
 			this.previewEl.createDiv({
 				cls: 'wl-import-banner',
-				text: `⚠ ${a.newColCount} new text column${a.newColCount === 1 ? '' : 's'} will be created to match the pasted data.`,
+				text: `⚠ ${t('lists.newTextColumns', { count: a.newColCount })}`,
 			});
 		}
 
 		for (const sel of a.selectAdditions) {
 			this.previewEl.createDiv({
 				cls: 'wl-import-banner',
-				text: `⚠ Select column "${sel.label}" will gain ${sel.values.length} new option${sel.values.length === 1 ? '' : 's'}: ${sel.values.join(', ')}.`,
+				text: `⚠ ${t('lists.selectGain', { label: sel.label, count: sel.values.length, values: sel.values.join(', ') })}`,
 			});
 		}
 
 		if (a.totalCols < a.existingCount) {
 			this.previewEl.createDiv({
 				cls: 'wl-import-banner',
-				text: '⚠ Fewer columns than the list; missing trailing cells will be left empty.',
+				text: `⚠ ${t('lists.fewerColumns')}`,
 			});
 		}
 
 		for (const label of a.numberConflicts) {
 			this.previewEl.createDiv({
 				cls: 'wl-import-banner-error',
-				text: `⛔ Number column "${label}" received non-numeric values. Reorder your columns or change the column type, then paste again.`,
+				text: `⛔ ${t('lists.numberConflict', { label })}`,
 			});
 		}
 
@@ -1913,6 +1918,6 @@ class ImportListModal extends Modal {
 
 		this.close();
 		await this.onApplied();
-		new Notice(`Imported ${a.rowCount} row${a.rowCount === 1 ? '' : 's'}.`);
+		new Notice(t('lists.imported', { count: a.rowCount }));
 	}
 }

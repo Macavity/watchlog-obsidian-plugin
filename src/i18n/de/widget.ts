@@ -1,6 +1,46 @@
 import type enWidget from '../en/widget';
 import type { DeepPartial } from '../index';
 
-const widget = {} satisfies DeepPartial<typeof enWidget>;
+const widget = {
+	insertPlaceholder: 'Titel zum Einfügen suchen...',
+	missingId: 'Feld „id“ fehlt.',
+	titleNotFound: 'Titel „{id}“ nicht gefunden.',
+	taskMarker: 'Persönliche Aufgabenmarkierung (ändert keine Watchlog-Daten)',
+	since: 'seit {date}',
+	addedOn: 'hinzugefügt {date}',
+	markEpisode: 'Folge {episode} als gesehen markieren',
+	markMovie: 'Film als gesehen markieren',
+	nextUp: 'Als Nächstes: Folge {episode}',
+	allWatched: 'Alle Folgen gesehen',
+	watched: 'Gesehen',
+	markAsWatched: 'Als gesehen markieren',
+	todoMissingTitle: 'Titelname fehlt.',
+	todoNotFound: '„{name}“ nicht gefunden.',
+	unknownStat: 'Unbekannte Statistik „{kind}“. Erlaubt: watched, completed, remaining, time, time full, completed full oder time completed full.',
+	statWatched: 'gesehen',
+	statCompleted: 'abgeschlossen',
+	statRemaining: 'verbleibend',
+	statLeft: 'übrig',
+	titlesCount: { one: '{count} Titel', other: '{count} Titel' },
+	timeHeader: 'Zeit',
+	completedHeader: 'Abgeschlossen',
+	titlesCompleted: 'Titel abgeschlossen',
+	daysHours: { one: '{count} Tag {hours}h', other: '{count} Tage {hours}h' },
+	upcomingUsage: 'Nur „next“ oder „next full“ wird unterstützt.',
+	noUpcomingTitles: 'Keine anstehenden Titel.',
+	today: 'heute',
+	tomorrow: 'morgen',
+	inDays: { one: 'in {count} Tag', other: 'in {count} Tagen' },
+	inDaysMonths: { one: 'in {days} Tagen ({count} Monat)', other: 'in {days} Tagen ({count} Monaten)' },
+	inDaysShort: 'in {count} T.',
+	upNext: 'Als Nächstes',
+	pinToWatch: 'Einen Titel anpinnen, um ihn als „Läuft gerade“ zu setzen.',
+	episodeShort: 'Folge {episode}',
+	completed: 'Abgeschlossen',
+	nowWatchingHeader: 'LÄUFT GERADE',
+	upcomingNextHeader: 'ALS NÄCHSTES',
+	nothingPinned: 'Nichts angepinnt.',
+	noUpcoming: 'Nichts anstehend.',
+} satisfies DeepPartial<typeof enWidget>;
 
 export default widget;
