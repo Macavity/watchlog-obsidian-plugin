@@ -1,4 +1,5 @@
 import { App, Modal } from 'obsidian';
+import { t } from './i18n';
 import type { Book, Manga, AirtimeSchedule } from './types';
 import {
 	type ScheduleFormState,
@@ -80,7 +81,7 @@ export class ReadingScheduleModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.titleEl.setText('Set reading schedule');
+		this.titleEl.setText(t('misc.readingSchedule.title'));
 		this.contentEl.addClass('wl-add-modal');
 		this.renderForm();
 	}
@@ -94,33 +95,33 @@ export class ReadingScheduleModal extends Modal {
 		const groups = [];
 		if (this.kind === 'manga') {
 			groups.push({
-				label: 'Volume',
-				current: counterField('Current volume', this.currentVolume, (v) => { this.currentVolume = v; }),
-				total: counterField('Total volumes', this.totalVolumes, (v) => { this.totalVolumes = v; }),
+				label: t('misc.readingSchedule.volumeLabel'),
+				current: counterField(t('misc.readingSchedule.currentVolume'), this.currentVolume, (v) => { this.currentVolume = v; }),
+				total: counterField(t('misc.readingSchedule.totalVolumes'), this.totalVolumes, (v) => { this.totalVolumes = v; }),
 			});
 		}
 		groups.push({
-			label: 'Chapter',
-			current: counterField('Next chapter', this.currentChapter, (v) => { this.currentChapter = v; }),
-			total: counterField('Total chapters', this.totalChapters, (v) => { this.totalChapters = v; }),
+			label: t('misc.readingSchedule.chapterLabel'),
+			current: counterField(t('misc.readingSchedule.nextChapter'), this.currentChapter, (v) => { this.currentChapter = v; }),
+			total: counterField(t('misc.readingSchedule.totalChapters'), this.totalChapters, (v) => { this.totalChapters = v; }),
 		});
 		renderCounterRow(parent, groups);
 	}
 
 	private hintFor(mode: 'single' | 'recurring'): string {
-		if (mode === 'single') return "Saving also updates this title's release date.";
+		if (mode === 'single') return t('misc.readingSchedule.hintSingle');
 		return this.kind === 'manga'
-			? "Saving also updates this title's total chapters and volumes."
-			: "Saving also updates this title's total chapters.";
+			? t('misc.readingSchedule.hintMangaRecurring')
+			: t('misc.readingSchedule.hintBookRecurring');
 	}
 
 	private renderForm(): void {
 		renderScheduleModal(this.contentEl, this.form, {
 			withTime: false,
 			withRecurring: true,
-			recurrenceLabel: 'Releases',
+			recurrenceLabel: t('misc.readingSchedule.recurrenceLabel'),
 			recurrenceOptions: RECURRENCE_OPTIONS,
-			modeLabels: ['Single release', 'Recurring chapters'],
+			modeLabels: [t('ui.schedule.single'), t('misc.readingSchedule.recurringChapters')],
 			hint: (mode) => this.hintFor(mode),
 			renderCounters: (parent) => this.renderCounters(parent),
 			modal: this,

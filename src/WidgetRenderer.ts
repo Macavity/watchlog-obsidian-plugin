@@ -3,6 +3,8 @@ import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, TagDefinition } from './types';
 import { formatTime, getThemedColor, formatDateDisplay, formatShortDateDisplay } from './types';
+import { t } from './i18n';
+import { statusLabel, typeLabel } from './i18n/labels';
 
 export interface NextRelease { titleName: string; type: string; releaseDate: string; daysUntil: number }
 
@@ -152,7 +154,7 @@ export class WidgetRenderer {
 		const idMatch = source.match(/id:\s*(.+)/);
 		const id = idMatch?.[1]?.trim();
 		if (!id) {
-			el.createDiv({ cls: 'wl-widget-error', text: 'WatchLog: missing id field.' });
+			el.createDiv({ cls: 'wl-widget-error', text: `WatchLog: ${t('widget.missingId')}` });
 			return;
 		}
 
@@ -160,7 +162,7 @@ export class WidgetRenderer {
 		if (!title) {
 			el.createDiv({
 				cls: 'wl-widget-error',
-				text: `WatchLog: title "${id}" not found.`,
+				text: `WatchLog: ${t('widget.titleNotFound', { id })}`,
 			});
 			return;
 		}
@@ -186,7 +188,7 @@ export class WidgetRenderer {
 			cls: 'wl-widget-cb',
 			attr: { type: 'checkbox' },
 		});
-		taskCb.title = 'Personal task marker (does not affect watchlog data)';
+		taskCb.title = t('widget.taskMarker');
 		taskCb.addEventListener('change', () => {
 			const titleSpan = mainRow.querySelector<HTMLElement>('.wl-widget-title');
 			if (titleSpan) {
@@ -199,12 +201,12 @@ export class WidgetRenderer {
 
 		this.sep(mainRow);
 
-		this.renderBadge(mainRow, title.type, this.plugin.settings.types);
+		this.renderBadge(mainRow, title.type, this.plugin.settings.types, typeLabel(title.type));
 
 		this.sep(mainRow);
 
 		// status badge (respects coloredTypeBadges)
-		this.renderBadge(mainRow, title.status, this.plugin.settings.statuses);
+		this.renderBadge(mainRow, title.status, this.plugin.settings.statuses, statusLabel(title.status));
 
 		this.sep(mainRow);
 
@@ -220,8 +222,8 @@ export class WidgetRenderer {
 
 		const dateStr = title.dateStarted ?? title.dateAdded;
 		const dateLabel = title.dateStarted
-			? `since ${this.formatShortDate(dateStr)}`
-			: `added ${this.formatShortDate(dateStr)}`;
+			? t('widget.since', { date: this.formatShortDate(dateStr) })
+			: t('widget.addedOn', { date: this.formatShortDate(dateStr) });
 		mainRow.createSpan({ cls: 'wl-widget-date', text: dateLabel });
 
 		// checkbox 2: "Next up" — writes to WatchLog data
@@ -232,22 +234,22 @@ export class WidgetRenderer {
 
 			if (nextEp !== null) {
 				this.renderEpisodeCheckbox(nextRow, title, {
-					episode: nextEp, checked: false, tooltip: `Mark Episode ${nextEp} as watched`, follow: false,
+					episode: nextEp, checked: false, tooltip: t('widget.markEpisode', { episode: nextEp }), follow: false,
 				}, (t) => this.renderWidget(el, t));
-				nextRow.createSpan({ cls: 'wl-widget-next-label', text: `Next up: Ep ${nextEp}` });
+				nextRow.createSpan({ cls: 'wl-widget-next-label', text: t('widget.nextUp', { episode: nextEp }) });
 			} else {
-				nextRow.createSpan({ cls: 'wl-widget-next-label', text: '✓ All episodes watched' });
+				nextRow.createSpan({ cls: 'wl-widget-next-label', text: `✓ ${t('widget.allWatched')}` });
 			}
 		} else {
 			// movie: watch checkbox that writes to WatchLog data
 			const watchRow = el.createDiv({ cls: 'wl-widget-next-row' });
 			const watched = title.watchedEpisodes.includes(1);
 			this.renderEpisodeCheckbox(watchRow, title, {
-				episode: 1, checked: watched, tooltip: 'Mark movie as watched', follow: true,
+				episode: 1, checked: watched, tooltip: t('widget.markMovie'), follow: true,
 			}, (t) => this.renderWidget(el, t));
 			watchRow.createSpan({
 				cls: 'wl-widget-next-label',
-				text: watched ? 'Watched' : 'Mark as watched',
+				text: watched ? t('widget.watched') : t('widget.markAsWatched'),
 			});
 		}
 	}
@@ -263,7 +265,7 @@ export class WidgetRenderer {
 			cls: 'wl-widget-cb',
 			attr: { type: 'checkbox' },
 		});
-		taskCb.title = 'Personal task marker (does not affect watchlog data)';
+		taskCb.title = t('widget.taskMarker');
 		taskCb.addEventListener('change', () => {
 			const titleSpan = row.querySelector<HTMLElement>('.wl-widget-title');
 			if (titleSpan) {
@@ -276,12 +278,12 @@ export class WidgetRenderer {
 
 		this.sep(row);
 
-		this.renderBadge(row, title.type, this.plugin.settings.types);
+		this.renderBadge(row, title.type, this.plugin.settings.types, typeLabel(title.type));
 
 		this.sep(row);
 
 		// status badge (respects coloredTypeBadges)
-		this.renderBadge(row, title.status, this.plugin.settings.statuses);
+		this.renderBadge(row, title.status, this.plugin.settings.statuses, statusLabel(title.status));
 
 		this.sep(row);
 
@@ -295,13 +297,13 @@ export class WidgetRenderer {
 		if (isMovie) {
 			const watched = title.watchedEpisodes.includes(1);
 			this.renderEpisodeCheckbox(row, title, {
-				episode: 1, checked: watched, tooltip: 'Mark movie as watched', follow: true,
+				episode: 1, checked: watched, tooltip: t('widget.markMovie'), follow: true,
 			}, (t) => this.renderWidgetMinimal(el, t));
 		} else {
 			const nextEp = this.dataManager.getNextUnwatchedEpisode(title);
 			if (nextEp !== null) {
 				this.renderEpisodeCheckbox(row, title, {
-					episode: nextEp, checked: false, tooltip: `Mark Episode ${nextEp} as watched`, follow: false,
+					episode: nextEp, checked: false, tooltip: t('widget.markEpisode', { episode: nextEp }), follow: false,
 				}, (t) => this.renderWidgetMinimal(el, t));
 			} else {
 				const nextCb = row.createEl('input', {
@@ -310,18 +312,18 @@ export class WidgetRenderer {
 				});
 				nextCb.checked = true;
 				nextCb.disabled = true;
-				nextCb.title = 'All episodes watched';
+				nextCb.title = t('widget.allWatched');
 			}
 		}
 	}
 
 	/** Type / status badge: coloured from the tag definition when coloured badges are on. */
-	private renderBadge(host: HTMLElement, text: string, tags: TagDefinition[]): void {
+	private renderBadge(host: HTMLElement, text: string, tags: TagDefinition[], display: string = text): void {
 		const def = this.getTagDef(text, tags);
 		const colored = this.plugin.settings.coloredTypeBadges;
 		const badge = host.createSpan({
 			cls: colored ? 'wl-badge wl-badge-sm' : 'wl-badge-plain',
-			text,
+			text: display,
 		});
 		if (colored && def) badge.style.backgroundColor = getThemedColor(text, def.color, this.plugin.settings.colorTheme);
 	}
@@ -407,14 +409,14 @@ export class WidgetRenderer {
 		const isMini = lines.includes('mini');
 		const titleName = lines.find((l) => l !== 'mini') ?? '';
 		if (!titleName) {
-			el.createDiv({ cls: 'wl-widget-error', text: 'wl-todo: missing title name.' });
+			el.createDiv({ cls: 'wl-widget-error', text: `wl-todo: ${t('widget.todoMissingTitle')}` });
 			return;
 		}
 		const title = this.dataManager.getTitles().find(
 			(t) => t.title.toLowerCase() === titleName.toLowerCase(),
 		);
 		if (!title) {
-			el.createDiv({ cls: 'wl-widget-error', text: `wl-todo: "${titleName}" not found.` });
+			el.createDiv({ cls: 'wl-widget-error', text: `wl-todo: ${t('widget.todoNotFound', { name: titleName })}` });
 			return;
 		}
 		this.widgetRegistry.set(el, title.id);
@@ -440,13 +442,13 @@ export class WidgetRenderer {
 
 		if (kind === 'watched') {
 			const minutes = this.dataManager.getTotalTimeWatched();
-			this.renderStatCard(el, '🕐', formatTime(minutes), 'watched');
+			this.renderStatCard(el, '🕐', formatTime(minutes), t('widget.statWatched'));
 		} else if (kind === 'completed') {
 			const count = this.dataManager.getCompletedCount();
-			this.renderStatCard(el, '✅', `${count} titles`, 'completed');
+			this.renderStatCard(el, '✅', t('widget.titlesCount', { count }), t('widget.statCompleted'));
 		} else if (kind === 'remaining') {
 			const minutes = this.dataManager.getTotalTimeRemaining();
-			this.renderStatCard(el, '⏳', formatTime(minutes), 'remaining');
+			this.renderStatCard(el, '⏳', formatTime(minutes), t('widget.statRemaining'));
 		} else if (kind === 'time') {
 			const watched = this.dataManager.getTotalTimeWatched();
 			const remaining = this.dataManager.getTotalTimeRemaining();
@@ -464,7 +466,7 @@ export class WidgetRenderer {
 			const count = this.dataManager.getCompletedCount();
 			this.renderTripleStatCard(el, watched, remaining, count);
 		} else {
-			el.createDiv({ cls: 'wl-widget-error', text: `wl-stat: unknown stat "${kind}". Use watched, completed, remaining, time, time full, completed full, or time completed full.` });
+			el.createDiv({ cls: 'wl-widget-error', text: `wl-stat: ${t('widget.unknownStat', { kind })}` });
 		}
 	}
 
@@ -481,20 +483,20 @@ export class WidgetRenderer {
 		const card = el.createDiv({ cls: 'wl-stat-card wl-stat-card-time' });
 		card.createSpan({ cls: 'wl-stat-icon', text: '🕐' });
 		card.createSpan({ cls: 'wl-stat-value', text: formatTime(watchedMins) });
-		card.createSpan({ cls: 'wl-stat-label', text: 'watched' });
+		card.createSpan({ cls: 'wl-stat-label', text: t('widget.statWatched') });
 		card.createSpan({ cls: 'wl-stat-sep', text: '·' });
 		card.createSpan({ cls: 'wl-stat-icon', text: '⏳' });
 		card.createSpan({ cls: 'wl-stat-value', text: formatTime(remainingMins) });
-		card.createSpan({ cls: 'wl-stat-label', text: 'left' });
+		card.createSpan({ cls: 'wl-stat-label', text: t('widget.statLeft') });
 	}
 
 	private renderTimeCardFull(el: HTMLElement, watchedMins: number, remainingMins: number): void {
 		el.empty();
 		const card = el.createDiv({ cls: 'wl-full-card wl-full-card-time' });
-		card.createDiv({ cls: 'wl-full-card-header', text: 'Time' });
+		card.createDiv({ cls: 'wl-full-card-header', text: t('widget.timeHeader') });
 		const cols = card.createDiv({ cls: 'wl-full-card-time-cols' });
-		this.renderTimeCol(cols, 'wl-full-card-time-col', watchedMins, 'watched');
-		this.renderTimeCol(cols, 'wl-full-card-time-col', remainingMins, 'remaining');
+		this.renderTimeCol(cols, 'wl-full-card-time-col', watchedMins, t('widget.statWatched'));
+		this.renderTimeCol(cols, 'wl-full-card-time-col', remainingMins, t('widget.statRemaining'));
 	}
 
 	private renderTimeCol(cols: HTMLElement, cls: string, mins: number, label: string): void {
@@ -508,15 +510,15 @@ export class WidgetRenderer {
 		const days = Math.floor(minutes / 1440);
 		const hours = Math.floor((minutes % 1440) / 60);
 		if (days === 0) return hours > 0 ? `${hours}h` : '0h';
-		return `${days} days ${hours}h`;
+		return t('widget.daysHours', { count: days, hours });
 	}
 
 	private renderCompletedCardFull(el: HTMLElement, count: number): void {
 		el.empty();
 		const card = el.createDiv({ cls: 'wl-full-card' });
-		card.createDiv({ cls: 'wl-full-card-header', text: 'Completed' });
+		card.createDiv({ cls: 'wl-full-card-header', text: t('widget.completedHeader') });
 		card.createDiv({ cls: 'wl-full-card-value', text: String(count) });
-		card.createDiv({ cls: 'wl-full-card-sub', text: 'titles completed' });
+		card.createDiv({ cls: 'wl-full-card-sub', text: t('widget.titlesCompleted') });
 	}
 
 	private renderTripleStatCard(el: HTMLElement, watchedMins: number, remainingMins: number, completed: number): void {
@@ -525,14 +527,14 @@ export class WidgetRenderer {
 		const card = el.createDiv({ cls: 'wl-full-card wl-full-card-triple' });
 		const cols = card.createDiv({ cls: 'wl-triple-cols' });
 
-		this.renderTimeCol(cols, 'wl-triple-col', watchedMins, 'watched');
+		this.renderTimeCol(cols, 'wl-triple-col', watchedMins, t('widget.statWatched'));
 		cols.createDiv({ cls: 'wl-vert-sep' });
-		this.renderTimeCol(cols, 'wl-triple-col', remainingMins, 'remaining');
+		this.renderTimeCol(cols, 'wl-triple-col', remainingMins, t('widget.statRemaining'));
 		cols.createDiv({ cls: 'wl-vert-sep' });
 
 		const completedCol = cols.createDiv({ cls: 'wl-triple-col' });
 		completedCol.createDiv({ cls: 'wl-full-card-value', text: String(completed) });
-		completedCol.createDiv({ cls: 'wl-full-card-sub', text: 'completed' });
+		completedCol.createDiv({ cls: 'wl-full-card-sub', text: t('widget.statCompleted') });
 	}
 
 	// wl-upcoming
@@ -547,7 +549,7 @@ export class WidgetRenderer {
 		const kind = source.trim().toLowerCase();
 		const isFull = kind === 'next full';
 		if (kind !== 'next' && kind !== 'next full') {
-			el.createDiv({ cls: 'wl-widget-error', text: 'wl-upcoming: only "next" or "next full" is supported.' });
+			el.createDiv({ cls: 'wl-widget-error', text: `wl-upcoming: ${t('widget.upcomingUsage')}` });
 			return;
 		}
 
@@ -562,19 +564,21 @@ export class WidgetRenderer {
 		}
 
 		if (!bestEntry) {
-			el.createDiv({ cls: 'wl-upcoming-card wl-upcoming-empty', text: 'No upcoming titles.' });
+			el.createDiv({ cls: 'wl-upcoming-card wl-upcoming-empty', text: t('widget.noUpcomingTitles') });
 			return;
 		}
 
 		const card = el.createDiv({ cls: 'wl-upcoming-card' });
 		card.createSpan({ cls: 'wl-upcoming-title', text: bestEntry.titleName });
 
-		this.renderBadge(card, bestEntry.type, this.plugin.settings.types);
+		this.renderBadge(card, bestEntry.type, this.plugin.settings.types, typeLabel(bestEntry.type));
 
 		card.createSpan({ cls: 'wl-upcoming-date', text: formatDateDisplay(bestEntry.releaseDate) });
 		const daysUntil = bestEntry.daysUntil;
-		const monthSuffix = daysUntil >= 30 ? ` (${Math.round(daysUntil / 30)} month${Math.round(daysUntil / 30) !== 1 ? 's' : ''})` : '';
-		const countdown = daysUntil === 0 ? 'today' : daysUntil === 1 ? 'tomorrow' : `in ${daysUntil} days${monthSuffix}`;
+		const countdown = daysUntil === 0 ? t('widget.today')
+			: daysUntil === 1 ? t('widget.tomorrow')
+				: daysUntil >= 30 ? t('widget.inDaysMonths', { days: daysUntil, count: Math.round(daysUntil / 30) })
+					: t('widget.inDays', { count: daysUntil });
 		card.createSpan({ cls: 'wl-upcoming-countdown', text: countdown });
 	}
 
@@ -584,16 +588,16 @@ export class WidgetRenderer {
 	): void {
 		el.empty();
 		const card = el.createDiv({ cls: 'wl-full-card' });
-		card.createDiv({ cls: 'wl-full-card-header', text: 'Up Next' });
+		card.createDiv({ cls: 'wl-full-card-header', text: t('widget.upNext') });
 		if (!bestEntry) {
-			card.createDiv({ cls: 'wl-full-card-sub', text: 'No upcoming titles.' });
+			card.createDiv({ cls: 'wl-full-card-sub', text: t('widget.noUpcomingTitles') });
 			return;
 		}
 		card.createDiv({ cls: 'wl-full-card-title', text: bestEntry.titleName });
 		const meta = card.createDiv({ cls: 'wl-full-card-meta' });
-		this.renderBadge(meta, bestEntry.type, this.plugin.settings.types);
+		this.renderBadge(meta, bestEntry.type, this.plugin.settings.types, typeLabel(bestEntry.type));
 		const daysUntil = bestEntry.daysUntil;
-		const countdown = daysUntil === 0 ? 'today' : daysUntil === 1 ? 'tomorrow' : `in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}`;
+		const countdown = daysUntil === 0 ? t('widget.today') : daysUntil === 1 ? t('widget.tomorrow') : t('widget.inDays', { count: daysUntil });
 		meta.createSpan({ text: countdown });
 		meta.createSpan({ cls: 'wl-full-card-sub', text: formatDateDisplay(bestEntry.releaseDate) });
 	}
@@ -618,7 +622,7 @@ export class WidgetRenderer {
 		}
 
 		if (!pinnedTitle && !pinnedGroup) {
-			el.createDiv({ cls: 'wl-nowwatching-card wl-nowwatching-empty', text: 'Pin a title to set it as now watching.' });
+			el.createDiv({ cls: 'wl-nowwatching-card wl-nowwatching-empty', text: t('widget.pinToWatch') });
 			return;
 		}
 
@@ -627,7 +631,7 @@ export class WidgetRenderer {
 		if (pinnedGroup) {
 			card.createSpan({ cls: 'wl-nowwatching-title', text: pinnedGroup.name });
 			const { count, progress } = this.pinnedGroupStats(pinnedGroup);
-			card.createSpan({ cls: 'wl-nowwatching-ep', text: `${count} title${count !== 1 ? 's' : ''}` });
+			card.createSpan({ cls: 'wl-nowwatching-ep', text: t('widget.titlesCount', { count }) });
 			const barWrap = card.createDiv({ cls: 'wl-nowwatching-bar-wrap' });
 			barWrap.createDiv({ cls: 'wl-nowwatching-bar' }).style.width = `${progress}%`;
 			card.createSpan({ cls: 'wl-nowwatching-pct', text: `${progress}%` });
@@ -637,11 +641,11 @@ export class WidgetRenderer {
 		const pinned = pinnedTitle!;
 		card.createSpan({ cls: 'wl-nowwatching-title', text: pinned.title });
 
-		this.renderBadge(card, pinned.type, this.plugin.settings.types);
+		this.renderBadge(card, pinned.type, this.plugin.settings.types, typeLabel(pinned.type));
 
 		if (pinned.type !== 'Movie') {
 			const nextEp = this.dataManager.getNextUnwatchedEpisode(pinned);
-			card.createSpan({ cls: 'wl-nowwatching-ep', text: nextEp !== null ? `Ep ${nextEp}` : '✓ Completed' });
+			card.createSpan({ cls: 'wl-nowwatching-ep', text: nextEp !== null ? t('widget.episodeShort', { episode: nextEp }) : `✓ ${t('widget.completed')}` });
 		}
 
 		const progress = this.dataManager.getProgress(pinned);
@@ -658,10 +662,10 @@ export class WidgetRenderer {
 	): void {
 		el.empty();
 		const card = el.createDiv({ cls: 'wl-full-card wl-full-card-nw' });
-		card.createDiv({ cls: 'wl-full-card-header', text: 'NOW WATCHING' });
+		card.createDiv({ cls: 'wl-full-card-header', text: t('widget.nowWatchingHeader') });
 
 		if (!pinnedTitle && !pinnedGroup) {
-			card.createDiv({ cls: 'wl-full-card-sub', text: 'Pin a title to set it as now watching.' });
+			card.createDiv({ cls: 'wl-full-card-sub', text: t('widget.pinToWatch') });
 			return;
 		}
 
@@ -669,7 +673,7 @@ export class WidgetRenderer {
 			card.createDiv({ cls: 'wl-full-card-title', text: pinnedGroup.name });
 			const { count, progress } = this.pinnedGroupStats(pinnedGroup);
 			const bottomRow = card.createDiv({ cls: 'wl-nw-bottom-row' });
-			bottomRow.createSpan({ cls: 'wl-full-card-sub', text: `${count} title${count !== 1 ? 's' : ''}` });
+			bottomRow.createSpan({ cls: 'wl-full-card-sub', text: t('widget.titlesCount', { count }) });
 			this.renderNwBarCol(bottomRow, progress);
 			return;
 		}
@@ -680,7 +684,7 @@ export class WidgetRenderer {
 		const progress = this.dataManager.getProgress(pinned);
 		const bottomRow = card.createDiv({ cls: 'wl-nw-bottom-row' });
 
-		this.renderBadge(bottomRow, pinned.type, this.plugin.settings.types);
+		this.renderBadge(bottomRow, pinned.type, this.plugin.settings.types, typeLabel(pinned.type));
 
 		this.renderNwBarCol(bottomRow, progress);
 	}
@@ -715,14 +719,14 @@ export class WidgetRenderer {
 
 		// left column: Now Watching
 		const nowCol = cols.createDiv({ cls: 'wl-double-col' });
-		nowCol.createDiv({ cls: 'wl-full-card-header', text: 'NOW WATCHING' });
+		nowCol.createDiv({ cls: 'wl-full-card-header', text: t('widget.nowWatchingHeader') });
 
 		if (!pinnedTitle && !pinnedGroup) {
-			nowCol.createDiv({ cls: 'wl-full-card-sub', text: 'Nothing pinned.' });
+			nowCol.createDiv({ cls: 'wl-full-card-sub', text: t('widget.nothingPinned') });
 		} else if (pinnedGroup) {
 			nowCol.createDiv({ cls: 'wl-full-card-title', text: pinnedGroup.name });
 			const { count, progress } = this.pinnedGroupStats(pinnedGroup);
-			nowCol.createDiv({ cls: 'wl-full-card-sub', text: `${count} title${count !== 1 ? 's' : ''} · ${progress}%` });
+			nowCol.createDiv({ cls: 'wl-full-card-sub', text: `${t('widget.titlesCount', { count })} · ${progress}%` });
 		} else {
 			const pinned = pinnedTitle!;
 			nowCol.createDiv({ cls: 'wl-full-card-title', text: pinned.title });
@@ -734,14 +738,14 @@ export class WidgetRenderer {
 
 		// right column: Up Next
 		const nextCol = cols.createDiv({ cls: 'wl-double-col' });
-		nextCol.createDiv({ cls: 'wl-full-card-header', text: 'UPCOMING NEXT' });
+		nextCol.createDiv({ cls: 'wl-full-card-header', text: t('widget.upcomingNextHeader') });
 
 		if (!bestEntry) {
-			nextCol.createDiv({ cls: 'wl-full-card-sub', text: 'No upcoming.' });
+			nextCol.createDiv({ cls: 'wl-full-card-sub', text: t('widget.noUpcoming') });
 		} else {
 			nextCol.createDiv({ cls: 'wl-full-card-title', text: bestEntry.titleName });
 			const daysUntil = bestEntry.daysUntil;
-			const countdown = daysUntil === 0 ? 'today' : daysUntil === 1 ? 'tomorrow' : `in ${daysUntil}d`;
+			const countdown = daysUntil === 0 ? t('widget.today') : daysUntil === 1 ? t('widget.tomorrow') : t('widget.inDaysShort', { count: daysUntil });
 			nextCol.createDiv({ cls: 'wl-full-card-sub', text: `${bestEntry.releaseDate} · ${countdown}` });
 		}
 	}

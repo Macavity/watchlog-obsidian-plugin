@@ -11,6 +11,9 @@ import { renderModePill } from './ModePill';
 import { appendNoteLinkButton } from './NoteLinkButton';
 import { createDatePicker } from './DatePicker';
 import { pinModalFooter } from './StickyModal';
+import { t } from './i18n';
+import { gameStatusLabel, priorityLabel } from './i18n/labels';
+import { paintFavoriteButton, renderEditableTitle, renderGroupDetailHeader } from './ui/detailShared';
 
 /**
  * Game detail/edit modal: cover + title/developer header, Type / Priority / Status pill dropdowns
@@ -113,7 +116,7 @@ export class GameDetailModal extends Modal {
 
 		// Platforms
 		const platforms = c.createDiv({ cls: 'wl-game-modal-section' });
-		platforms.createSpan({ cls: 'wl-game-modal-label', text: 'Platforms' });
+		platforms.createSpan({ cls: 'wl-game-modal-label', text: t('detail.game.platforms') });
 		renderTagChips({
 			wrap: platforms.createDiv({ cls: 'wl-game-modal-platforms' }),
 			tags: this.gameData.getSettings().platforms,
@@ -123,15 +126,15 @@ export class GameDetailModal extends Modal {
 
 		// Details grid
 		const details = c.createDiv({ cls: 'wl-game-modal-section wl-game-modal-details-section' });
-		details.createSpan({ cls: 'wl-game-modal-label', text: 'Details' });
+		details.createSpan({ cls: 'wl-game-modal-label', text: t('detail.details') });
 		const grid = details.createDiv({ cls: 'wl-game-modal-details' });
 
 		// publisher pairs with release date and the two progress dates pair with each other, so each row
 		// reads as one thought. Playtime lives in the Progress stat strip.
-		this.textField(grid, 'Publisher', this.draft.publisher, (v) => { this.draft.publisher = v; });
-		this.dateField(grid, 'Release date', this.draft.releaseDate, (v) => { this.draft.releaseDate = v; });
-		this.dateField(grid, 'Date started', this.draft.dateStarted, (v) => { this.draft.dateStarted = v; });
-		this.dateField(grid, 'Date finished', this.draft.dateFinished, (v) => { this.draft.dateFinished = v; });
+		this.textField(grid, t('games.fields.publisher'), this.draft.publisher, (v) => { this.draft.publisher = v; });
+		this.dateField(grid, t('list.footer.releaseDate'), this.draft.releaseDate, (v) => { this.draft.releaseDate = v; });
+		this.dateField(grid, t('list.footer.dateStarted'), this.draft.dateStarted, (v) => { this.draft.dateStarted = v; });
+		this.dateField(grid, t('detail.dateFinished'), this.draft.dateFinished, (v) => { this.draft.dateFinished = v; });
 
 		// group assignment (move / create) — full-width row under the grid
 		this.renderGroupField(details);
@@ -142,21 +145,21 @@ export class GameDetailModal extends Modal {
 
 		// Notes
 		const notes = c.createDiv({ cls: 'wl-game-modal-section' });
-		notes.createSpan({ cls: 'wl-game-modal-label', text: 'Notes' });
+		notes.createSpan({ cls: 'wl-game-modal-label', text: t('detail.notes') });
 		const ta = notes.createEl('textarea', {
 			cls: 'wl-game-modal-notes',
-			attr: { placeholder: 'Add notes...', rows: '3' },
+			attr: { placeholder: t('detail.addNotes'), rows: '3' },
 		});
 		ta.value = this.notesValue;
 		ta.addEventListener('input', () => { this.notesValue = ta.value; });
 
 		// Footer
 		const footer = c.createDiv({ cls: 'wl-game-modal-footer' });
-		const deleteBtn = footer.createEl('button', { cls: 'wl-btn wl-game-modal-delete', text: 'Delete' });
+		const deleteBtn = footer.createEl('button', { cls: 'wl-btn wl-game-modal-delete', text: t('common.delete') });
 		deleteBtn.addEventListener('click', () => {
 			new ConfirmModal(
 				this.app,
-				`Delete "${this.draft.title}"? Its note file will be moved to the trash.`,
+				t('games.card.deleteConfirm', { title: this.draft.title }),
 				() => {
 					void this.gameData.removeGame(this.draft.id);
 					this.close();
@@ -172,10 +175,7 @@ export class GameDetailModal extends Modal {
 		});
 		setIcon(favBtn, 'heart');
 		const paintFav = (): void => {
-			favBtn.toggleClass('is-active', this.draft.favorite);
-			const label = this.draft.favorite ? 'Remove from favorites' : 'Add to favorites';
-			favBtn.title = label;
-			favBtn.setAttr('aria-label', label);
+			paintFavoriteButton(favBtn, this.draft.favorite);
 		};
 		paintFav();
 		favBtn.addEventListener('click', () => {
@@ -183,7 +183,7 @@ export class GameDetailModal extends Modal {
 			paintFav();
 		});
 
-		const saveBtn = footer.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save changes' });
+		const saveBtn = footer.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('detail.game.saveChanges') });
 		saveBtn.addEventListener('click', () => { void this.save(); });
 
 		pinModalFooter(footer);
@@ -213,23 +213,17 @@ export class GameDetailModal extends Modal {
 			});
 			img.onerror = () => {
 				img.remove();
-				cover.createSpan({ cls: 'wl-game-modal-cover-hint', text: 'cover art' });
+				cover.createSpan({ cls: 'wl-game-modal-cover-hint', text: t('detail.game.coverArt') });
 			};
 		} else {
-			cover.createSpan({ cls: 'wl-game-modal-cover-hint', text: 'cover art' });
+			cover.createSpan({ cls: 'wl-game-modal-cover-hint', text: t('detail.game.coverArt') });
 		}
 	}
 
 	// Click-to-edit title / developer
 
 	private renderTitleDisplay(wrap: HTMLElement): void {
-		wrap.empty();
-		const titleEl = wrap.createEl('h2', {
-			cls: 'wl-reading-detail-title wl-reading-detail-editable-text',
-			text: this.draft.title,
-		});
-		titleEl.title = 'Click to edit';
-		titleEl.addEventListener('click', () => this.editTitle(wrap));
+		renderEditableTitle(wrap, this.draft.title, () => this.editTitle(wrap));
 	}
 
 	private editTitle(wrap: HTMLElement): void {
@@ -259,7 +253,7 @@ export class GameDetailModal extends Modal {
 			cls: 'wl-reading-detail-author wl-reading-detail-editable-text',
 			text: this.draft.developer || '—',
 		});
-		devEl.title = 'Click to edit';
+		devEl.title = t('detail.clickToEdit');
 		devEl.addEventListener('click', () => this.editDeveloper(wrap));
 	}
 
@@ -299,11 +293,13 @@ export class GameDetailModal extends Modal {
 		renderTagPill({
 			wrap: statusWrap,
 			value: this.draft.status,
+			valueLabel: gameStatusLabel(this.draft.status),
 			color: settings.statuses.find((s) => s.name === this.draft.status)?.color,
 			showDot: true,
-			tooltip: 'Click to change status',
+			tooltip: t('detail.clickToChangeStatus'),
 			container: this.contentEl,
-			options: settings.statuses.filter((s) => s.name !== GAME_AUTO_STATUS).map((s) => s.name),
+			options: settings.statuses.filter((s) => s.name !== GAME_AUTO_STATUS)
+				.map((s) => ({ value: s.name, label: gameStatusLabel(s.name) })),
 			getOptionColor: (v) => settings.statuses.find((s) => s.name === v)?.color,
 			onSelect: (v) => { this.draft.status = v; this.renderBadgeRow(); },
 		});
@@ -312,10 +308,10 @@ export class GameDetailModal extends Modal {
 		renderTagPill({
 			wrap: typeWrap,
 			value: this.draft.type,
-			emptyLabel: 'No type',
+			emptyLabel: t('detail.game.noType'),
 			color: settings.types.find((t) => t.name === this.draft.type)?.color,
 			showDot: true,
-			tooltip: 'Click to change genre',
+			tooltip: t('detail.clickToChangeGenre'),
 			container: this.contentEl,
 			options: settings.types.map((t) => t.name),
 			getOptionColor: (v) => settings.types.find((t) => t.name === v)?.color,
@@ -326,12 +322,16 @@ export class GameDetailModal extends Modal {
 		renderTagPill({
 			wrap: priorityWrap,
 			value: this.draft.priority,
-			emptyLabel: 'No priority',
+			valueLabel: priorityLabel(this.draft.priority),
+			emptyLabel: t('list.footer.noPriority'),
 			color: priorities.find((p) => p.name === this.draft.priority)?.color,
 			showDot: true,
-			tooltip: 'Click to change priority',
+			tooltip: t('detail.clickToChangePriority'),
 			container: this.contentEl,
-			options: [...priorities.map((p) => p.name), { value: '', label: 'No priority' }],
+			options: [
+				...priorities.map((p) => ({ value: p.name, label: priorityLabel(p.name) })),
+				{ value: '', label: t('list.footer.noPriority') },
+			],
 			getOptionColor: (v) => (v ? priorities.find((p) => p.name === v)?.color : null),
 			onSelect: (v) => { this.draft.priority = v; this.renderBadgeRow(); },
 		});
@@ -374,14 +374,14 @@ export class GameDetailModal extends Modal {
 		if (typeColor) section.style.setProperty('--wl-game-progress-color', typeColor);
 
 		const head = section.createDiv({ cls: 'wl-game-modal-progress-head' });
-		head.createSpan({ cls: 'wl-game-modal-label', text: 'Progress' });
+		head.createSpan({ cls: 'wl-game-modal-label', text: t('detail.progress') });
 
 		const pctWrap = head.createDiv({ cls: 'wl-game-modal-progress-pct' });
 		const doneIcon = pctWrap.createSpan({ cls: 'wl-game-modal-progress-done' });
 		setIcon(doneIcon, 'check');
 		const pctInput = pctWrap.createEl('input', {
 			cls: 'wl-game-modal-progress-input',
-			attr: { type: 'number', min: '0', max: '100', 'aria-label': 'Completion percentage' },
+			attr: { type: 'number', min: '0', max: '100', 'aria-label': t('detail.game.completion') },
 		});
 		pctWrap.createSpan({ cls: 'wl-game-modal-progress-sign', text: '%' });
 
@@ -391,7 +391,7 @@ export class GameDetailModal extends Modal {
 			attr: {
 				role: 'slider',
 				tabindex: '0',
-				'aria-label': 'Completion percentage',
+				'aria-label': t('detail.game.completion'),
 				'aria-valuemin': '0',
 				'aria-valuemax': '100',
 			},
@@ -423,7 +423,7 @@ export class GameDetailModal extends Modal {
 			const btn = steps.createEl('button', {
 				cls: 'wl-game-modal-step',
 				text: delta > 0 ? `+${delta}` : String(delta),
-				attr: { type: 'button', 'aria-label': `${delta > 0 ? 'Increase' : 'Decrease'} progress by 5%` },
+				attr: { type: 'button', 'aria-label': t(delta > 0 ? 'detail.game.increase' : 'detail.game.decrease') },
 			});
 			btn.addEventListener('click', () => setProgress(this.draft.progress + delta));
 		}
@@ -436,8 +436,8 @@ export class GameDetailModal extends Modal {
 			attr: {
 				type: 'text',
 				placeholder: '0h',
-				title: 'Time played: e.g. 42h 30m, 90m, 1.5h',
-				'aria-label': 'Time played',
+				title: t('detail.game.timePlayedHint'),
+				'aria-label': t('detail.game.timePlayed'),
 			},
 		});
 		timeInput.value = this.draft.playtimeMinutes > 0 ? formatTime(this.draft.playtimeMinutes) : '';
@@ -454,12 +454,12 @@ export class GameDetailModal extends Modal {
 		setIcon(achStat.createSpan({ cls: 'wl-game-modal-stat-icon' }), 'trophy');
 		const earnedInput = achStat.createEl('input', {
 			cls: 'wl-game-modal-stat-input wl-game-modal-stat-num',
-			attr: { type: 'number', min: '0', placeholder: '0', 'aria-label': 'Achievements earned' },
+			attr: { type: 'number', min: '0', placeholder: '0', 'aria-label': t('detail.game.achievementsEarned') },
 		});
 		achStat.createSpan({ cls: 'wl-game-modal-stat-sep', text: '/' });
 		const totalInput = achStat.createEl('input', {
 			cls: 'wl-game-modal-stat-input wl-game-modal-stat-num',
-			attr: { type: 'number', min: '0', placeholder: '—', 'aria-label': 'Achievements total' },
+			attr: { type: 'number', min: '0', placeholder: '—', 'aria-label': t('detail.game.achievementsTotal') },
 		});
 		earnedInput.value = this.draft.achievementsEarned > 0 ? String(this.draft.achievementsEarned) : '';
 		totalInput.value = this.draft.achievementsTotal > 0 ? String(this.draft.achievementsTotal) : '';
@@ -476,8 +476,8 @@ export class GameDetailModal extends Modal {
 			derived.toggleClass('is-hidden', !show);
 			if (show) {
 				derived.textContent = `= ${pct}%`;
-				derived.setAttr('title', `Set progress to ${pct}% from achievements`);
-				derived.setAttr('aria-label', `Set progress to ${pct} percent from achievements`);
+				derived.setAttr('title', t('detail.game.deriveTip', { percent: pct }));
+				derived.setAttr('aria-label', t('detail.game.deriveLabel', { percent: pct }));
 			}
 		};
 		derived.addEventListener('click', () => {
@@ -507,7 +507,7 @@ export class GameDetailModal extends Modal {
 		if (this.plugin.apiService.hasSteamCredentials() && steamAppId !== '') {
 			const steamBtn = strip.createEl('button', {
 				cls: 'wl-game-modal-steam-pull',
-				attr: { type: 'button', title: 'Pull playtime and achievements from Steam' },
+				attr: { type: 'button', title: t('detail.game.steamPull') },
 			});
 			setIcon(steamBtn, 'refresh-cw');
 			steamBtn.createSpan({ text: 'Steam' });
@@ -527,8 +527,8 @@ export class GameDetailModal extends Modal {
 
 						if (!owned && !achievements) {
 							new Notice(library.ok
-								? 'Steam has no record of this game on your account.'
-								: 'Could not reach Steam.');
+								? t('detail.game.steamNoRecord')
+								: t('detail.game.steamUnreachable'));
 							return;
 						}
 						if (owned) {
@@ -545,7 +545,7 @@ export class GameDetailModal extends Modal {
 						}
 						// stamp the link so the next sync matches by id, not by title
 						this.draft.steamAppId = steamAppId;
-						new Notice('Pulled from Steam; save changes to keep it.');
+						new Notice(t('detail.game.steamPulled'));
 					} finally {
 						steamBtn.removeClass('is-loading');
 					}
@@ -596,7 +596,7 @@ export class GameDetailModal extends Modal {
 	/** Game modes — its own row under the rating (the pill's home since Co-op). */
 	private renderModesRow(parent: HTMLElement): void {
 		const row = parent.createDiv({ cls: 'wl-game-modal-modes' });
-		row.createSpan({ cls: 'wl-game-modal-label', text: 'Modes' });
+		row.createSpan({ cls: 'wl-game-modal-label', text: t('detail.game.modes') });
 		renderModePill(
 			row,
 			() => ({
@@ -616,7 +616,7 @@ export class GameDetailModal extends Modal {
 		const row = this.ratingRowEl;
 		if (!row) return;
 		row.empty();
-		row.createSpan({ cls: 'wl-game-modal-label', text: 'Rating' });
+		row.createSpan({ cls: 'wl-game-modal-label', text: t('list.footer.rating') });
 		const stars = row.createDiv();
 		renderStarRating(stars, this.draft.rating, {
 			allowHalf: true,
@@ -641,7 +641,7 @@ export class GameDetailModal extends Modal {
 		if (!this.draft.storeUrl.trim()) return;
 		const storeBtn = parent.createEl('button', {
 			cls: 'wl-store-btn',
-			attr: { type: 'button', title: 'Open store page', 'aria-label': 'Open store page' },
+			attr: { type: 'button', title: t('detail.game.openStore'), 'aria-label': t('detail.game.openStore') },
 		});
 		setIcon(storeBtn, 'store');
 		storeBtn.addEventListener('click', () => {
@@ -662,7 +662,7 @@ export class GameDetailModal extends Modal {
 		setIcon(wishBtn, 'gift');
 		const paintWish = (): void => {
 			wishBtn.toggleClass('is-active', this.draft.wishlist);
-			const label = this.draft.wishlist ? 'Remove from wishlist' : 'Add to wishlist';
+			const label = this.draft.wishlist ? t('games.card.removeFromWishlist') : t('games.card.addToWishlist');
 			wishBtn.title = label;
 			wishBtn.setAttr('aria-label', label);
 			wishBtn.setAttr('aria-pressed', String(this.draft.wishlist));
@@ -683,12 +683,12 @@ export class GameDetailModal extends Modal {
 	 */
 	private renderGroupField(parent: HTMLElement): void {
 		const row = parent.createDiv({ cls: 'wl-game-modal-group' });
-		row.createEl('label', { cls: 'wl-game-modal-group-label', text: 'Group' });
+		row.createEl('label', { cls: 'wl-game-modal-group-label', text: t('detail.game.group') });
 		const controls = row.createDiv({ cls: 'wl-game-modal-group-controls' });
 
 		// not wl-select-sm — that sets width:auto, which fights the grid column
 		const select = controls.createEl('select', { cls: 'wl-select' });
-		select.createEl('option', { text: '— none —', value: '' });
+		select.createEl('option', { text: t('ui.form.none'), value: '' });
 		for (const g of this.gameData.getGroups()) {
 			const opt = select.createEl('option', { text: g.name, value: g.id });
 			if (g.id === this.selectedGroupId) opt.selected = true;
@@ -696,7 +696,7 @@ export class GameDetailModal extends Modal {
 
 		const newInput = controls.createEl('input', {
 			cls: 'wl-modal-input wl-game-modal-group-new',
-			attr: { type: 'text', placeholder: 'Or create new group…', maxlength: '64' },
+			attr: { type: 'text', placeholder: t('detail.game.newGroupPlaceholder'), maxlength: '64' },
 		});
 		newInput.value = this.newGroupName;
 
@@ -776,18 +776,18 @@ export class GameDetailModal extends Modal {
 		const paintSummary = (): void => {
 			const filled = [this.draft.storeUrl, this.draft.externalLink, this.draft.coverUrl]
 				.filter((u) => u.trim() !== '').length;
-			summary.textContent = filled > 0 ? `Links (${filled})` : 'Links';
+			summary.textContent = filled > 0 ? t('detail.game.linksCount', { count: filled }) : t('detail.game.links');
 		};
 
-		this.linkField(body, 'Store', this.draft.storeUrl, (v) => {
+		this.linkField(body, t('detail.game.linkStore'), this.draft.storeUrl, (v) => {
 			this.draft.storeUrl = v;
 			paintSummary();
 		});
-		this.linkField(body, 'External', this.draft.externalLink, (v) => {
+		this.linkField(body, t('detail.game.linkExternal'), this.draft.externalLink, (v) => {
 			this.draft.externalLink = v;
 			paintSummary();
 		});
-		this.linkField(body, 'Cover', this.draft.coverUrl, (v) => {
+		this.linkField(body, t('detail.game.linkCover'), this.draft.coverUrl, (v) => {
 			this.draft.coverUrl = v;
 			this.renderCover();
 			paintSummary();
@@ -907,21 +907,11 @@ export class GameGroupDetailModal extends Modal {
 
 	private renderAll(): void {
 		this.contentEl.empty();
-		const header = this.contentEl.createDiv({ cls: 'wl-detail-header' });
-		const left = header.createDiv({ cls: 'wl-detail-header-left' });
-		left.createEl('h2', { cls: 'wl-detail-title', text: this.group.name });
-		left.createDiv({
-			cls: 'wl-detail-group-meta',
-			text: `${this.members.length} game${this.members.length !== 1 ? 's' : ''}`,
+		renderGroupDetailHeader(this.contentEl, {
+			name: this.group.name,
+			countText: t('ui.group.countGame', { count: this.members.length }),
+			progress: gameGroupProgress(this.members),
 		});
-
-		const progress = gameGroupProgress(this.members);
-		const statsBox = header.createDiv({ cls: 'wl-detail-stats-box' });
-		const progBlock = statsBox.createDiv({ cls: 'wl-acc-header-right' });
-		progBlock.createDiv({ cls: 'wl-acc-percent', text: `${progress}%` });
-		progBlock.createDiv({ cls: 'wl-acc-progress-label', text: 'progress' });
-		const barWrap = progBlock.createDiv({ cls: 'wl-acc-progress-wrap' });
-		barWrap.createDiv({ cls: 'wl-progress-bar' }).style.width = `${progress}%`;
 
 		const grid = this.contentEl.createDiv({ cls: 'wl-cards-grid wl-detail-group-grid' });
 		const settings = this.gameData.getSettings();
@@ -939,7 +929,7 @@ export class GameGroupDetailModal extends Modal {
 				typeColor,
 				year: m.releaseDate?.match(/^(\d{4})/)?.[1],
 				progressRatio: m.progress > 0 ? m.progress / 100 : undefined,
-				flag: m.wishlist ? { icon: 'gift', label: 'On your wishlist' } : undefined,
+				flag: m.wishlist ? { icon: 'gift', label: t('games.card.onWishlist') } : undefined,
 				onClick: () => {
 					this.close();
 					const fresh = this.gameData.getGame(m.id);

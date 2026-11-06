@@ -303,15 +303,15 @@ export interface RowsShelfLayoutEntry {
  * The Rows-view sections in default order. All shelves except `byType` / `byStatus`,
  * the virtualised grids — those reorder and toggle like any shelf.
  */
-export const ROWS_SHELVES: ReadonlyArray<{ id: string; label: string }> = [
-	{ id: 'favorites', label: 'Favorites' },
-	{ id: 'recommended', label: 'Recommended' },
-	{ id: 'recentlyAdded', label: 'Recently Added' },
-	{ id: 'recentlyWatched', label: 'Recently Watched' },
-	{ id: 'groups', label: 'Groups' },
-	{ id: 'recentlyReleased', label: 'Recently Released' },
-	{ id: 'byType', label: 'By type' },
-	{ id: 'byStatus', label: 'By status' },
+export const ROWS_SHELVES: ReadonlyArray<{ id: string }> = [
+	{ id: 'favorites' },
+	{ id: 'recommended' },
+	{ id: 'recentlyAdded' },
+	{ id: 'recentlyWatched' },
+	{ id: 'groups' },
+	{ id: 'recentlyReleased' },
+	{ id: 'byType' },
+	{ id: 'byStatus' },
 ];
 
 /**
@@ -339,27 +339,27 @@ export function sortByFavorited<T extends { dateFavorited?: string }>(items: T[]
 }
 
 /** Games Rows sections (the Watchlist registry with Games naming — "genre", "played"). */
-export const GAMES_ROWS_SHELVES: ReadonlyArray<{ id: string; label: string }> = [
-	{ id: 'favorites', label: 'Favorites' },
-	{ id: 'recommended', label: 'Recommended' },
-	{ id: 'recentlyAdded', label: 'Recently Added' },
-	{ id: 'recentlyPlayed', label: 'Recently Played' },
-	{ id: 'groups', label: 'Groups' },
-	{ id: 'recentlyReleased', label: 'Recently Released' },
-	{ id: 'byType', label: 'By genre' },
-	{ id: 'byStatus', label: 'By status' },
+export const GAMES_ROWS_SHELVES: ReadonlyArray<{ id: string }> = [
+	{ id: 'favorites' },
+	{ id: 'recommended' },
+	{ id: 'recentlyAdded' },
+	{ id: 'recentlyPlayed' },
+	{ id: 'groups' },
+	{ id: 'recentlyReleased' },
+	{ id: 'byType' },
+	{ id: 'byStatus' },
 ];
 
 /**
  * Reading Rows sections. No groups and no type registry, so "By status" is the only
  * grouped grid; with it off the flat fallback shows.
  */
-export const READING_ROWS_SHELVES: ReadonlyArray<{ id: string; label: string }> = [
-	{ id: 'favorites', label: 'Favorites' },
-	{ id: 'recentlyAdded', label: 'Recently Added' },
-	{ id: 'recentlyRead', label: 'Recently Read' },
-	{ id: 'recentlyReleased', label: 'Recently Released' },
-	{ id: 'byStatus', label: 'By status' },
+export const READING_ROWS_SHELVES: ReadonlyArray<{ id: string }> = [
+	{ id: 'favorites' },
+	{ id: 'recentlyAdded' },
+	{ id: 'recentlyRead' },
+	{ id: 'recentlyReleased' },
+	{ id: 'byStatus' },
 ];
 
 /**
@@ -370,7 +370,7 @@ export const READING_ROWS_SHELVES: ReadonlyArray<{ id: string; label: string }> 
  */
 export function normalizeRowsLayout(
 	stored: RowsShelfLayoutEntry[] | undefined,
-	shelves: ReadonlyArray<{ id: string; label: string }> = ROWS_SHELVES,
+	shelves: ReadonlyArray<{ id: string }> = ROWS_SHELVES,
 	exclusiveGroups: ReadonlyArray<ReadonlyArray<string>> = ROWS_EXCLUSIVE_SHELVES,
 ): RowsShelfLayoutEntry[] {
 	const known = new Set(shelves.map((s) => s.id));
@@ -1018,28 +1018,6 @@ export interface WatchLogData {
 	games?: GamesData;
 }
 
-// Airtime utility functions
-
-export function getAirtimeScheduleString(schedule: AirtimeSchedule): string {
-	const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-	const time = schedule.releaseTime ? ` · ${schedule.releaseTime}` : '';
-
-	if (schedule.recurrence === 'once') {
-		if (!schedule.releaseDate) return 'No date set';
-		return `Release date · ${formatDateWithMonthName(schedule.releaseDate)}${time}`;
-	}
-	if (schedule.recurrence === 'daily') return `Every day${time}`;
-	if (schedule.recurrence === 'weekly') {
-		const dayName =
-			schedule.dayOfWeek !== undefined ? (DAYS[schedule.dayOfWeek] ?? 'Unknown') : 'Unknown';
-		return `Every ${dayName}${time}`;
-	}
-	if (schedule.recurrence === 'monthly') {
-		return `Monthly on day ${schedule.dayOfMonth ?? '?'}${time}`;
-	}
-	return '—';
-}
-
 /**
  * Sentinel for `defaultAddType` meaning "use the last type added". No real type slug
  * can collide with it.
@@ -1166,17 +1144,9 @@ export function getThemedColor(name: string, defaultColor: string, theme: string
 /** Filter option value for "no priority set". */
 const NO_PRIORITY = '';
 
-/** Filter label for NO_PRIORITY. */
-const NO_PRIORITY_LABEL = 'No priority';
-
 /** Priority filter options: the configured names plus the empty one. */
 export function priorityFilterOpts(priorities: TagDefinition[]): string[] {
 	return [...priorities.map((p) => p.name), NO_PRIORITY];
-}
-
-/** Priority option label — '' reads as "No priority". */
-export function formatPriorityOpt(opt: string): string {
-	return opt === NO_PRIORITY ? NO_PRIORITY_LABEL : opt;
 }
 
 /**
@@ -1229,7 +1199,7 @@ const DATE_SEPARATORS: Record<DateFormatPref, string> = {
  * (on load and on every save).
  *
  * A module-level mirror rather than a parameter on ~30 call sites: pure helpers like
- * getAirtimeScheduleString and formatHistoryDate have no plugin instance. Every
+ * formatDateDisplay and formatHistoryDate have no plugin instance. Every
  * function below still takes an explicit override for tests and one-off renders.
  */
 let activeDateFormat: DateFormatPref = 'european';
@@ -1247,11 +1217,6 @@ export function dateFormatMask(fmt: DateFormatPref = activeDateFormat): string {
 	return DATE_MASKS[fmt];
 }
 
-/** Error/tooltip text when typed input doesn't match the active format. */
-export function dateFormatHint(fmt: DateFormatPref = activeDateFormat): string {
-	return `Unrecognised format. Expected ${DATE_MASKS[fmt]}.`;
-}
-
 /**
  * A Date's *local* calendar day as `YYYY-MM-DD`. Always use this instead of
  * `date.toISOString().split('T')[0]`, which converts to UTC first and so returns the
@@ -1267,7 +1232,7 @@ export function todayIso(): string {
 }
 
 /** Splits a stored `YYYY-MM-DD` into parts, or null when it isn't one. */
-function isoParts(dateStr: string): { y: string; m: string; d: string } | null {
+export function isoParts(dateStr: string): { y: string; m: string; d: string } | null {
 	const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
 	return m ? { y: m[1]!, m: m[2]!, d: m[3]! } : null;
 }
@@ -1303,26 +1268,6 @@ export function formatShortDateDisplay(
 	if (fmt === 'iso') return `${yy}${sep}${p.m}${sep}${p.d}`;
 	if (fmt === 'american') return `${p.m}${sep}${p.d}${sep}${yy}`;
 	return `${p.d}${sep}${p.m}${sep}${yy}`;
-}
-
-const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/**
- * Month-name rendering for the Log day headers and the Upcoming schedule line, still
- * ordered by the setting: `25 Jul 2026` / `Jul 25, 2026` / `2026-07-25`.
- */
-function formatDateWithMonthName(
-	dateStr: string | null | undefined,
-	fmt: DateFormatPref = activeDateFormat,
-): string {
-	if (!dateStr) return '';
-	const p = isoParts(dateStr.slice(0, 10));
-	if (!p) return dateStr;
-	if (fmt === 'iso') return `${p.y}-${p.m}-${p.d}`;
-	const day = String(parseInt(p.d, 10));
-	const mon = MONTH_ABBR[parseInt(p.m, 10) - 1] ?? '';
-	if (fmt === 'american') return `${mon} ${day}, ${p.y}`;
-	return `${day} ${mon} ${p.y}`;
 }
 
 /**

@@ -3,6 +3,8 @@ import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, Season } from './types';
 import { getApiGroupForType, todayIso } from './types';
+import { t } from './i18n';
+import { priorityLabel, statusLabel } from './i18n/labels';
 import { renderSearchResultRow } from './SearchThumbnail';
 import {
 	episodesLabel,
@@ -78,7 +80,7 @@ export class AddTitleModal extends SearchFormModal<TitleSearchResult> {
 			cast?: string[];
 		},
 	) {
-		super(app, 'Add title', ['wl-add-modal']);
+		super(app, t('add.title.heading'), ['wl-add-modal']);
 		this.plugin = plugin;
 		this.dataManager = dataManager;
 		this.onAdded = onAdded;
@@ -118,7 +120,7 @@ export class AddTitleModal extends SearchFormModal<TitleSearchResult> {
 
 	protected noApiMessage(): string | null {
 		if (getApiGroupForType(this.selectedType, this.plugin.settings.typeApiMapping) !== '') return null;
-		return `No API configured for type "${this.selectedType}". Go to Settings → API to set one up.`;
+		return t('add.title.noApi', { type: this.selectedType });
 	}
 
 	protected renderResult(host: HTMLElement, result: TitleSearchResult, select: (itemEl: HTMLElement) => void): HTMLElement {
@@ -161,12 +163,12 @@ export class AddTitleModal extends SearchFormModal<TitleSearchResult> {
 		// status + priority paired 50/50 (status excludes "To be released" — it follows releaseDate)
 		const statusPriRow = form.createDiv({ cls: 'wl-modal-row wl-modal-row-pair' });
 		const statuses = this.plugin.settings.statuses.filter((s) => s.name !== 'To be released');
-		nameSelect(makeCell(statusPriRow, 'Status'), statuses.map((s) => s.name), this.fieldStatus,
-			(v) => { this.fieldStatus = v; });
-		nameSelect(makeCell(statusPriRow, 'Priority', true), this.plugin.settings.priorities.map((p) => p.name),
-			this.fieldPriority, (v) => { this.fieldPriority = v; });
+		nameSelect(makeCell(statusPriRow, t('add.status')), statuses.map((s) => s.name), this.fieldStatus,
+			(v) => { this.fieldStatus = v; }, false, statusLabel);
+		nameSelect(makeCell(statusPriRow, t('add.priority'), true), this.plugin.settings.priorities.map((p) => p.name),
+			this.fieldPriority, (v) => { this.fieldPriority = v; }, false, priorityLabel);
 
-		const ratingRow = makeRow('Rating');
+		const ratingRow = makeRow(t('add.rating'));
 		const starsWrap = ratingRow.createDiv({ cls: 'wl-stars' });
 		const paintStars = (): void => {
 			renderStarRating(starsWrap, this.fieldRating, {
@@ -178,7 +180,7 @@ export class AddTitleModal extends SearchFormModal<TitleSearchResult> {
 		};
 		paintStars();
 
-		const startRow = makeRow('Date started');
+		const startRow = makeRow(t('add.dateStarted'));
 		createDatePicker({
 			parent: startRow,
 			inputCls: 'wl-modal-input',
@@ -189,22 +191,24 @@ export class AddTitleModal extends SearchFormModal<TitleSearchResult> {
 		renderGroupPicker(form, this.dataManager.getGroups(), this.group);
 
 		if (this.fieldSeasons.length > 0) {
-			const seasRow = makeRow('Seasons');
+			const seasRow = makeRow(t('add.seasons'));
 			seasRow.createSpan({
 				cls: 'wl-modal-info',
-				text: this.fieldSeasons.map((s) => `${s.name} (${s.episodes} eps)`).join(', '),
+				text: this.fieldSeasons
+					.map((s) => t('add.title.seasonEpisodes', { name: s.name, count: s.episodes }))
+					.join(', '),
 			});
 		}
 
 		const btnRow = form.createDiv({ cls: 'wl-modal-btn-row' });
-		const addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add to watchlog' });
+		const addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('add.title.submit') });
 		addBtn.addEventListener('click', () => void this.addTitle());
 	}
 
 	private async addTitle(): Promise<void> {
 		const titleName = this.media.title.trim();
 		if (!titleName) {
-			new Notice('Please enter a title name.');
+			new Notice(t('add.title.emptyName'));
 			return;
 		}
 
@@ -288,7 +292,7 @@ export class AddTitleModal extends SearchFormModal<TitleSearchResult> {
 			await this.dataManager.addGroup(group);
 		}
 
-		new Notice(`"${titleName}" added to WatchLog.`);
+		new Notice(t('add.added', { name: titleName }));
 		this.close();
 		this.onAdded(entry);
 	}

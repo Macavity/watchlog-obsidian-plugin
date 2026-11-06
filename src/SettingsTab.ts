@@ -1,5 +1,7 @@
 import { App, Notice, Platform, PluginSettingTab, Setting, SliderComponent, normalizePath, setIcon } from 'obsidian';
-import { typeNameError } from './storage/VaultLayout';
+import { t, type TranslationKey } from './i18n';
+import { statusLabel, typeLabel, readingStatusLabel } from './i18n/labels';
+import { typeNameProblemText } from './ui/problemText';
 import { cardSizeToMinWidth } from './VirtualGrid';
 import type WatchLogPlugin from './main';
 import type { TagDefinition, ReadingStatus, GamesSettings, DateFormatPref, CardStyleTab, CardTextStyle } from './types';
@@ -11,11 +13,11 @@ import type { SteamFailureReason } from './ApiService';
 /** short status-line label per Steam failure (the modal shows the long form) */
 function steamFailureLabel(reason: SteamFailureReason): string {
 	switch (reason) {
-		case 'missing': return 'Key or Steam ID missing';
-		case 'badKey': return 'Failed; check your API key';
-		case 'private': return 'Profile is private; set "Game details" to Public';
-		case 'empty': return 'No games on this account';
-		default: return 'Could not reach Steam';
+		case 'missing': return t('settings.steam.missing');
+		case 'badKey': return t('settings.steam.badKey');
+		case 'private': return t('settings.steam.private');
+		case 'empty': return t('settings.steam.empty');
+		default: return t('settings.steam.unreachable');
 	}
 }
 
@@ -42,6 +44,8 @@ interface TagListSectionConfig {
 	remove?: (name: string) => Promise<void>;
 	/** present ⇒ the name becomes an editable input; must cascade the rename */
 	rename?: (from: string, to: string) => Promise<void>;
+	/** display text for a stored name in read-only pills; the stored name itself never changes */
+	display?: (name: string) => string;
 	/** called after every add/remove/rename — lets the group header chip re-count */
 	onChanged?: () => void;
 }
@@ -121,9 +125,9 @@ import { buildBackup, parseBackup, restoreBackup, restoreLegacyBackup, withoutSe
 /** Chip for the MyAnimeList endpoint field: default, custom, or rejected and falling back. */
 function jikanEndpointStatus(raw: string): ChipStatus {
 	const parsed = parseJikanEndpoint(raw);
-	if (parsed && parsed.base !== TENRAI_BASE) return { text: 'Custom endpoint', tone: 'ok' };
-	if (parsed || raw.trim() === '') return { text: 'Using Tenrai (default)', tone: 'ok' };
-	return { text: 'Invalid address, using Tenrai', tone: 'warn' };
+	if (parsed && parsed.base !== TENRAI_BASE) return { text: t('settings.api.jikan.custom'), tone: 'ok' };
+	if (parsed || raw.trim() === '') return { text: t('settings.api.jikan.default'), tone: 'ok' };
+	return { text: t('settings.api.jikan.invalid'), tone: 'warn' };
 }
 
 type SettingsSection = 'general' | 'api' | 'customize' | 'watchlist' | 'drafts' | 'custom-lists' | 'reading' | 'widgets' | 'quick-info';
@@ -165,15 +169,15 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		const nav = containerEl.createDiv({ cls: 'wl-settings-nav' });
 		const sections: { key: SettingsSection; label: string; icon: string }[] = [
-			{ key: 'general', label: 'General', icon: 'settings' },
-			{ key: 'api', label: 'API', icon: 'plug' },
-			{ key: 'customize', label: 'Customize', icon: 'palette' },
-			{ key: 'watchlist', label: 'Watchlist', icon: 'tv' },
-			{ key: 'drafts', label: 'Drafts', icon: 'square-pen' },
-			{ key: 'custom-lists', label: 'Custom Lists', icon: 'list' },
-			{ key: 'reading', label: 'Reading', icon: 'book-open' },
-			{ key: 'widgets', label: 'Widgets', icon: 'layout-grid' },
-			{ key: 'quick-info', label: 'Quick Info', icon: 'help-circle' },
+			{ key: 'general', label: t('settings.nav.general'), icon: 'settings' },
+			{ key: 'api', label: t('settings.nav.api'), icon: 'plug' },
+			{ key: 'customize', label: t('settings.nav.customize'), icon: 'palette' },
+			{ key: 'watchlist', label: t('settings.nav.watchlist'), icon: 'tv' },
+			{ key: 'drafts', label: t('settings.nav.drafts'), icon: 'square-pen' },
+			{ key: 'custom-lists', label: t('settings.nav.customLists'), icon: 'list' },
+			{ key: 'reading', label: t('settings.nav.reading'), icon: 'book-open' },
+			{ key: 'widgets', label: t('settings.nav.widgets'), icon: 'layout-grid' },
+			{ key: 'quick-info', label: t('settings.nav.quickInfo'), icon: 'help-circle' },
 		];
 
 		const buttons: Map<SettingsSection, HTMLButtonElement> = new Map();
@@ -220,17 +224,19 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 	// General
 
-	private static readonly CARD_SIZE_LABELS: Record<number, string> = {
-		[-3]: 'Smallest', [-2]: 'Smaller', [-1]: 'Small', [0]: 'Default',
-		[1]: 'Large', [2]: 'Larger', [3]: 'Largest',
-	};
+	/** Slider steps -3…3 in order. */
+	private static readonly CARD_SIZE_KEYS = [
+		'settings.cardSize.smallest', 'settings.cardSize.smaller', 'settings.cardSize.small',
+		'settings.cardSize.default', 'settings.cardSize.large', 'settings.cardSize.larger',
+		'settings.cardSize.largest',
+	] as const;
 
 	/** Tabs listed in the Card-text per-tab rows, in display order. */
-	private static readonly CARD_STYLE_TABS: Array<{ key: CardStyleTab; label: string; icon: string }> = [
-		{ key: 'watchlist', label: 'Watchlist', icon: 'clapperboard' },
-		{ key: 'games', label: 'Games', icon: 'gamepad-2' },
-		{ key: 'reading', label: 'Reading', icon: 'book-open' },
-		{ key: 'upcoming', label: 'Upcoming', icon: 'calendar-clock' },
+	private static readonly CARD_STYLE_TABS: Array<{ key: CardStyleTab; label: TranslationKey; icon: string }> = [
+		{ key: 'watchlist', label: 'app.tabs.watchlist', icon: 'clapperboard' },
+		{ key: 'games', label: 'app.tabs.games', icon: 'gamepad-2' },
+		{ key: 'reading', label: 'app.tabs.reading', icon: 'book-open' },
+		{ key: 'upcoming', label: 'app.tabs.upcoming', icon: 'calendar-clock' },
 	];
 
 	/**
@@ -244,23 +250,25 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		/** 'under' / 'inside' when every tab agrees, null when mixed. */
 		const unanimous = (): CardTextStyle | null => {
 			const first = s.cardTextStyles[tabs[0]!.key];
-			return tabs.every((t) => s.cardTextStyles[t.key] === first) ? first : null;
+			return tabs.every((tab) => s.cardTextStyles[tab.key] === first) ? first : null;
 		};
 		const syncChip = (): void => {
 			const all = unanimous();
-			const style = all === null ? 'Mixed' : all === 'inside' ? 'Text inside' : 'Text under';
-			setChip(`${style} · ${cardSizeToMinWidth(s.cardSize ?? 0)} px`);
+			const style = all === null
+				? t('settings.cards.styleMixed')
+				: all === 'inside' ? t('settings.cards.textInside') : t('settings.cards.textUnder');
+			setChip(t('settings.cards.valuePx', { label: style, px: cardSizeToMinWidth(s.cardSize ?? 0) }));
 		};
 
 		// text placement
 		const styleBody = this.sgCard(el, {
-			label: 'Card text',
-			help: 'Where a tab\'s poster cards show their name, type and year; in a block under the poster (the classic Reading/Upcoming style) or overlaid at the bottom of the poster (the classic Watchlist style). Status badges stay on the poster either way. The two big previews apply a style to every tab at once; the rows below set each tab on its own.',
+			label: t('settings.cards.text.label'),
+			help: t('settings.cards.text.help'),
 		});
 		const picker = styleBody.createDiv({ cls: 'wl-card-style-picker' });
 		const options: Array<{ value: CardTextStyle; name: string; hint: string }> = [
-			{ value: 'under', name: 'Text under', hint: 'Name and details below the poster' },
-			{ value: 'inside', name: 'Text inside', hint: 'Overlaid on the poster' },
+			{ value: 'under', name: t('settings.cards.textUnder'), hint: t('settings.cards.hintUnder') },
+			{ value: 'inside', name: t('settings.cards.textInside'), hint: t('settings.cards.hintInside') },
 		];
 		const tiles = new Map<CardTextStyle, HTMLElement>();
 		const tabButtons: Array<{ key: CardStyleTab; value: CardTextStyle; btn: HTMLElement }> = [];
@@ -281,7 +289,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		for (const opt of options) {
 			const btn = picker.createEl('button', { cls: 'wl-card-style-option' });
-			btn.setAttr('aria-label', `${opt.name}: apply to every tab`);
+			btn.setAttr('aria-label', t('settings.cards.applyAll', { name: opt.name }));
 			tiles.set(opt.value, btn);
 			// mini preview: a poster rectangle with two text lines below it or in a scrim
 			const thumb = btn.createDiv({ cls: `wl-card-style-thumb is-${opt.value}` });
@@ -296,7 +304,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			btn.addEventListener('click', () => {
 				// typed record, not Object.fromEntries — that returns `any`
 				const all: Partial<Record<CardStyleTab, CardTextStyle>> = {};
-				for (const t of tabs) all[t.key] = opt.value;
+				for (const tab of tabs) all[tab.key] = opt.value;
 				applyStyles(all);
 			});
 		}
@@ -307,14 +315,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			const row = tabRows.createDiv({ cls: 'wl-card-style-tab-row' });
 			const iconEl = row.createSpan({ cls: 'wl-card-style-tab-icon' });
 			setIcon(iconEl, tab.icon);
-			row.createSpan({ cls: 'wl-card-style-tab-label', text: tab.label });
+			row.createSpan({ cls: 'wl-card-style-tab-label', text: t(tab.label) });
 			const group = row.createDiv({ cls: 'wl-card-style-tab-group' });
 			for (const opt of options) {
 				const btn = group.createEl('button', {
 					cls: 'wl-card-style-tab-btn',
-					text: opt.value === 'under' ? 'Under' : 'Inside',
+					text: opt.value === 'under' ? t('settings.cards.under') : t('settings.cards.inside'),
 				});
-				btn.setAttr('aria-label', `${tab.label}: ${opt.name.toLowerCase()}`);
+				btn.setAttr('aria-label', t('settings.cards.tabStyle', { tab: t(tab.label), style: opt.name.toLowerCase() }));
 				if (s.cardTextStyles[tab.key] === opt.value) btn.addClass('is-active');
 				tabButtons.push({ key: tab.key, value: opt.value, btn });
 				btn.addEventListener('click', () => {
@@ -326,13 +334,13 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// size
 		const sizeBody = this.sgCard(el, {
-			label: 'Card size',
-			help: 'Minimum poster width for every grid and shelf (cards stretch a little to fill each row). Desktop and phones/tablets are independent, and both sync like any other setting.',
+			label: t('settings.cards.size.label'),
+			help: t('settings.cards.size.help'),
 		});
 		const rows = sizeBody.createDiv({ cls: 'wl-card-size-rows' });
-		this.renderCardSizeRow(rows, 'monitor', 'Desktop',
+		this.renderCardSizeRow(rows, 'monitor', t('settings.cards.desktop'),
 			() => s.cardSize ?? 0, (v) => { s.cardSize = v; }, syncChip);
-		this.renderCardSizeRow(rows, 'smartphone', 'Mobile',
+		this.renderCardSizeRow(rows, 'smartphone', t('settings.cards.mobile'),
 			() => s.cardSizeMobile ?? 0, (v) => { s.cardSizeMobile = v; }, syncChip);
 
 		syncChip();
@@ -355,8 +363,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		setIcon(iconEl, icon);
 		row.createSpan({ cls: 'wl-card-size-row-label', text: label });
 
-		const fmt = (v: number): string =>
-			`${WatchLogSettingsTab.CARD_SIZE_LABELS[v] ?? 'Default'} · ${cardSizeToMinWidth(v)} px`;
+		const fmt = (v: number): string => t('settings.cards.valuePx', {
+			label: t(WatchLogSettingsTab.CARD_SIZE_KEYS[v + 3] ?? 'settings.cardSize.default'),
+			px: cardSizeToMinWidth(v),
+		});
 		const slider = new SliderComponent(row);
 		const valueEl = row.createSpan({ cls: 'wl-card-size-value', text: fmt(get()) });
 		slider
@@ -382,7 +392,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		});
 		const icon = link.createSpan({ cls: 'wl-bmc-icon' });
 		setIcon(icon, 'coffee');
-		link.createSpan({ cls: 'wl-bmc-text', text: 'Buy me a coffee' });
+		link.createSpan({ cls: 'wl-bmc-text', text: t('settings.general.coffee') });
 	}
 
 	private renderGeneral(container: HTMLElement): void {
@@ -390,8 +400,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// main
 		const mainGroup = this.settingsGroup(page, {
-			title: 'Main',
-			sub: 'Global appearance, dates and maintenance',
+			title: t('settings.group.main'),
+			sub: t('settings.general.main.sub'),
 			icon: 'sliders-horizontal',
 			variant: 'general',
 			rows: true,
@@ -401,11 +411,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		this.renderCoffeeButton(mainGroup.head);
 
 		new Setting(el)
-			.setName('Dashboard card style')
-			.setDesc('Choose between ring charts or rectangular stat cards on the dashboard.')
+			.setName(t('settings.general.dashboardStyle.name'))
+			.setDesc(t('settings.general.dashboardStyle.desc'))
 			.addDropdown((d) =>
 				d
-					.addOptions({ circles: 'Circles', rectangles: 'Rectangles' })
+					.addOptions({
+						circles: t('settings.general.dashboardStyle.circles'),
+						rectangles: t('settings.general.dashboardStyle.rectangles'),
+					})
 					.setValue(this.plugin.settings.dashboardCardStyle ?? 'circles')
 					.onChange(async (v) => {
 						this.plugin.settings.dashboardCardStyle = v as 'circles' | 'rectangles';
@@ -415,16 +428,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('Date format')
-			.setDesc(
-				'How dates are shown and typed everywhere in the plugin; lists, cards, modals, the activity log and the calendar picker. Your stored data is never touched: dates are always saved in the same internal format, so switching between these is safe at any time.',
-			)
+			.setName(t('settings.general.dateFormat.name'))
+			.setDesc(t('settings.general.dateFormat.desc'))
 			.addDropdown((d) =>
 				d
 					.addOptions({
-						european: `European: ${formatDateDisplay(DATE_PREVIEW, 'european')}`,
-						american: `American: ${formatDateDisplay(DATE_PREVIEW, 'american')}`,
-						iso: `ISO: ${formatDateDisplay(DATE_PREVIEW, 'iso')}`,
+						european: t('settings.general.dateFormat.european', { date: formatDateDisplay(DATE_PREVIEW, 'european') }),
+						american: t('settings.general.dateFormat.american', { date: formatDateDisplay(DATE_PREVIEW, 'american') }),
+						iso: t('settings.general.dateFormat.iso', { date: formatDateDisplay(DATE_PREVIEW, 'iso') }),
 					})
 					.setValue(this.plugin.settings.dateFormat ?? 'european')
 					.onChange(async (v) => {
@@ -437,8 +448,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('Half-star ratings')
-			.setDesc('Allow half-star (0.5) steps when rating watchlist titles and reading entries. Existing ratings are never changed.')
+			.setName(t('settings.general.halfStar.name'))
+			.setDesc(t('settings.general.halfStar.desc'))
 			.addToggle((t) =>
 				t
 					.setValue(this.plugin.settings.halfStarRatings ?? false)
@@ -449,8 +460,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('Set finish date automatically')
-			.setDesc("Record today's date as the finish date when a watch title or reading entry is completed.")
+			.setName(t('settings.general.finishDate.name'))
+			.setDesc(t('settings.general.finishDate.desc'))
 			.addToggle((t) =>
 				t
 					.setValue(this.plugin.settings.setFinishDateAutomatically)
@@ -461,59 +472,59 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('Replace all images with API images')
-			.setDesc('Replaces the image of every entry with the one from its API, including images you entered by hand. Entries without an ID and failed fetches keep their image.')
+			.setName(t('settings.general.replaceImages.name'))
+			.setDesc(t('settings.general.replaceImages.desc'))
 			.addButton((b) =>
-				b.setButtonText('Replace images').onClick(() => {
+				b.setButtonText(t('settings.general.replaceImages.button')).onClick(() => {
 					const titles = this.plugin.dataManager.getTitles();
 					const readingCount = this.plugin.readingDataManager.getBooks().length + this.plugin.readingDataManager.getMangaList().length;
 					const gameCount = this.plugin.gameDataManager.getGames().length;
 					new ConfirmModal(
 						this.app,
-						`This replaces the image of all ${titles.length} watch titles, ${readingCount} reading entries and ${gameCount} games with the image from the API, including images you entered by hand. Entries without an API id or match keep their image. This makes many API requests and can take a while. Continue?`,
+						t('settings.general.replaceImages.confirm', { titles: titles.length, reading: readingCount, games: gameCount }),
 						() => { void this.refetchAllPosters(); },
 					).open();
 				}),
 			);
 
 		new Setting(el)
-			.setName('Rewrite all note frontmatter')
-			.setDesc('Rewrites the YAML frontmatter on every existing Watchlist and Reading note, applying newer frontmatter fields to older notes. Body content (## Notes / ## Quotes) is preserved. Notes without a file on disk are skipped; use Regenerate to create them.')
+			.setName(t('settings.general.rewrite.name'))
+			.setDesc(t('settings.general.rewrite.desc'))
 			.addButton((b) =>
-				b.setButtonText('Rewrite frontmatter').onClick(() => {
+				b.setButtonText(t('settings.general.rewrite.button')).onClick(() => {
 					const titles = this.plugin.dataManager.getTitles();
 					const readingCount = this.plugin.readingDataManager.getBooks().length + this.plugin.readingDataManager.getMangaList().length;
 					new ConfirmModal(
 						this.app,
-						`This will rewrite the YAML frontmatter on all existing notes for ${titles.length} watch titles and ${readingCount} reading entries. Body content is preserved; notes without a file on disk are skipped. Continue?`,
+						t('settings.general.rewrite.confirm', { titles: titles.length, reading: readingCount }),
 						() => { void this.rewriteAllFrontmatter(); },
 					).open();
 				}),
 			);
 
 		new Setting(el)
-			.setName('Fetch studios for all titles')
-			.setDesc('Fills the studio or network for every watchlist title that has none yet. Movies and series use the configured movie service, anime uses the configured anime source. Titles that already have one are skipped, so re-running is cheap.')
+			.setName(t('settings.general.studios.name'))
+			.setDesc(t('settings.general.studios.desc'))
 			.addButton((b) =>
-				b.setButtonText('Fetch studios').onClick(() => {
+				b.setButtonText(t('settings.general.studios.button')).onClick(() => {
 					const pending = this.plugin.dataManager
 						.getTitles()
-						.filter((t) => needsStudioFetch(t)).length;
+						.filter((title) => needsStudioFetch(title)).length;
 					if (pending === 0) {
-						new Notice('Every title already has a studio.');
+						new Notice(t('settings.general.studios.allHave'));
 						return;
 					}
 					new ConfirmModal(
 						this.app,
-						`This will make roughly one API request for each of the ${pending} title${pending !== 1 ? 's' : ''} without a studio. It can be cancelled at any time. Continue?`,
+						t('settings.general.studios.confirm', { count: pending }),
 						() => { void this.fetchAllStudios(); },
 					).open();
 				}),
 			);
 
 		new Setting(el)
-			.setName('Show hint banners')
-			.setDesc('Show informational hint banners in Upcoming, Custom Lists, and Drafts tabs.')
+			.setName(t('settings.general.hints.name'))
+			.setDesc(t('settings.general.hints.desc'))
 			.addToggle((t) =>
 				t
 					.setValue(this.plugin.settings.showHintBanners)
@@ -525,8 +536,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('Show Upcoming count in status bar')
-			.setDesc('Show a "N due" counter in the status bar when Upcoming entries are due. Click it to open the Upcoming tab. (Desktop only.)')
+			.setName(t('settings.general.statusBar.name'))
+			.setDesc(t('settings.general.statusBar.desc'))
 			.addToggle((t) =>
 				t
 					.setValue(this.plugin.settings.showUpcomingStatusBar)
@@ -539,25 +550,25 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// Backup & restore
 		const bk = this.settingsGroup(page, {
-			title: 'Backup & Restore',
-			sub: 'Snapshot every library to a file, or rebuild from one',
+			title: t('settings.backup.title'),
+			sub: t('settings.backup.sub'),
 			icon: 'database-backup',
 			variant: 'backup',
 			rows: true,
 		}).body;
 
 		new Setting(bk)
-			.setName('Export backup')
-			.setDesc('Export all watchlog data into a single timestamped .JSON file: watchlist, reading (books & manga), games and activity log.')
+			.setName(t('settings.backup.export.name'))
+			.setDesc(t('settings.backup.export.desc'))
 			.addButton((b) =>
-				b.setButtonText('Export backup').onClick(() => void this.exportBackup()),
+				b.setButtonText(t('settings.backup.export.button')).onClick(() => void this.exportBackup()),
 			);
 
 		new Setting(bk)
-			.setName('Restore from backup')
-			.setDesc('Restore from a .JSON backup file. Missing notes are created; existing notes are kept. Shared settings, device settings (API keys included) and the activity log are replaced. Backups from older plugin versions are imported too. Keep backup files private.')
+			.setName(t('settings.backup.restore.name'))
+			.setDesc(t('settings.backup.restore.desc'))
 			.addButton((b) =>
-				b.setButtonText('Restore from backup').onClick(() => this.openRestoreDialog()),
+				b.setButtonText(t('settings.backup.restore.button')).onClick(() => this.openRestoreDialog()),
 			);
 
 		const regenHolder = {
@@ -567,10 +578,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		};
 
 		new Setting(bk)
-			.setName('Regenerate note files')
-			.setDesc("Creates missing .md files for titles that don't have one. Existing files are not modified.")
+			.setName(t('settings.backup.regenerate.name'))
+			.setDesc(t('settings.backup.regenerate.desc'))
 			.addButton((b) =>
-				b.setButtonText('Regenerate').onClick(() => {
+				b.setButtonText(t('settings.backup.regenerate.button')).onClick(() => {
 					const { wrap, fill, text } = regenHolder;
 					if (wrap && fill && text) void this.runRegenerate(wrap, fill, text);
 				}),
@@ -578,7 +589,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		const regenProgressWrap = bk.createDiv({ cls: 'wl-regen-progress-wrap' });
 		regenProgressWrap.hide();
-		regenProgressWrap.createSpan({ cls: 'wl-csv-bg-note', text: 'You can close settings; regeneration continues in the background.' });
+		regenProgressWrap.createSpan({ cls: 'wl-csv-bg-note', text: t('settings.backup.regenerate.note') });
 		const regenProgressTrack = regenProgressWrap.createDiv({ cls: 'wl-csv-progress-track' });
 		const regenProgressFill = regenProgressTrack.createDiv({ cls: 'wl-csv-progress-fill' });
 		const regenProgressText = regenProgressWrap.createSpan({ cls: 'wl-csv-progress-text', text: '0 / 0' });
@@ -613,7 +624,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		a.click();
 		activeDocument.body.removeChild(a);
 		URL.revokeObjectURL(url);
-		new Notice(`Backup exported as ${filename}`);
+		new Notice(t('settings.backup.export.done', { filename }));
 	}
 
 	/** Mobile path: write the backup into <root>/backups/, disambiguating on collision. */
@@ -640,7 +651,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		}
 
 		await adapter.write(path, json);
-		new Notice(`Backup saved to ${path} (without API keys; enter them again after a restore).`);
+		new Notice(t('settings.backup.export.savedToVault', { path }));
 	}
 
 	private openRestoreDialog(): void {
@@ -674,21 +685,21 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				cleanupInput();
 				const result = parseBackup(e.target?.result as string);
 				if ('error' in result) {
-					new Notice(`Invalid backup file: ${result.error}`);
+					new Notice(t('settings.backup.restore.invalid', { error: t(`settings.backup.restore.errors.${result.error}` as TranslationKey) }));
 					return;
 				}
 				// validated as a whole before anything is written
 				const legacy = 'legacy' in result ? result.legacy : null;
 				const prompt = legacy
-					? 'This is a backup from an older plugin version. Missing notes are created and missing note properties filled; existing values are kept. Continue?'
-					: 'This restores the backup into your vault: missing notes are created, the shared settings, device settings (API keys included) and the activity log are replaced. Existing notes are kept. Continue?';
+					? t('settings.backup.restore.confirmLegacy')
+					: t('settings.backup.restore.confirm');
 				new ConfirmModal(this.app, prompt, () => {
 					void (async () => {
 						const managers = this.plugin.backupManagers();
 						if (legacy) {
 							const errors = await restoreLegacyBackup(managers, legacy);
 							if (errors.length > 0) {
-								new Notice(`Backup import failed: ${errors.join('; ')}`);
+								new Notice(t('settings.backup.restore.failed', { errors: errors.join('; ') }));
 								return;
 							}
 						} else if ('backup' in result) {
@@ -696,7 +707,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 						}
 						await this.plugin.loadSettings();
 						activeDocument.dispatchEvent(new CustomEvent('watchlog-data-changed'));
-						new Notice('Backup restored successfully.');
+						new Notice(t('settings.backup.restore.done'));
 					})();
 				}).open();
 			};
@@ -715,9 +726,32 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			readingData: p.readingDataManager,
 			gameData: p.gameDataManager,
 			queue: p.dataManager.apiQueue,
-			onStart: (n) => new Notice(`Re-fetching ${n} images…`),
+			onStart: (n) => new Notice(t('settings.general.replaceImages.start', { count: n })),
 		});
-		new Notice(`Images re-fetched: ${res.updated} updated, ${res.unchanged} unchanged or failed.`);
+		new Notice(t('settings.general.replaceImages.done', { updated: res.updated, unchanged: res.unchanged }));
+	}
+
+	/**
+	 * Starts a cancelable bulk run: registers it with the shared importProgress infra (the
+	 * Watchlist header draws the cancel button) and shows a persistent in-place notice with
+	 * its own cancel button, since the header bar isn't visible from Settings.
+	 */
+	private startProgress(total: number, text: string): {
+		notice: Notice;
+		label: HTMLElement;
+		cancelFn: () => void;
+		isCancelled: () => boolean;
+	} {
+		let cancelled = false;
+		const cancelFn = (): void => { cancelled = true; };
+		this.plugin.importProgress = { current: 0, total, cancel: cancelFn };
+		this.plugin.dataManager.notifyChange();
+
+		const notice = new Notice('', 0);
+		const label = notice.messageEl.createSpan({ text });
+		const cancelBtn = notice.messageEl.createEl('button', { cls: 'wl-btn wl-btn-sm wl-notice-cancel-btn', text: t('common.cancel') });
+		cancelBtn.addEventListener('click', cancelFn);
+		return { notice, label, cancelFn, isCancelled: () => cancelled };
 	}
 
 	/**
@@ -733,7 +767,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const manga = reading.getMangaList();
 		const total = titles.length + books.length + manga.length;
 		if (total === 0) {
-			new Notice('No notes to rewrite.');
+			new Notice(t('settings.general.rewrite.none'));
 			return;
 		}
 
@@ -744,18 +778,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			...manga.map((m) => () => reading.rewriteFrontmatterIfExists('manga', m)),
 		];
 
-		let cancelled = false;
-		const cancelFn = (): void => { cancelled = true; };
-		// expose to the shared progress infra (the Watchlist header draws the cancel button)
-		this.plugin.importProgress = { current: 0, total, cancel: cancelFn };
-		dm.notifyChange();
-
-		// in-place progress notice with its own cancel button — the header bar isn't visible
-		// from Settings. persistent (timeout 0).
-		const notice = new Notice('', 0);
-		const label = notice.messageEl.createSpan({ text: `Rewriting frontmatter… 0 / ${total}` });
-		const cancelBtn = notice.messageEl.createEl('button', { cls: 'wl-btn wl-btn-sm wl-notice-cancel-btn', text: 'Cancel' });
-		cancelBtn.addEventListener('click', cancelFn);
+		const { notice, label, cancelFn, isCancelled } = this.startProgress(
+			total,
+			t('settings.general.rewrite.progress', { done: 0, total }),
+		);
 
 		const CHUNK_SIZE = 10;
 		let rewritten = 0;
@@ -763,13 +789,13 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		let done = 0;
 		try {
 			for (let i = 0; i < jobs.length; i++) {
-				if (cancelled) break;
+				if (isCancelled()) break;
 				if (await jobs[i]!()) rewritten++; else skipped++;
 				done++;
 				// yield every chunk so the UI repaints and stays responsive across 700+ notes
 				if (done % CHUNK_SIZE === 0 || done === total) {
 					this.plugin.importProgress = { current: done, total, cancel: cancelFn };
-					label.textContent = `Rewriting frontmatter… ${done} / ${total}`;
+					label.textContent = t('settings.general.rewrite.progress', { done, total });
 					await new Promise((r) => window.setTimeout(r, 0));
 				}
 			}
@@ -779,49 +805,45 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			notice.hide();
 		}
 
-		const skippedMsg = skipped > 0 ? `, ${skipped} skipped (no file)` : '';
-		const prefix = cancelled ? 'Cancelled: ' : 'Done: ';
-		new Notice(`${prefix}${rewritten} note${rewritten !== 1 ? 's' : ''} rewritten${skippedMsg}.`);
+		const state = isCancelled() ? t('settings.progress.cancelled') : t('settings.progress.done');
+		new Notice(skipped > 0
+			? t('settings.general.rewrite.resultSkipped', { state, count: rewritten, skipped })
+			: t('settings.general.rewrite.result', { state, count: rewritten }));
 	}
 
 	/** Bulk studio backfill; the rewriteAllFrontmatter progress/cancel pattern. */
 	private async fetchAllStudios(): Promise<void> {
 		const dm = this.plugin.dataManager;
-		const pending = dm.getTitles().filter((t) => needsStudioFetch(t));
+		const pending = dm.getTitles().filter((title) => needsStudioFetch(title));
 		const total = pending.length;
 		if (total === 0) {
-			new Notice('Every title already has a studio.');
+			new Notice(t('settings.general.studios.allHave'));
 			return;
 		}
 
-		let cancelled = false;
-		const cancelFn = (): void => { cancelled = true; };
-		this.plugin.importProgress = { current: 0, total, cancel: cancelFn };
-		dm.notifyChange();
-
-		const notice = new Notice('', 0);
-		const label = notice.messageEl.createSpan({ text: `Fetching studios… 0 / ${total}` });
-		const cancelBtn = notice.messageEl.createEl('button', { cls: 'wl-btn wl-btn-sm wl-notice-cancel-btn', text: 'Cancel' });
-		cancelBtn.addEventListener('click', cancelFn);
+		const { notice, label, cancelFn, isCancelled } = this.startProgress(
+			total,
+			t('settings.general.studios.progress', { done: 0, total }),
+		);
 
 		const animeSource = this.plugin.settings.animeApiSource ?? 'jikan';
 		let filled = 0;
 		let missed = 0;
 		try {
 			for (let i = 0; i < pending.length; i++) {
-				if (cancelled) break;
-				const t = pending[i]!;
+				if (isCancelled()) break;
+				const title = pending[i]!;
 				try {
-					const group = getApiGroupForType(t.type, this.plugin.settings.typeApiMapping);
-					const found = await this.plugin.apiService.fetchStudio(t, animeSource, group);
+					const group = getApiGroupForType(title.type, this.plugin.settings.typeApiMapping);
+					const found = await this.plugin.apiService.fetchStudio(title, animeSource, group);
 					// a miss stores 'none' so the next run skips it instead of retrying forever
-					await dm.updateStudio(t.id, found?.studio ?? [CREDITS_NONE], found?.tmdbId, found?.tmdbMediaType);
+					await dm.updateStudio(title.id, found?.studio ?? [CREDITS_NONE], found?.tmdbId, found?.tmdbMediaType);
 					if (found?.studio && !isCreditsNone(found.studio)) filled++; else missed++;
 				} catch {
 					missed++;
 				}
 				this.plugin.importProgress = { current: i + 1, total, cancel: cancelFn };
-				label.textContent = `Fetching studios… ${i + 1} / ${total}`;
+				label.textContent = t('settings.general.studios.progress', { done: i + 1, total });
 				await new Promise((r) => window.setTimeout(r, 0));
 			}
 		} finally {
@@ -830,9 +852,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			notice.hide();
 		}
 
-		const prefix = cancelled ? 'Cancelled: ' : 'Done: ';
-		const missedMsg = missed > 0 ? `, ${missed} with no studio available` : '';
-		new Notice(`${prefix}${filled} title${filled !== 1 ? 's' : ''} filled${missedMsg}.`);
+		const state = isCancelled() ? t('settings.progress.cancelled') : t('settings.progress.done');
+		new Notice(missed > 0
+			? t('settings.general.studios.resultMissed', { state, count: filled, missed })
+			: t('settings.general.studios.result', { state, count: filled }));
 	}
 
 	private async runRegenerate(
@@ -847,7 +870,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const total = titles.length + books.length + manga.length;
 		progressWrap.show();
 		if (total === 0) {
-			progressText.textContent = 'Done: no missing files found';
+			progressText.textContent = t('settings.backup.regenerate.none');
 			return;
 		}
 		progressBarFill.style.width = `0%`;
@@ -872,9 +895,9 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			tick(await reading.createReadingNoteIfMissing('manga', m));
 		}
 		if (created === 0) {
-			progressText.textContent = 'Done: no missing files found';
+			progressText.textContent = t('settings.backup.regenerate.none');
 		} else {
-			progressText.textContent = `Done: ${created} file${created !== 1 ? 's' : ''} created, ${skipped} already existed`;
+			progressText.textContent = t('settings.backup.regenerate.result', { count: created, skipped });
 		}
 	}
 
@@ -953,7 +976,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			const toggle = tools.createEl('button', {
 				cls: 'wl-sg-icon-btn wl-sg-help-btn',
 				text: '?',
-				attr: { 'aria-label': `About ${opts.label}` },
+				attr: { 'aria-label': t('settings.about', { label: opts.label }) },
 			});
 			const help = card.createDiv({ cls: 'wl-sg-help wl-sg-help--card', text: opts.help });
 			toggle.addEventListener('click', () => {
@@ -1030,13 +1053,13 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			f.onInput?.(input);
 
 			if (f.secret) {
-				const eye = row.createEl('button', { cls: 'wl-sg-icon-btn', attr: { 'aria-label': 'Show key' } });
+				const eye = row.createEl('button', { cls: 'wl-sg-icon-btn', attr: { 'aria-label': t('settings.api.showKey') } });
 				setIcon(eye, 'eye');
 				eye.addEventListener('click', () => {
 					const hidden = input.type === 'password';
 					input.type = hidden ? 'text' : 'password';
 					setIcon(eye, hidden ? 'eye-off' : 'eye');
-					eye.setAttribute('aria-label', hidden ? 'Hide key' : 'Show key');
+					eye.setAttribute('aria-label', hidden ? t('settings.api.hideKey') : t('settings.api.showKey'));
 				});
 			}
 		}
@@ -1063,7 +1086,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			const toggle = actions.createEl('button', {
 				cls: 'wl-sg-icon-btn wl-sg-help-btn',
 				text: '?',
-				attr: { 'aria-label': `About ${spec.name}` },
+				attr: { 'aria-label': t('settings.about', { label: spec.name }) },
 			});
 			toggle.addEventListener('click', () => {
 				if (!help) return;
@@ -1086,10 +1109,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		const runTest = spec.test;
 		if (runTest) {
-			const test = actions.createEl('button', { cls: 'wl-api-test', text: 'Test' });
+			const test = actions.createEl('button', { cls: 'wl-api-test', text: t('settings.api.test') });
 			test.addEventListener('click', () => {
 				test.disabled = true;
-				setStatus({ text: 'Testing…', tone: 'pending' });
+				setStatus({ text: t('settings.api.testing'), tone: 'pending' });
 				void (async () => {
 					try {
 						setStatus(await runTest());
@@ -1111,7 +1134,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			setActive: (active) => {
 				if (active === null) return;
 				card.toggleClass('is-inactive', !active);
-				state.textContent = active ? 'Active' : 'Inactive';
+				state.textContent = active ? t('settings.api.active') : t('settings.api.inactive');
 				state.toggleClass('is-active', active);
 			},
 			refreshStatus,
@@ -1124,8 +1147,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// 1. Movies & TV shows
 		const movies = this.settingsGroup(page, {
-			title: 'Movies & TV shows',
-			sub: 'Watchlist metadata, posters, cast and ratings',
+			title: t('settings.api.movies.title'),
+			sub: t('settings.api.movies.sub'),
 			icon: 'clapperboard',
 			variant: 'movies',
 		});
@@ -1139,13 +1162,13 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			const keyed = active === 'OMDb' ? !!s.omdbApiKey : !!s.tmdbApiKey;
 			movies.setChip(
 				keyed
-					? { text: `${active} · key set`, tone: 'ok' }
-					: { text: `${active} · key needed`, tone: 'warn' },
+					? { text: t('settings.api.chipKeySet', { name: active }), tone: 'ok' }
+					: { text: t('settings.api.chipKeyNeeded', { name: active }), tone: 'warn' },
 			);
 		};
 
 		this.apiSegmented(movies.body, {
-			label: 'Active API',
+			label: t('settings.api.activeApi'),
 			options: [{ value: 'OMDb', label: 'OMDb' }, { value: 'TMDB', label: 'TMDB' }],
 			value: s.activeApi ?? 'OMDb',
 			onChange: (v) => {
@@ -1158,14 +1181,12 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		omdb = this.apiProvider(movies.body, {
 			name: 'OMDb',
 			initials: 'O',
-			note: 'Up to 4 cast members and the director',
-			link: { text: 'Get a free key', href: 'https://www.omdbapi.com/apikey.aspx' },
-			help:
-				'OMDb keys are free for personal use and arrive by email; the link in that ' +
-				'email has to be clicked once before the key starts working.',
+			note: t('settings.api.omdb.note'),
+			link: { text: t('settings.api.getFreeKey'), href: 'https://www.omdbapi.com/apikey.aspx' },
+			help: t('settings.api.omdb.help'),
 			fields: [{
-				label: 'API key',
-				placeholder: 'Paste your OMDb key here',
+				label: t('settings.api.apiKey'),
+				placeholder: t('settings.api.omdb.placeholder'),
 				secret: true,
 				get: () => s.omdbApiKey,
 				set: (v) => {
@@ -1176,14 +1197,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				},
 			}],
 			status: () => (s.omdbApiKey
-				? { text: 'Key set · not tested', tone: 'idle' }
-				: { text: 'No key', tone: 'idle' }),
+				? { text: t('settings.api.keySetNotTested'), tone: 'idle' }
+				: { text: t('settings.api.noKey'), tone: 'idle' }),
 			test: async () => {
 				try {
 					const ok = await this.plugin.apiService.checkOmdbConnection();
 					return ok
-						? { text: 'Connected', tone: 'ok' as const }
-						: { text: 'Failed; check your key', tone: 'error' as const };
+						? { text: t('settings.api.connected'), tone: 'ok' as const }
+						: { text: t('settings.api.failedCheckKey'), tone: 'error' as const };
 				} catch (err) {
 					return this.testFailure(err);
 				}
@@ -1193,14 +1214,12 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		tmdb = this.apiProvider(movies.body, {
 			name: 'TMDB',
 			initials: 'T',
-			note: 'Up to 10 cast members (billing order) and all credited directors',
-			link: { text: 'Get a free token', href: 'https://www.themoviedb.org/settings/api' },
-			help:
-				'TMDB is used through the API Read Access Token (the long v4 bearer token), ' +
-				'not the shorter v3 API key.',
+			note: t('settings.api.tmdb.note'),
+			link: { text: t('settings.api.getFreeToken'), href: 'https://www.themoviedb.org/settings/api' },
+			help: t('settings.api.tmdb.help'),
 			fields: [{
-				label: 'API read access token',
-				placeholder: 'Paste your TMDB token here',
+				label: t('settings.api.tmdb.field'),
+				placeholder: t('settings.api.tmdb.placeholder'),
 				secret: true,
 				get: () => s.tmdbApiKey ?? '',
 				set: (v) => {
@@ -1211,14 +1230,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				},
 			}],
 			status: () => (s.tmdbApiKey
-				? { text: 'Token set · not tested', tone: 'idle' }
-				: { text: 'No token', tone: 'idle' }),
+				? { text: t('settings.api.tokenSetNotTested'), tone: 'idle' }
+				: { text: t('settings.api.noToken'), tone: 'idle' }),
 			test: async () => {
 				try {
 					const ok = await this.plugin.apiService.checkTmdbConnection();
 					return ok
-						? { text: 'Connected', tone: 'ok' as const }
-						: { text: 'Failed; check your token', tone: 'error' as const };
+						? { text: t('settings.api.connected'), tone: 'ok' as const }
+						: { text: t('settings.api.failedCheckToken'), tone: 'error' as const };
 				} catch (err) {
 					return this.testFailure(err);
 				}
@@ -1228,20 +1247,17 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		movies.body.createDiv({
 			cls: 'wl-sg-note',
-			text:
-				'Missing a name? Use the + on a title\'s Director or Cast row to add your own. ' +
-				'Manual additions are unlimited, sit after the fetched names, and are never ' +
-				'overwritten by a refresh or by switching API.',
+			text: t('settings.api.movies.note'),
 		});
 
 		// 2. Anime
 		const anime = this.settingsGroup(page, {
-			title: 'Anime',
-			sub: 'Watchlist anime metadata, airing schedules and scores',
+			title: t('settings.api.anime.title'),
+			sub: t('settings.api.anime.sub'),
 			icon: 'sparkles',
 			variant: 'anime',
 		});
-		anime.setChip({ text: 'Ready · no key needed', tone: 'ok' });
+		anime.setChip({ text: t('settings.api.anime.chip'), tone: 'ok' });
 
 		let jikan: ApiProviderHandle;
 		let anilist: ApiProviderHandle;
@@ -1252,7 +1268,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		};
 
 		this.apiSegmented(anime.body, {
-			label: 'Active API',
+			label: t('settings.api.activeApi'),
 			options: [{ value: 'jikan', label: 'MyAnimeList' }, { value: 'anilist', label: 'AniList' }],
 			value: s.animeApiSource ?? 'jikan',
 			onChange: (v) => {
@@ -1271,9 +1287,9 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		jikan = this.apiProvider(anime.body, {
 			name: 'MyAnimeList',
 			initials: 'M',
-			note: 'Jikan-compatible API, Tenrai by default',
+			note: t('settings.api.jikan.note'),
 			fields: [{
-				label: 'Endpoint',
+				label: t('settings.api.jikan.endpoint'),
 				placeholder: TENRAI_BASE,
 				get: () => s.jikanBaseUrl ?? '',
 				set: setEndpoint,
@@ -1283,22 +1299,16 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			test: async () => {
 				try {
 					return (await this.plugin.apiService.pingJikan())
-						? { text: 'Connected', tone: 'ok' as const }
-						: { text: 'Not a Jikan-compatible API', tone: 'error' as const };
+						? { text: t('settings.api.connected'), tone: 'ok' as const }
+						: { text: t('settings.api.jikan.notCompatible'), tone: 'error' as const };
 				} catch (err) {
 					return this.testFailure(err);
 				}
 			},
-			help:
-				'Anime and manga data from MyAnimeList, fetched through any API that follows the ' +
-				'Jikan v4 schema. Tenrai is the default since the public Jikan API shut down; enter ' +
-				'your own Jikan instance here if you run one. Only https addresses are used. For basic ' +
-				'auth, put the login into the address (https://user:password@host/v4); it is sent ' +
-				'only to that endpoint. The endpoint is stored on this device only, and the login is ' +
-				'left out of backups saved to the vault.',
+			help: t('settings.api.jikan.help'),
 			extra: (card) => {
 				const row = card.createDiv({ cls: 'wl-api-presets' });
-				const btn = row.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Use Tenrai' });
+				const btn = row.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('settings.api.jikan.useTenrai') });
 				btn.addEventListener('click', () => {
 					if (!endpointInput) return;
 					endpointInput.value = '';
@@ -1311,45 +1321,42 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		anilist = this.apiProvider(anime.body, {
 			name: 'AniList',
 			initials: 'A',
-			note: 'Own database, more precise airing schedules',
-			status: () => ({ text: 'No key needed', tone: 'ok' }),
-			help: 'AniList is queried over GraphQL and reports scores as a percentage.',
+			note: t('settings.api.anilist.note'),
+			status: () => ({ text: t('settings.api.noKeyNeeded'), tone: 'ok' }),
+			help: t('settings.api.anilist.help'),
 		});
 		syncAnime();
 
 		anime.body.createDiv({
 			cls: 'wl-sg-note',
-			text: 'This setting only affects new titles; existing titles keep their original API source.',
+			text: t('settings.api.anime.note'),
 		});
 
 		// 3. Books & manga
 		const books = this.settingsGroup(page, {
-			title: 'Books & manga',
-			sub: 'Reading tab search, authors and cover art',
+			title: t('settings.api.books.title'),
+			sub: t('settings.api.books.sub'),
 			icon: 'book-open',
 			variant: 'books',
 		});
 		const syncBooks = (): void => {
 			books.setChip(
 				s.googleBooksApiKey
-					? { text: 'Books · key set', tone: 'ok' }
-					: { text: 'Books · key needed', tone: 'warn' },
+					? { text: t('settings.api.chipKeySet', { name: t('settings.reading.subTab.books') }), tone: 'ok' }
+					: { text: t('settings.api.chipKeyNeeded', { name: t('settings.reading.subTab.books') }), tone: 'warn' },
 			);
 		};
 
 		this.apiProvider(books.body, {
 			name: 'Google Books',
 			initials: 'G',
-			note: 'Book search, authors, page counts and covers',
-			badge: 'Books',
+			note: t('settings.api.books.google.note'),
+			badge: t('settings.reading.subTab.books'),
 			link: { text: 'Google Cloud Console', href: 'https://console.cloud.google.com/apis/credentials' },
-			help:
-				'Create a project in the Google Cloud Console, enable the Books API, then create ' +
-				'an API key under APIs & Services → Credentials. Book search does not work ' +
-				'without it.',
+			help: t('settings.api.books.google.help'),
 			fields: [{
-				label: 'API key',
-				placeholder: 'Paste your Google Books key here',
+				label: t('settings.api.apiKey'),
+				placeholder: t('settings.api.books.google.placeholder'),
 				secret: true,
 				get: () => s.googleBooksApiKey ?? '',
 				set: (v) => {
@@ -1360,14 +1367,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				},
 			}],
 			status: () => (s.googleBooksApiKey
-				? { text: 'Key set · not tested', tone: 'idle' }
-				: { text: 'No key; book search is off', tone: 'warn' }),
+				? { text: t('settings.api.keySetNotTested'), tone: 'idle' }
+				: { text: t('settings.api.books.google.noKey'), tone: 'warn' }),
 			test: async () => {
 				try {
 					const ok = await this.plugin.apiService.checkGoogleBooksConnection();
 					return ok
-						? { text: 'Connected', tone: 'ok' as const }
-						: { text: 'Failed', tone: 'error' as const };
+						? { text: t('settings.api.connected'), tone: 'ok' as const }
+						: { text: t('settings.api.failed'), tone: 'error' as const };
 				} catch (err) {
 					return this.testFailure(err);
 				}
@@ -1378,18 +1385,16 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		this.apiProvider(books.body, {
 			name: 'MyAnimeList',
 			initials: 'M',
-			note: 'Manga search, chapters, volumes and covers',
-			badge: 'Manga',
-			status: () => ({ text: 'No key needed', tone: 'ok' }),
-			help:
-				'Manga always goes through MyAnimeList, using the same endpoint as the anime ' +
-				'card above, whatever the anime API is set to. No account or key is involved.',
+			note: t('settings.api.books.manga.note'),
+			badge: t('settings.reading.subTab.manga'),
+			status: () => ({ text: t('settings.api.noKeyNeeded'), tone: 'ok' }),
+			help: t('settings.api.books.manga.help'),
 		});
 
 		// 4. Games
 		const games = this.settingsGroup(page, {
-			title: 'Games',
-			sub: 'Games tab search, covers, platforms and store links',
+			title: t('app.tabs.games'),
+			sub: t('settings.api.games.sub'),
 			icon: 'gamepad-2',
 			variant: 'games',
 		});
@@ -1405,13 +1410,13 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				: !!(s.igdbClientId && s.igdbClientSecret);
 			games.setChip(
 				keyed
-					? { text: `${active === 'rawg' ? 'RAWG' : 'IGDB'} · key set`, tone: 'ok' }
-					: { text: `${active === 'rawg' ? 'RAWG' : 'IGDB'} · key needed`, tone: 'warn' },
+					? { text: t('settings.api.chipKeySet', { name: active === 'rawg' ? 'RAWG' : 'IGDB' }), tone: 'ok' }
+					: { text: t('settings.api.chipKeyNeeded', { name: active === 'rawg' ? 'RAWG' : 'IGDB' }), tone: 'warn' },
 			);
 		};
 
 		this.apiSegmented(games.body, {
-			label: 'Active API',
+			label: t('settings.api.activeApi'),
 			options: [{ value: 'rawg', label: 'RAWG' }, { value: 'igdb', label: 'IGDB' }],
 			value: s.gamesApiSource ?? 'rawg',
 			onChange: (v) => {
@@ -1424,12 +1429,12 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		rawg = this.apiProvider(games.body, {
 			name: 'RAWG',
 			initials: 'R',
-			note: 'Search, covers, platforms and store links',
-			link: { text: 'Get a free key', href: 'https://rawg.io/apidocs' },
-			help: 'RAWG also carries PC requirements, which IGDB does not expose.',
+			note: t('settings.api.rawg.note'),
+			link: { text: t('settings.api.getFreeKey'), href: 'https://rawg.io/apidocs' },
+			help: t('settings.api.rawg.help'),
 			fields: [{
-				label: 'API key',
-				placeholder: 'Paste your RAWG key here',
+				label: t('settings.api.apiKey'),
+				placeholder: t('settings.api.rawg.placeholder'),
 				secret: true,
 				get: () => s.rawgApiKey ?? '',
 				set: (v) => {
@@ -1440,14 +1445,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				},
 			}],
 			status: () => (s.rawgApiKey
-				? { text: 'Key set · not tested', tone: 'idle' }
-				: { text: 'No key', tone: 'idle' }),
+				? { text: t('settings.api.keySetNotTested'), tone: 'idle' }
+				: { text: t('settings.api.noKey'), tone: 'idle' }),
 			test: async () => {
 				try {
 					const ok = await this.plugin.apiService.checkRawgConnection();
 					return ok
-						? { text: 'Connected', tone: 'ok' as const }
-						: { text: 'Failed; check your key', tone: 'error' as const };
+						? { text: t('settings.api.connected'), tone: 'ok' as const }
+						: { text: t('settings.api.failedCheckKey'), tone: 'error' as const };
 				} catch (err) {
 					return this.testFailure(err);
 				}
@@ -1457,15 +1462,13 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		igdb = this.apiProvider(games.body, {
 			name: 'IGDB',
 			initials: 'I',
-			note: 'Search, covers, platforms and trailers',
-			link: { text: 'Register a Twitch app', href: 'https://dev.twitch.tv/console/apps' },
-			help:
-				'IGDB authenticates through Twitch: register an application to get a Client ID ' +
-				'and Client Secret. The access token is fetched and refreshed automatically.',
+			note: t('settings.api.igdb.note'),
+			link: { text: t('settings.api.igdb.link'), href: 'https://dev.twitch.tv/console/apps' },
+			help: t('settings.api.igdb.help'),
 			fields: [
 				{
-					label: 'Client ID',
-					placeholder: 'Paste your Twitch client ID here',
+					label: t('settings.api.igdb.clientId'),
+					placeholder: t('settings.api.igdb.clientIdPlaceholder'),
 					secret: true,
 					get: () => s.igdbClientId ?? '',
 					set: (v) => {
@@ -1476,8 +1479,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 					},
 				},
 				{
-					label: 'Client secret',
-					placeholder: 'Paste your Twitch client secret here',
+					label: t('settings.api.igdb.clientSecret'),
+					placeholder: t('settings.api.igdb.clientSecretPlaceholder'),
 					secret: true,
 					get: () => s.igdbClientSecret ?? '',
 					set: (v) => {
@@ -1489,14 +1492,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				},
 			],
 			status: () => (s.igdbClientId && s.igdbClientSecret
-				? { text: 'Credentials set · not tested', tone: 'idle' }
-				: { text: 'Credentials incomplete', tone: 'idle' }),
+				? { text: t('settings.api.credsSetNotTested'), tone: 'idle' }
+				: { text: t('settings.api.credsIncomplete'), tone: 'idle' }),
 			test: async () => {
 				try {
 					const ok = await this.plugin.apiService.checkIgdbConnection();
 					return ok
-						? { text: 'Connected', tone: 'ok' as const }
-						: { text: 'Failed; check the ID and secret', tone: 'error' as const };
+						? { text: t('settings.api.connected'), tone: 'ok' as const }
+						: { text: t('settings.api.failedCheckIdSecret'), tone: 'error' as const };
 				} catch (err) {
 					return this.testFailure(err);
 				}
@@ -1510,17 +1513,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const steam = this.apiProvider(games.body, {
 			name: 'Steam',
 			initials: 'S',
-			note: 'Syncs playtime and achievements from your own library',
-			badge: 'Companion',
-			link: { text: 'Get a Web API key', href: 'https://steamcommunity.com/dev/apikey' },
-			help:
-				'Steam has no search endpoint, so it never replaces the API above; it runs ' +
-				'alongside it. Your Steam profile\'s "Game details" privacy must be set to ' +
-				'Public, or Steam returns an empty library even to your own key.',
+			note: t('settings.steam.note'),
+			badge: t('settings.steam.badge'),
+			link: { text: t('settings.steam.link'), href: 'https://steamcommunity.com/dev/apikey' },
+			help: t('settings.steam.help'),
 			fields: [
 				{
-					label: 'Web API key',
-					placeholder: 'Paste your Steam Web API key here',
+					label: t('settings.steam.apiKey'),
+					placeholder: t('settings.steam.apiKeyPlaceholder'),
 					secret: true,
 					get: () => s.steamApiKey ?? '',
 					set: (v) => {
@@ -1530,7 +1530,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 					},
 				},
 				{
-					label: 'Steam ID or profile URL',
+					label: t('settings.steam.idField'),
 					placeholder: '76561198… or steamcommunity.com/id/yourname',
 					get: () => s.steamId ?? '',
 					set: (v) => {
@@ -1542,8 +1542,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				},
 			],
 			status: () => (s.steamApiKey && s.steamId
-				? { text: 'Credentials set · not tested', tone: 'idle' }
-				: { text: 'Credentials incomplete', tone: 'idle' }),
+				? { text: t('settings.api.credsSetNotTested'), tone: 'idle' }
+				: { text: t('settings.api.credsIncomplete'), tone: 'idle' }),
 			test: async () => {
 				// resolve a vanity name / URL to a SteamID64 once and store it. The field is written in
 				// place rather than via this.display(), which would detach the elements this handler holds.
@@ -1557,21 +1557,21 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 				const result = await this.plugin.apiService.checkSteamConnection();
 				return result.ok
-					? { text: `Connected: ${result.games.length} games found`, tone: 'ok' as const }
+					? { text: t('settings.steam.connected', { count: result.games.length }), tone: 'ok' as const }
 					: { text: steamFailureLabel(result.reason), tone: 'error' as const };
 			},
 			extra: (card) => {
 				const row = card.createDiv({ cls: 'wl-api-action' });
 				const texts = row.createDiv({ cls: 'wl-api-action-texts' });
-				texts.createDiv({ cls: 'wl-api-action-title', text: 'Sync Steam library' });
+				texts.createDiv({ cls: 'wl-api-action-title', text: t('settings.steam.sync.title') });
 				texts.createDiv({
 					cls: 'wl-api-action-desc',
-					text: 'Updates playtime and achievements on matching games, and offers to import the rest.',
+					text: t('settings.steam.sync.desc'),
 				});
-				const btn = row.createEl('button', { cls: 'wl-api-action-btn mod-cta', text: 'Sync now' });
+				const btn = row.createEl('button', { cls: 'wl-api-action-btn mod-cta', text: t('settings.steam.sync.button') });
 				btn.addEventListener('click', () => {
 					if (!this.plugin.apiService.hasSteamCredentials()) {
-						new Notice('Set your Steam API key and Steam ID first.');
+						new Notice(t('settings.steam.sync.needCreds'));
 						return;
 					}
 					new SteamSyncModal(this.app, this.plugin, this.plugin.gameDataManager).open();
@@ -1586,10 +1586,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 	private renderTypeApiMapping(parent: HTMLElement): void {
 		const card = parent.createDiv({ cls: 'wl-settings-card' });
-		card.createDiv({ cls: 'wl-settings-card-title', text: 'API routing by type in Watchlist' });
+		card.createDiv({ cls: 'wl-settings-card-title', text: t('settings.api.routing.title') });
 		card.createDiv({
 			cls: 'wl-settings-card-desc',
-			text: 'Choose which API group to use for each title type. Anime, Movie, and TV Show are locked to their default APIs.',
+			text: t('settings.api.routing.desc'),
 		});
 
 		const list = card.createDiv({ cls: 'wl-type-api-list' });
@@ -1597,7 +1597,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const mapping = this.plugin.settings.typeApiMapping ?? {};
 
 		// prune stale entries (types that no longer exist)
-		const validNames = new Set(allTypes.map((t) => t.name));
+		const validNames = new Set(allTypes.map((type) => type.name));
 		let pruned = false;
 		for (const key of Object.keys(mapping)) {
 			if (!validNames.has(key) || key === 'Anime' || key === 'Movie' || key === 'TV Show' || key === 'TvShow') {
@@ -1607,21 +1607,21 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		}
 		if (pruned) void this.plugin.saveSettings();
 
-		for (const t of allTypes) {
+		for (const type of allTypes) {
 			const row = list.createDiv({ cls: 'wl-type-api-row' });
-			row.createSpan({ cls: 'wl-type-api-name', text: t.name });
+			row.createSpan({ cls: 'wl-type-api-name', text: typeLabel(type.name) });
 
-			if (t.name === 'Anime') {
-				row.createSpan({ cls: 'wl-type-api-locked', text: 'Jikan / AniList (locked)' });
-			} else if (t.name === 'Movie' || t.name === 'TV Show' || t.name === 'TvShow') {
-				row.createSpan({ cls: 'wl-type-api-locked', text: 'OMDb / TMDB (locked)' });
+			if (type.name === 'Anime') {
+				row.createSpan({ cls: 'wl-type-api-locked', text: t('settings.api.routing.locked', { apis: 'Jikan / AniList' }) });
+			} else if (type.name === 'Movie' || type.name === 'TV Show' || type.name === 'TvShow') {
+				row.createSpan({ cls: 'wl-type-api-locked', text: t('settings.api.routing.locked', { apis: 'OMDb / TMDB' }) });
 			} else {
 				const select = row.createEl('select', { cls: 'wl-select wl-type-api-select' });
-				const current = mapping[t.name] ?? '';
+				const current = mapping[type.name] ?? '';
 				const opts: Array<{ value: '' | 'anime' | 'movie'; label: string }> = [
-					{ value: '', label: '— Not set —' },
-					{ value: 'anime', label: 'Anime API (Jikan / AniList)' },
-					{ value: 'movie', label: 'Movie / TV API (OMDb / TMDB)' },
+					{ value: '', label: t('settings.api.routing.notSet') },
+					{ value: 'anime', label: t('settings.api.routing.anime') },
+					{ value: 'movie', label: t('settings.api.routing.movie') },
 				];
 				for (const o of opts) {
 					const optEl = select.createEl('option', { text: o.label, value: o.value });
@@ -1631,9 +1631,9 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 					const v = select.value as '' | 'anime' | 'movie';
 					if (!this.plugin.settings.typeApiMapping) this.plugin.settings.typeApiMapping = {};
 					if (v === '') {
-						delete this.plugin.settings.typeApiMapping[t.name];
+						delete this.plugin.settings.typeApiMapping[type.name];
 					} else {
-						this.plugin.settings.typeApiMapping[t.name] = v;
+						this.plugin.settings.typeApiMapping[type.name] = v;
 					}
 					void this.plugin.saveSettings();
 				});
@@ -1654,8 +1654,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// theme
 		const theme = this.settingsGroup(page, {
-			title: 'Theme',
-			sub: 'Preset palette applied across every tab',
+			title: t('settings.customize.theme.title'),
+			sub: t('settings.customize.theme.sub'),
 			icon: 'palette',
 			variant: 'theme',
 		});
@@ -1663,8 +1663,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// cards
 		const cards = this.settingsGroup(page, {
-			title: 'Cards',
-			sub: 'Size and text layout of the poster cards in every tab',
+			title: t('settings.customize.cards.title'),
+			sub: t('settings.customize.cards.sub'),
 			icon: 'layout-grid',
 			variant: 'cards',
 		});
@@ -1672,41 +1672,53 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// watchlist
 		const watchlist = this.settingsGroup(page, {
-			title: 'Watchlist',
-			sub: 'Type, status and season colours for watch titles',
+			title: t('app.tabs.watchlist'),
+			sub: t('settings.customize.watchlist.sub'),
 			icon: 'clapperboard',
 			variant: 'watchlist',
 		});
 		const syncWatchlist = (): void => watchlist.setChip({
-			text: `${s.types.length} types · ${s.statuses.length} statuses`,
+			text: this.chipJoin(
+				t('settings.chip.types', { count: s.types.length }),
+				t('settings.chip.statuses', { count: s.statuses.length }),
+			),
 			tone: 'count',
 		});
-		this.renderTagSection(watchlist.body, 'Type', 'types', syncWatchlist);
-		this.renderTagSection(watchlist.body, 'Status', 'statuses', syncWatchlist);
+		this.renderTagSection(watchlist.body, t('settings.tags.type'), 'types', syncWatchlist);
+		this.renderTagSection(watchlist.body, t('settings.tags.status'), 'statuses', syncWatchlist);
 		this.renderSeasonColors(watchlist.body);
 		syncWatchlist();
 
 		// reading
 		const reading = this.settingsGroup(page, {
-			title: 'Reading',
-			sub: 'Badge and status colours for books and manga',
+			title: t('app.tabs.reading'),
+			sub: t('settings.customize.reading.sub'),
 			icon: 'book-open',
 			variant: 'reading',
 		});
 		this.renderReadingColors(reading.body);
 		this.renderReadingStatusColors(reading.body);
-		reading.setChip({ text: `2 types · ${READING_STATUSES.length} statuses`, tone: 'count' });
+		reading.setChip({
+			text: this.chipJoin(
+				t('settings.chip.types', { count: 2 }),
+				t('settings.chip.statuses', { count: READING_STATUSES.length }),
+			),
+			tone: 'count',
+		});
 
 		// games
 		const games = this.settingsGroup(page, {
-			title: 'Games',
-			sub: 'Status, genre and platform colours for the Games tab',
+			title: t('app.tabs.games'),
+			sub: t('settings.customize.games.sub'),
 			icon: 'gamepad-2',
 			variant: 'games',
 		});
 		const gamesSettings = (): GamesSettings => this.plugin.gameDataManager.getSettings();
 		const syncGames = (): void => games.setChip({
-			text: `${gamesSettings().types.length} genres · ${gamesSettings().platforms.length} platforms`,
+			text: this.chipJoin(
+				t('settings.chip.genres', { count: gamesSettings().types.length }),
+				t('settings.chip.platforms', { count: gamesSettings().platforms.length }),
+			),
 			tone: 'count',
 		});
 		this.renderGamesTags(games.body, syncGames);
@@ -1714,18 +1726,26 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// shared across libraries
 		const shared = this.settingsGroup(page, {
-			title: 'Shared',
-			sub: 'Priority and star ratings, used by all three libraries',
+			title: t('settings.customize.shared.title'),
+			sub: t('settings.customize.shared.sub'),
 			icon: 'star',
 			variant: 'shared',
 		});
 		const syncShared = (): void => shared.setChip({
-			text: `${s.priorities.length} priorities · ${s.ratingSystem.length} tiers`,
+			text: this.chipJoin(
+				t('settings.chip.priorities', { count: s.priorities.length }),
+				t('settings.chip.tiers', { count: s.ratingSystem.length }),
+			),
 			tone: 'count',
 		});
-		this.renderTagSection(shared.body, 'Priority', 'priorities', syncShared);
+		this.renderTagSection(shared.body, t('settings.tags.priority'), 'priorities', syncShared);
 		this.renderRatingSystem(shared.body);
 		syncShared();
+	}
+
+	/** Header-chip read-out of two counts, e.g. "6 types · 5 statuses". */
+	private chipJoin(a: string, b: string): string {
+		return `${a} · ${b}`;
 	}
 
 	/**
@@ -1735,8 +1755,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 	 */
 	private renderRatingSystem(el: HTMLElement): void {
 		const wrap = this.sgCard(el, {
-			label: 'Rating system',
-			help: 'The color and text shown for each star rating across Watchlist, Reading, and Games. A whole star shares a tier with the half-step below it; e.g. 2.5★ and 3★ are both "Good".',
+			label: t('settings.customize.rating.label'),
+			help: t('settings.customize.rating.help'),
 		});
 
 		const list = wrap.createDiv({ cls: 'wl-rating-tier-list' });
@@ -1766,7 +1786,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				attr: {
 					type: 'text',
 					value: tier.label,
-					'aria-label': `Label for ${tierNumber}-star rating`,
+					'aria-label': t('settings.customize.rating.labelAria', { tier: tierNumber }),
 				},
 			});
 
@@ -1809,13 +1829,13 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 	/** Reading type badge colours — two fixed entries (Manga, Book), colour picker only. */
 	private renderReadingColors(el: HTMLElement): void {
 		const wrap = this.sgCard(el, {
-			label: 'Type',
-			help: 'The badge colour used for a Book or a Manga wherever its type is shown.',
+			label: t('settings.tags.type'),
+			help: t('settings.customize.readingType.help'),
 		});
 
 		const entries: Array<{ label: string; kind: 'manga' | 'book' }> = [
-			{ label: 'Manga', kind: 'manga' },
-			{ label: 'Book', kind: 'book' },
+			{ label: t('settings.customize.readingType.manga'), kind: 'manga' },
+			{ label: t('settings.customize.readingType.book'), kind: 'book' },
 		];
 
 		const tagsEl = wrap.createDiv({ cls: 'wl-tags-list' });
@@ -1849,8 +1869,9 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 	private renderReadingStatusColors(el: HTMLElement): void {
 		const readingData = this.plugin.readingDataManager;
 		this.renderTagListSection(el, {
-			label: 'Status',
-			info: 'Status names are locked. Only the color can be changed.',
+			label: t('settings.tags.status'),
+			info: t('settings.tags.infoStatusLocked'),
+			display: (name) => readingStatusLabel(name as ReadingStatus),
 			getList: () => READING_STATUSES.map((name) => ({
 				name,
 				color: readingStatusColor(name, readingData.getSettings().statusColors),
@@ -1877,8 +1898,9 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const settings = (): GamesSettings => gameData.getSettings();
 
 		this.renderTagListSection(el, {
-			label: 'Status',
-			info: 'Status names are locked. Only the color can be changed.',
+			label: t('settings.tags.status'),
+			info: t('settings.tags.infoStatusLocked'),
+			display: statusLabel,
 			getList: () => settings().statuses,
 			setColor: async (name, color) => {
 				const tag = settings().statuses.find((t) => t.name === name);
@@ -1889,9 +1911,9 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		});
 
 		this.renderTagListSection(el, {
-			label: 'Genre',
+			label: t('settings.tags.genre'),
 			onChanged,
-			info: 'Genres can be renamed, recolored, added and removed. Renaming updates every game using that genre.',
+			info: t('settings.tags.infoGenres'),
 			getList: () => settings().types,
 			setColor: async (name, color) => {
 				const tag = settings().types.find((t) => t.name === name);
@@ -1922,9 +1944,9 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		});
 
 		this.renderTagListSection(el, {
-			label: 'Platform',
+			label: t('settings.tags.platform'),
 			onChanged,
-			info: 'Platforms can be renamed, recolored, added and removed. Renaming updates every game using that platform; removing one clears it from them.',
+			info: t('settings.tags.infoPlatforms'),
 			getList: () => settings().platforms,
 			setColor: async (name, color) => {
 				const tag = settings().platforms.find((t) => t.name === name);
@@ -1963,7 +1985,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		el.createDiv({
 			cls: 'wl-sg-note',
-			text: 'Game note files pick up a renamed genre or platform the next time that game is saved.',
+			text: t('settings.customize.games.note'),
 		});
 	}
 
@@ -2006,7 +2028,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 		const themes: Array<{ key: 'default' | 'nightfall' | 'bluez'; label: string; colors: string[] }> = [
 			{
 				key: 'default',
-				label: 'Default',
+				label: t('settings.customize.theme.default'),
 				colors: ['#1D9E75', '#378ADD', '#BA7517', '#7F77DD', '#E24B4A'],
 			},
 			{
@@ -2023,7 +2045,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		const currentTheme = this.plugin.settings.colorTheme ?? 'default';
 		const cardsRow = el.createDiv({ cls: 'wl-theme-cards' });
-		onPicked?.(themes.find((t) => t.key === currentTheme)?.label ?? 'Default');
+		onPicked?.(themes.find((th) => th.key === currentTheme)?.label ?? t('settings.customize.theme.default'));
 
 		const allCards: HTMLElement[] = [];
 		for (const theme of themes) {
@@ -2058,8 +2080,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 	private renderSeasonColors(el: HTMLElement): void {
 		const wrap = this.sgCard(el, {
-			label: 'Season colors',
-			help: 'Colors cycle through seasons in order (Season 1 = color 1, etc.).',
+			label: t('settings.customize.season.label'),
+			help: t('settings.customize.season.help'),
 		});
 
 		const colorsEl = wrap.createDiv({ cls: 'wl-season-colors-list' });
@@ -2077,7 +2099,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})();
 				});
-				pill.createSpan({ cls: 'wl-season-color-label', text: `Season ${idx + 1}` });
+				pill.createSpan({ cls: 'wl-season-color-label', text: t('settings.customize.season.name', { number: idx + 1 }) });
 				const del = pill.createSpan({ cls: 'wl-tag-del', text: '×' });
 				del.addEventListener('click', () => {
 					void (async () => {
@@ -2095,7 +2117,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			cls: 'wl-color-input',
 			attr: { type: 'color', value: '#888780' },
 		});
-		const addBtn = addRow.createEl('button', { cls: 'wl-btn wl-btn-success', text: '+ add color' });
+		const addBtn = addRow.createEl('button', { cls: 'wl-btn wl-btn-success', text: t('settings.customize.season.add') });
 		addBtn.addEventListener('click', () => {
 			void (async () => {
 				this.plugin.settings.seasonPalette.push(colorInput.value);
@@ -2131,21 +2153,21 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			const addRow = wrap.createDiv({ cls: 'wl-tag-add-row' });
 			const nameInput = addRow.createEl('input', {
 				cls: 'wl-modal-input',
-				attr: { type: 'text', placeholder: 'Name' },
+				attr: { type: 'text', placeholder: t('settings.tags.namePlaceholder') },
 			});
 			const colorInput = addRow.createEl('input', {
 				cls: 'wl-color-input',
 				attr: { type: 'color', value: '#888780' },
 			});
-			const addBtn = addRow.createEl('button', { cls: 'wl-btn wl-btn-success', text: '+ add' });
+			const addBtn = addRow.createEl('button', { cls: 'wl-btn wl-btn-success', text: t('settings.tags.add') });
 			addBtn.addEventListener('click', () => {
 				void (async () => {
 					const name = nameInput.value.trim();
 					if (!name) return;
 					// names identify the entry everywhere (games store the name, not an id), so a duplicate
 					// would make two rows indistinguishable
-					if (cfg.getList().some((t) => t.name.toLowerCase() === name.toLowerCase())) {
-						new Notice(`"${name}" already exists.`);
+					if (cfg.getList().some((tag) => tag.name.toLowerCase() === name.toLowerCase())) {
+						new Notice(t('settings.tags.exists', { name }));
 						return;
 					}
 					const problem = cfg.validateName?.(name);
@@ -2193,7 +2215,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 					// sized to the current name, so "Xbox Series X|S" isn't cramped and short ones leave no
 					// dead space
 					size: String(Math.max(6, tag.name.length)),
-					'aria-label': `Rename ${tag.name}`,
+					'aria-label': t('settings.tags.rename', { name: tag.name }),
 				},
 			});
 			const original = tag.name;
@@ -2205,8 +2227,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				if (committed) return;
 				const next = nameInput.value.trim();
 				if (!next || next === original) { nameInput.value = original; return; }
-				if (cfg.getList().some((t) => t.name.toLowerCase() === next.toLowerCase())) {
-					new Notice(`"${next}" already exists.`);
+				if (cfg.getList().some((other) => other.name.toLowerCase() === next.toLowerCase())) {
+					new Notice(t('settings.tags.exists', { name: next }));
 					nameInput.value = original;
 					return;
 				}
@@ -2221,7 +2243,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			nameInput.addEventListener('change', commit);
 			nameInput.addEventListener('blur', commit);
 		} else {
-			pill.createSpan({ cls: 'wl-tag-name', text: tag.name });
+			pill.createSpan({ cls: 'wl-tag-name', text: cfg.display?.(tag.name) ?? tag.name });
 		}
 
 		if (cfg.remove && !locked) {
@@ -2230,7 +2252,7 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 				void (async () => {
 					await cfg.remove!(tag.name);
 					refresh();
-					new Notice(`Removed "${tag.name}".`);
+					new Notice(t('settings.tags.removed', { name: tag.name }));
 				})();
 			});
 		}
@@ -2251,27 +2273,29 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			label,
 			onChanged,
 			info: isStatuses
-				? 'Status names are locked. Only the color can be changed.'
+				? t('settings.tags.infoStatusLocked')
 				: isTypes
-					? 'Built-in types are locked. Custom types can be added and removed.'
+					? t('settings.tags.infoTypes')
 					: undefined,
+			...(isStatuses ? { display: statusLabel } : {}),
+			...(isTypes ? { display: typeLabel } : {}),
 			getList: () => this.plugin.settings[key],
 			setColor: async (name, color) => {
-				const tag = this.plugin.settings[key].find((t) => t.name === name);
+				const tag = this.plugin.settings[key].find((entry) => entry.name === name);
 				if (tag) tag.color = color;
 				await persist();
 			},
 			// statuses are colour-only; locked built-in types keep their picker but lose delete
 			isLocked: (name) =>
 				isStatuses || (isTypes && WatchLogSettingsTab.LOCKED_TYPES.includes(name)),
-			...(isTypes ? { validateName: typeNameError } : {}),
+			...(isTypes ? { validateName: typeNameProblemText } : {}),
 			...(isStatuses ? {} : {
 				add: async (name, color) => {
 					this.plugin.settings[key].push({ name, color });
 					await persist();
 				},
 				remove: async (name) => {
-					this.plugin.settings[key] = this.plugin.settings[key].filter((t) => t.name !== name);
+					this.plugin.settings[key] = this.plugin.settings[key].filter((entry) => entry.name !== name);
 					await persist();
 				},
 			}),
@@ -2285,19 +2309,22 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// main
 		const el = this.settingsGroup(page, {
-			title: 'Main',
-			sub: 'Episode numbering, add defaults and badge style',
+			title: t('settings.group.main'),
+			sub: t('settings.watchlist.main.sub'),
 			icon: 'clapperboard',
 			variant: 'watchlist',
 			rows: true,
 		}).body;
 
 		new Setting(el)
-			.setName('Episode numbering')
-			.setDesc('Absolute: episodes numbered 1→n across all seasons. Per season: each season restarts from 1 (display only, data is unchanged).')
+			.setName(t('settings.watchlist.numbering.name'))
+			.setDesc(t('settings.watchlist.numbering.desc'))
 			.addDropdown((d) =>
 				d
-					.addOptions({ absolute: 'Absolute', 'per-season': 'Per season' })
+					.addOptions({
+						absolute: t('settings.watchlist.numbering.absolute'),
+						'per-season': t('settings.watchlist.numbering.perSeason'),
+					})
 					.setValue(this.plugin.settings.episodeNumbering ?? 'absolute')
 					.onChange(async (v) => {
 						this.plugin.settings.episodeNumbering = v as 'absolute' | 'per-season';
@@ -2307,12 +2334,12 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('Default type for new titles')
-			.setDesc('Type preselected when adding a title. "Last type used" follows whatever you added last.')
+			.setName(t('settings.watchlist.defaultType.name'))
+			.setDesc(t('settings.watchlist.defaultType.desc'))
 			.addDropdown((d) => {
-				d.addOption(LAST_USED_TYPE_SENTINEL, '* Last type used');
-				for (const t of this.plugin.settings.types) {
-					d.addOption(t.name, t.name);
+				d.addOption(LAST_USED_TYPE_SENTINEL, t('settings.watchlist.defaultType.last'));
+				for (const type of this.plugin.settings.types) {
+					d.addOption(type.name, typeLabel(type.name));
 				}
 				d.setValue(this.plugin.settings.defaultAddType ?? LAST_USED_TYPE_SENTINEL).onChange(
 					async (v) => {
@@ -2323,8 +2350,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			});
 
 		new Setting(el)
-			.setName('Top directors / actors count')
-			.setDesc('How many entries the dashboard shows in its top directors and top actors lists.')
+			.setName(t('settings.watchlist.topCredits.name'))
+			.setDesc(t('settings.watchlist.topCredits.desc'))
 			.addText((t) => {
 				t.inputEl.type = 'number';
 				t.inputEl.min = '1';
@@ -2341,8 +2368,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			});
 
 		new Setting(el)
-			.setName('Auto-complete on last episode')
-			.setDesc('Mark status as completed when all episodes are watched.')
+			.setName(t('settings.watchlist.autoComplete.name'))
+			.setDesc(t('settings.watchlist.autoComplete.desc'))
 			.addToggle((t) =>
 				t
 					.setValue(this.plugin.settings.autoCompleteOnLastEpisode)
@@ -2353,8 +2380,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('Colored type badges')
-			.setDesc('Show type and status badges with their configured colors. Disable for a plain text style.')
+			.setName(t('settings.watchlist.coloredBadges.name'))
+			.setDesc(t('settings.watchlist.coloredBadges.desc'))
 			.addToggle((t) =>
 				t
 					.setValue(this.plugin.settings.coloredTypeBadges)
@@ -2365,8 +2392,8 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('Open watchlist after adding')
-			.setDesc('Jump to the watchlist tab and open the new title after adding it from the command palette.')
+			.setName(t('settings.watchlist.openAfterAdd.name'))
+			.setDesc(t('settings.watchlist.openAfterAdd.desc'))
 			.addToggle((t) =>
 				t
 					.setValue(this.plugin.settings.openWatchlistAfterAdd ?? true)
@@ -2378,43 +2405,43 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// import / export CSV
 		const csv = this.settingsGroup(page, {
-			title: 'Import / Export CSV',
-			sub: 'Move watch titles in and out of the plugin',
+			title: t('settings.csv.title'),
+			sub: t('settings.csv.watchlistSub'),
 			icon: 'file-spreadsheet',
 			variant: 'csv',
 			rows: true,
 		}).body;
 
 		new Setting(csv)
-			.setName('Export to CSV')
-			.setDesc('Export selected titles as a CSV file.')
+.setName(t('settings.csv.exportName'))
+			.setDesc(t('settings.csv.watchlistExportDesc'))
 			.addButton((b) =>
-				b.setButtonText('Export CSV').onClick(() => {
+				b.setButtonText(t('settings.csv.exportButton')).onClick(() => {
 					new CsvModal(this.app, this.plugin, this.plugin.dataManager, 'export').open();
 				}),
 			);
 
 		new Setting(csv)
-			.setName('Import from CSV')
-			.setDesc('Import titles from a CSV file. Duplicates are highlighted before import.')
+.setName(t('settings.csv.importName'))
+			.setDesc(t('settings.csv.watchlistImportDesc'))
 			.addButton((b) =>
-				b.setButtonText('Import CSV').onClick(() => {
+				b.setButtonText(t('settings.csv.importButton')).onClick(() => {
 					new CsvModal(this.app, this.plugin, this.plugin.dataManager, 'import').open();
 				}),
 			);
 
 		// folders
 		const folders = this.settingsGroup(page, {
-			title: 'Folders',
-			sub: 'Where watch notes are generated in your vault',
+			title: t('settings.folders.title'),
+			sub: t('settings.folders.sub'),
 			icon: 'folder',
 			variant: 'folders',
 			rows: true,
 		}).body;
 
 		new Setting(folders)
-			.setName('Auto-create folders')
-			.setDesc('Automatically create type subfolders on plugin load.')
+			.setName(t('settings.folders.auto.name'))
+			.setDesc(t('settings.folders.auto.desc'))
 			.addToggle((t) =>
 				t
 					.setValue(this.plugin.settings.autoCreateFolders)
@@ -2425,31 +2452,31 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(folders)
-			.setName('Create folders now')
-			.setDesc('Manually trigger folder creation for all current types.')
+			.setName(t('settings.folders.createNow.name'))
+			.setDesc(t('settings.folders.createNow.desc'))
 			.addButton((b) =>
-				b.setButtonText('Create').onClick(async () => {
+				b.setButtonText(t('settings.folders.createNow.button')).onClick(async () => {
 					await this.plugin.dataManager.ensureFolders();
-					new Notice('Folders created.');
+					new Notice(t('settings.folders.createNow.done'));
 				}),
 			);
 
 		// type subfolders
 		const subfolders = this.settingsGroup(page, {
-			title: 'Type subfolders',
-			sub: 'The folder path each configured type writes to',
+			title: t('settings.folders.subfolders.title'),
+			sub: t('settings.folders.subfolders.sub'),
 			icon: 'folder-tree',
 			variant: 'subfolders',
 		});
 		subfolders.setChip({
-			text: `${this.plugin.settings.types.length} types`,
+			text: t('settings.chip.types', { count: this.plugin.settings.types.length }),
 			tone: 'count',
 		});
 
 		const listEl = subfolders.body.createDiv({ cls: 'wl-folder-list' });
 		for (const type of this.plugin.settings.types) {
 			const row = listEl.createDiv({ cls: 'wl-folder-row' });
-			row.createSpan({ cls: 'wl-folder-type', text: type.name });
+			row.createSpan({ cls: 'wl-folder-type', text: typeLabel(type.name) });
 			row.createSpan({
 				cls: 'wl-folder-path',
 				text: `${this.plugin.getLayout().root}/${type.name}`,
@@ -2464,16 +2491,16 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// main
 		const el = this.settingsGroup(page, {
-			title: 'Main',
-			sub: 'The tag scanned in your vault, and what happens after adding',
+			title: t('settings.group.main'),
+			sub: t('settings.drafts.main.sub'),
 			icon: 'notebook-pen',
 			variant: 'drafts',
 			rows: true,
 		}).body;
 
 		new Setting(el)
-			.setName('Vault tag to monitor')
-			.setDesc('Lines containing this tag followed by a title will appear in the drafts tab.')
+			.setName(t('settings.drafts.tag.name'))
+			.setDesc(t('settings.drafts.tag.desc'))
 			.addText((t) =>
 				t
 					.setPlaceholder('#watchlog')
@@ -2485,11 +2512,11 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(el)
-			.setName('After adding a title')
-			.setDesc('What happens to a draft entry once you hit add and confirm.')
+			.setName(t('settings.drafts.after.name'))
+			.setDesc(t('settings.drafts.after.desc'))
 			.addDropdown((d) =>
 				d
-					.addOptions({ keep: 'Keep as Added', remove: 'Remove' })
+					.addOptions({ keep: t('settings.drafts.after.keep'), remove: t('common.remove') })
 					.setValue(this.plugin.settings.draftsAfterAdding ?? 'keep')
 					.onChange(async (v) => {
 						this.plugin.settings.draftsAfterAdding = v as 'keep' | 'remove';
@@ -2505,19 +2532,19 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// main
 		const el = this.settingsGroup(page, {
-			title: 'Main',
-			sub: 'Columns every new list starts with',
+			title: t('settings.group.main'),
+			sub: t('settings.lists.main.sub'),
 			icon: 'table',
 			variant: 'lists',
 			rows: true,
 		}).body;
 
 		new Setting(el)
-			.setName('Default columns')
-			.setDesc('Columns pre-populated when creating a new list. The name column is always included.')
+			.setName(t('settings.lists.columns.name'))
+			.setDesc(t('settings.lists.columns.desc'))
 			.addButton((b) => {
 				const count = (this.plugin.settings.defaultCustomColumns ?? []).length;
-				b.setButtonText(`Edit (${count} column${count !== 1 ? 's' : ''})`);
+				b.setButtonText(t('settings.lists.columns.button', { count }));
 				b.onClick(() => {
 					new DefaultColumnsModal(this.app, this.plugin).open();
 				});
@@ -2525,21 +2552,21 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// folder
 		const folder = this.settingsGroup(page, {
-			title: 'Folder',
-			sub: 'Where custom list files live in your vault',
+			title: t('settings.lists.folder.title'),
+			sub: t('settings.lists.folder.sub'),
 			icon: 'folder',
 			variant: 'folders',
 			rows: true,
 		}).body;
 
 		new Setting(folder)
-			.setName('Create folder now')
-			.setDesc('Manually create the custom lists folder in the vault.')
+			.setName(t('settings.lists.folder.name'))
+			.setDesc(t('settings.lists.folder.desc'))
 			.addButton((b) =>
-				b.setButtonText('Create').onClick(async () => {
+				b.setButtonText(t('settings.folders.createNow.button')).onClick(async () => {
 					const manager = new CustomListManager(this.app, this.plugin);
 					await manager.ensureFolder();
-					new Notice('Custom lists folder created.');
+					new Notice(t('settings.lists.folder.done'));
 				}),
 			);
 	}
@@ -2553,24 +2580,27 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// main
 		const main = this.settingsGroup(page, {
-			title: 'Main',
-			sub: 'Defaults applied when adding books and manga',
+			title: t('settings.group.main'),
+			sub: t('settings.reading.main.sub'),
 			icon: 'book-open',
 			variant: 'reading',
 			rows: true,
 		});
 		main.setChip({
-			text: `${readingData.getBooks().length} books · ${readingData.getMangaList().length} manga`,
+			text: this.chipJoin(
+				t('settings.chip.books', { count: readingData.getBooks().length }),
+				t('settings.chip.manga', { count: readingData.getMangaList().length }),
+			),
 			tone: 'count',
 		});
 		const el = main.body;
 
 		new Setting(el)
-			.setName('Default status for new entries')
-			.setDesc('Status pre-selected in the Add book / Add manga modal.')
+			.setName(t('settings.reading.defaultStatus.name'))
+			.setDesc(t('settings.reading.defaultStatus.desc'))
 			.addDropdown((d) => {
 				const opts: Record<string, string> = {};
-				for (const s of SELECTABLE_READING_STATUSES) opts[s] = s;
+				for (const status of SELECTABLE_READING_STATUSES) opts[status] = readingStatusLabel(status);
 				d
 					.addOptions(opts)
 					.setValue(settings.defaultStatus)
@@ -2580,11 +2610,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			});
 
 		new Setting(el)
-			.setName('Default sub-tab')
-			.setDesc('Which sub-tab opens by default when you switch to the Reading tab.')
+			.setName(t('settings.reading.subTab.name'))
+			.setDesc(t('settings.reading.subTab.desc'))
 			.addDropdown((d) => {
 				d
-					.addOptions({ books: 'Books', manga: 'Manga' })
+					.addOptions({
+						books: t('settings.reading.subTab.books'),
+						manga: t('settings.reading.subTab.manga'),
+					})
 					.setValue(settings.defaultSubTab ?? 'books')
 					.onChange((v) => {
 						void readingData.updateSettings({ defaultSubTab: v as 'books' | 'manga' });
@@ -2593,18 +2626,18 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 		// import / export CSV
 		const csv = this.settingsGroup(page, {
-			title: 'Import / Export CSV',
-			sub: 'Move books and manga in and out of the plugin',
+			title: t('settings.csv.title'),
+			sub: t('settings.csv.readingSub'),
 			icon: 'file-spreadsheet',
 			variant: 'csv',
 			rows: true,
 		}).body;
 
 		new Setting(csv)
-			.setName('Export to CSV')
-			.setDesc('Export your Books or Manga library as a CSV file.')
+.setName(t('settings.csv.exportName'))
+			.setDesc(t('settings.csv.readingExportDesc'))
 			.addButton((b) =>
-				b.setButtonText('Export CSV').onClick(() => {
+				b.setButtonText(t('settings.csv.exportButton')).onClick(() => {
 					new ReadingCsvChoiceModal(this.app, 'export', (kind) => {
 						new ReadingCsvModal(this.app, this.plugin, kind, 'export').open();
 					}).open();
@@ -2612,10 +2645,10 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(csv)
-			.setName('Import from CSV')
-			.setDesc('Import Books or Manga from a CSV file, with column mapping and duplicate detection.')
+.setName(t('settings.csv.importName'))
+			.setDesc(t('settings.csv.readingImportDesc'))
 			.addButton((b) =>
-				b.setButtonText('Import CSV').onClick(() => {
+				b.setButtonText(t('settings.csv.importButton')).onClick(() => {
 					new ReadingCsvChoiceModal(this.app, 'import', (kind) => {
 						new ReadingCsvModal(this.app, this.plugin, kind, 'import').open();
 					}).open();
@@ -2626,103 +2659,54 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 	// Quick Info
 
 	private renderQuickInfo(el: HTMLElement): void {
-		el.createDiv({ cls: 'wl-settings-section-title', text: 'Quick Info' });
+		el.createDiv({ cls: 'wl-settings-section-title', text: t('settings.nav.quickInfo') });
 
-		const sections: { title: string; items: { heading: string; body: string }[] }[] = [
+		// emoji stay in code; heading/body are keys of settings.quickInfo
+		const sections: { icon: string; title: TranslationKey; items: { heading: TranslationKey; body: TranslationKey }[] }[] = [
 			{
-				title: '📊 Dashboard',
+				icon: '📊',
+				title: 'app.tabs.dashboard',
 				items: [
-					{
-						heading: 'Please note',
-						body: 'Statuses To be released or Dropped (time left) are not included in any calculations, only Watching, Completed and Dropped (time watched).',
-					},
-					{
-						heading: 'Time Watched',
-						body: 'Calculated as: episodes watched × episode duration, summed across all titles with status Watching and Completed.',
-					},
-					{
-						heading: 'Time Remaining',
-						body: 'Calculated as: episodes remaining × episode duration, summed across all titles with status Watching and Plan to Watch.',
-					},
-					{
-						heading: 'Dropped',
-						body: 'Calculated as: episodes watched × episode duration, summed across all titles with status Dropped.',
-					},
+					{ heading: 'settings.quickInfo.dashboard.note.heading', body: 'settings.quickInfo.dashboard.note.body' },
+					{ heading: 'settings.quickInfo.dashboard.watched.heading', body: 'settings.quickInfo.dashboard.watched.body' },
+					{ heading: 'settings.quickInfo.dashboard.remaining.heading', body: 'settings.quickInfo.dashboard.remaining.body' },
+					{ heading: 'settings.quickInfo.dashboard.dropped.heading', body: 'settings.quickInfo.dashboard.dropped.body' },
 				],
 			},
 			{
-				title: '📋 Watchlist',
+				icon: '📋',
+				title: 'app.tabs.watchlist',
 				items: [
-					{
-						heading: 'Why Groups exist',
-						body: 'Groups let you combine related titles under one entry; for example, a movie and its sequel, a TV show and its anime adaptation, or an anime series and its movie. They appear as a single collapsible row in your Watchlist.',
-					},
-					{
-						heading: 'Group Rating',
-						body: "A group's rating is automatically calculated as the average of all individual title ratings within it.",
-					},
-					{
-						heading: 'Pin to Top',
-						body: "Pinning a title moves it to the top of your Watchlist regardless of sorting. Pinned titles also appear in the Now Watching widget, so you can quickly see what you're currently watching inside your notes or Homepage.",
-					},
-					{
-						heading: 'How to add a new season',
-						body: 'Open the title and click Edit at the bottom. In the Edit modal, scroll down to the Seasons field and add a new line in the format "Season Name: N" (e.g. "Season 3: 10" or "Season name: 10").',
-					},
+					{ heading: 'settings.quickInfo.watchlist.groups.heading', body: 'settings.quickInfo.watchlist.groups.body' },
+					{ heading: 'settings.quickInfo.watchlist.rating.heading', body: 'settings.quickInfo.watchlist.rating.body' },
+					{ heading: 'settings.quickInfo.watchlist.pin.heading', body: 'settings.quickInfo.watchlist.pin.body' },
+					{ heading: 'settings.quickInfo.watchlist.season.heading', body: 'settings.quickInfo.watchlist.season.body' },
 				],
 			},
 			{
-				title: '🔍 API & Search',
+				icon: '🔍',
+				title: 'settings.quickInfo.api.title',
 				items: [
-					{
-						heading: 'Which API is used for what',
-						body: 'WatchLog uses a different API per content type:\n'
-							+ '• Anime: Jikan (MyAnimeList data) or AniList, whichever you set under Settings → API → Anime. No key is needed for either.\n'
-							+ '• Movies & TV Shows: OMDb or TMDB, whichever is set as active under Settings → API. Both need a free key/token.\n'
-							+ '• Books (Reading): Google Books. A free API key is required; add it under Settings → API → Books.\n'
-						+ '• Games: RAWG or IGDB, whichever you set under Settings → API → Games. RAWG needs a free key; IGDB needs a Twitch Client ID and Secret.\n'
-							+ '• Manga (Reading): Jikan (MyAnimeList data). No key needed.\n\n'
-							+ 'The anime API choice only affects new titles; existing titles keep the source they were added with.\n\n'
-							+ 'Make sure the correct type is selected before searching. If Anime is selected and you search for a movie or TV show (or vice versa), it most likely won\'t be found, because each type queries its own API. APIs are a convenience, not a requirement; you can always add a title manually. The "Add from URL" button also relies on an API.',
-					},
+					{ heading: 'settings.quickInfo.api.which.heading', body: 'settings.quickInfo.api.which.body' },
 				],
 			},
 			{
-				title: '📚 Reading',
+				icon: '📚',
+				title: 'app.tabs.reading',
 				items: [
-					{
-						heading: 'Books vs Manga',
-						body: 'Reading has two independent sub-tabs: Books and Manga. Each keeps its own entries, custom columns, filters, sort order, and saved filter. Set which one opens by default under Settings → Reading.',
-					},
-					{
-						heading: 'Statuses',
-						body: 'Reading entries use five statuses: Reading, Completed, Plan to Read, To be released, and Dropped. "To be released" is set automatically when an entry has a release date in the future and cannot be chosen manually; once that date passes, the entry reverts to Plan to Read. Future-dated entries also appear in the shared Upcoming tab.',
-					},
-					{
-						heading: 'Progress tracking',
-						body: 'Books track pages read out of total pages; or words, if you prefer: the Pages/Words switch on the Progress section of a book\'s detail view sets the unit per book, and both counters are kept, so switching back and forth never loses numbers. Manga track chapters read out of total chapters, plus volumes read out of total volumes. The card progress bar fills based on the book\'s chosen unit (or chapters, for manga); entries with no total show "No progress" instead of a percentage. On the Dashboard, words-tracked books are folded into the Books ring at 250 words per page so one ring can cover both units.',
-					},
-					{
-						heading: 'Notes & favorite quotes',
-						body: 'Each entry generates a Markdown note file (under your Reading folder) with frontmatter plus Notes and Quotes sections. Favorite quotes you add from an entry\'s detail view are saved into that note as quote callouts, so they live alongside your own notes.',
-					},
-					{
-						heading: 'Covers',
-						body: 'Covers are fetched automatically as cards scroll into view; Google Books for books, Jikan for manga. If a cover is missing or wrong, use "Refresh cover" from a card\'s ⋮ menu. (Refreshing a book cover needs the Google Books API key.)',
-					},
-					{
-						heading: 'Custom columns',
-						body: 'Use the ⚙ button in the Reading toolbar to add custom columns (text, number, or select). Columns are per sub-tab, and you can filter and sort by them just like the built-in fields.',
-					},
+					{ heading: 'settings.quickInfo.reading.booksManga.heading', body: 'settings.quickInfo.reading.booksManga.body' },
+					{ heading: 'settings.quickInfo.reading.statuses.heading', body: 'settings.quickInfo.reading.statuses.body' },
+					{ heading: 'settings.quickInfo.reading.progress.heading', body: 'settings.quickInfo.reading.progress.body' },
+					{ heading: 'settings.quickInfo.reading.notes.heading', body: 'settings.quickInfo.reading.notes.body' },
+					{ heading: 'settings.quickInfo.reading.covers.heading', body: 'settings.quickInfo.reading.covers.body' },
+					{ heading: 'settings.quickInfo.reading.columns.heading', body: 'settings.quickInfo.reading.columns.body' },
 				],
 			},
 			{
-				title: '📅 Upcoming',
+				icon: '📅',
+				title: 'app.tabs.upcoming',
 				items: [
-					{
-						heading: 'How Upcoming works',
-						body: 'Any title with a release date set in the future is automatically marked as To be released and appears in this tab. This status cannot be set manually; it is determined solely by the release date you enter. If a title has already started airing but only some episodes are out (e.g. an ongoing series), it will not appear here automatically; you\'ll need to manually add it through the Add button in the Upcoming tab.',
-					},
+					{ heading: 'settings.quickInfo.upcoming.how.heading', body: 'settings.quickInfo.upcoming.how.body' },
 				],
 			},
 		];
@@ -2732,14 +2716,14 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 
 			const header = wrapper.createDiv({ cls: 'wl-qi-section-header' });
 			const chevron = header.createSpan({ cls: 'wl-qi-chevron', text: '▶' });
-			header.createSpan({ cls: 'wl-qi-section-label', text: section.title });
+			header.createSpan({ cls: 'wl-qi-section-label', text: `${section.icon} ${t(section.title)}` });
 
 			const body = wrapper.createDiv({ cls: 'wl-qi-section-body wl-qi-section-body-hidden' });
 
 			for (const item of section.items) {
 				const banner = body.createDiv({ cls: 'wl-qi-banner' });
-				banner.createDiv({ cls: 'wl-qi-banner-heading', text: item.heading });
-				banner.createDiv({ cls: 'wl-qi-banner-body', text: item.body });
+				banner.createDiv({ cls: 'wl-qi-banner-heading', text: t(item.heading) });
+				banner.createDiv({ cls: 'wl-qi-banner-body', text: t(item.body) });
 			}
 
 			header.addEventListener('click', () => {
@@ -2755,48 +2739,48 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 	private renderWidgets(el: HTMLElement): void {
 		el.createDiv({
 			cls: 'wl-settings-info',
-			text: 'Insert widgets into notes using the "WatchLog: Insert widget" command. Configure the keyboard shortcut in Obsidian Settings → Hotkeys.',
+			text: t('settings.widgets.intro', { command: `WatchLog: ${t('app.commands.insertWidget')}` }),
 		});
 
 		const widgets = [
 			{
 				name: 'wl-todo',
-				desc: 'Track a specific title inline; shows type, status, progress, and a "next episode" checkbox.',
+				desc: t('settings.widgets.todo'),
 				syntax: '```wl-todo\nTitle Name\nmini\n```',
 			},
 			{
 				name: 'wl-todo (full)',
-				desc: 'Track a specific title inline (full card).',
+				desc: t('settings.widgets.todoFull'),
 				syntax: '```wl-todo\nTitle Name\n```',
 			},
 			{
 				name: 'wl-stat: completed',
-				desc: 'Completed titles count, compact inline stat card.',
+				desc: t('settings.widgets.statCompleted'),
 				syntax: '```wl-stat\ncompleted\n```',
 			},
 			{
 				name: 'wl-stat: time',
-				desc: 'Time watched & remaining combined (mini).',
+				desc: t('settings.widgets.statTime'),
 				syntax: '```wl-stat\ntime\n```',
 			},
 			{
 				name: 'wl-upcoming: next',
-				desc: 'Next upcoming title with name, type badge, release date, and countdown.',
+				desc: t('settings.widgets.upcomingNext'),
 				syntax: '```wl-upcoming\nnext\n```',
 			},
 			{
 				name: 'wl-nowwatching',
-				desc: 'Currently pinned title with name, type badge, and progress bar.',
+				desc: t('settings.widgets.nowWatching'),
 				syntax: '```wl-nowwatching\n```',
 			},
 			{
 				name: 'wl-stat: time completed full',
-				desc: 'Full-width triple card: Time Watched · Time Remaining · Completed.',
+				desc: t('settings.widgets.statTimeCompletedFull'),
 				syntax: '```wl-stat\ntime completed full\n```',
 			},
 			{
 				name: 'wl-now-next',
-				desc: 'Full-width double card: Now Watching · Up Next.',
+				desc: t('settings.widgets.nowNext'),
 				syntax: '```wl-now-next\n```',
 			},
 		];
@@ -2807,11 +2791,11 @@ export class WatchLogSettingsTab extends PluginSettingTab {
 			section.createDiv({ cls: 'wl-widget-info-desc', text: w.desc });
 			const codeRow = section.createDiv({ cls: 'wl-widget-info-code-row' });
 			codeRow.createEl('code', { cls: 'wl-widget-info-code', text: w.syntax });
-			const copyBtn = codeRow.createEl('button', { cls: 'wl-btn wl-btn-sm', text: 'Copy' });
+			const copyBtn = codeRow.createEl('button', { cls: 'wl-btn wl-btn-sm', text: t('settings.widgets.copy') });
 			copyBtn.addEventListener('click', () => {
 				void navigator.clipboard.writeText(w.syntax).then(() => {
-					copyBtn.textContent = 'Copied!';
-					window.setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+					copyBtn.textContent = t('settings.widgets.copied');
+					window.setTimeout(() => { copyBtn.textContent = t('settings.widgets.copy'); }, 1500);
 				});
 			});
 		}

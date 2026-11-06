@@ -1,4 +1,5 @@
 import { App, Modal, Notice } from 'obsidian';
+import { t } from './i18n';
 import type WatchLogPlugin from './main';
 import type { ReadingDataManager } from './ReadingDataManager';
 import { ReadingCustomColumn, DEFAULT_FIELD_COLOR } from './types';
@@ -38,8 +39,12 @@ export class ReadingManageColumnsModal extends Modal {
 		this.contentEl.addClass('wl-view');
 		this.contentEl.addClass('wl-reading-modal');
 		this.contentEl.addClass('wl-reading-manage-cols');
-		this.titleEl.setText(this.kind === 'book' ? 'Manage book fields' : 'Manage manga fields');
+		this.titleEl.setText(this.title());
 		this.build();
+	}
+
+	private title(): string {
+		return t(this.kind === 'book' ? 'reading.columns.titleBook' : 'reading.columns.titleManga');
 	}
 
 	onClose(): void {
@@ -57,12 +62,12 @@ export class ReadingManageColumnsModal extends Modal {
 		});
 		header.createSpan({
 			cls: 'wl-reading-modal-header-title',
-			text: this.kind === 'book' ? 'Manage book fields' : 'Manage manga fields',
+			text: this.title(),
 		});
 
 		c.createDiv({
 			cls: 'wl-reading-manage-cols-desc',
-			text: 'Custom fields appear in the title detail modal. Changes save automatically.',
+			text: t('reading.columns.description'),
 		});
 
 		this.renderStyleToggle(c);
@@ -74,7 +79,7 @@ export class ReadingManageColumnsModal extends Modal {
 		this.renderAddSection(c);
 
 		const footer = c.createDiv({ cls: 'wl-reading-modal-footer' });
-		const closeBtn = footer.createEl('button', { cls: 'wl-btn', text: 'Close' });
+		const closeBtn = footer.createEl('button', { cls: 'wl-btn', text: t('common.close') });
 		closeBtn.addEventListener('click', () => this.close());
 	}
 
@@ -85,14 +90,14 @@ export class ReadingManageColumnsModal extends Modal {
 			: (settings.mangaCustomFieldStyle ?? 'fill');
 
 		const row = parent.createDiv({ cls: 'wl-reading-cols-style-row' });
-		row.createSpan({ cls: 'wl-reading-cols-style-label', text: 'Display style:' });
+		row.createSpan({ cls: 'wl-reading-cols-style-label', text: t('reading.columns.displayStyle') });
 
 		this.styleGroupEl = row.createDiv({ cls: 'wl-reading-cols-style-group' });
 
 		for (const opt of ['fill', 'border'] as const) {
 			const btn = this.styleGroupEl.createEl('button', {
 				cls: `wl-reading-cols-style-btn${currentStyle === opt ? ' is-active' : ''}`,
-				text: opt.charAt(0).toUpperCase() + opt.slice(1),
+				text: t(opt === 'fill' ? 'reading.columns.styleFill' : 'reading.columns.styleBorder'),
 			});
 			btn.addEventListener('click', () => {
 				void (async () => {
@@ -122,7 +127,7 @@ export class ReadingManageColumnsModal extends Modal {
 		if (cols.length === 0) {
 			this.listEl.createDiv({
 				cls: 'wl-reading-manage-cols-empty',
-				text: 'No custom fields yet. Add one below.',
+				text: t('reading.columns.empty'),
 			});
 			return;
 		}
@@ -134,7 +139,7 @@ export class ReadingManageColumnsModal extends Modal {
 
 			const nameInput = card.createEl('input', {
 				cls: 'wl-modal-input wl-editcol-card-name',
-				attr: { type: 'text', placeholder: 'Field name' },
+				attr: { type: 'text', placeholder: t('reading.columns.fieldName') },
 			});
 			nameInput.value = col.name;
 			nameInput.addEventListener('change', () => {
@@ -151,7 +156,7 @@ export class ReadingManageColumnsModal extends Modal {
 
 			const colorDot = card.createEl('button', { cls: 'wl-reading-col-color-dot' });
 			colorDot.style.backgroundColor = col.color ?? DEFAULT_FIELD_COLOR;
-			colorDot.title = 'Choose field color';
+			colorDot.title = t('reading.columns.chooseColor');
 			colorDot.addEventListener('click', (e) => {
 				e.stopPropagation();
 				this.openColorPalette(colorDot, col);
@@ -159,7 +164,7 @@ export class ReadingManageColumnsModal extends Modal {
 
 			const optsInput = card.createEl('input', {
 				cls: 'wl-modal-input wl-reading-col-opts-input',
-				attr: { type: 'text', placeholder: 'Comma-separated values' },
+				attr: { type: 'text', placeholder: t('reading.columns.optionValues') },
 			});
 			optsInput.value = col.options.join(', ');
 			optsInput.style.visibility = col.type === 'select' ? '' : 'hidden';
@@ -181,13 +186,14 @@ export class ReadingManageColumnsModal extends Modal {
 				cls: 'wl-btn wl-btn-sm wl-editcol-card-del',
 				text: '✕',
 			});
-			delBtn.title = 'Delete this field';
+			delBtn.title = t('reading.columns.deleteField');
 			delBtn.addEventListener('click', () => {
 				new ConfirmModal(
 					this.plugin.app,
-					`Delete field "${col.name}"? This removes its data from every ${
-						this.kind === 'book' ? 'book' : 'manga'
-					} entry.`,
+					t(
+						this.kind === 'book' ? 'reading.columns.deleteConfirmBook' : 'reading.columns.deleteConfirmManga',
+						{ name: col.name },
+					),
 					() => void this.deleteColumn(col.id),
 				).open();
 			});
@@ -206,28 +212,30 @@ export class ReadingManageColumnsModal extends Modal {
 
 	private renderAddSection(parent: HTMLElement): void {
 		const wrap = parent.createDiv({ cls: 'wl-reading-add-col' });
-		wrap.createDiv({ cls: 'wl-reading-section-label', text: 'Add field' });
+		wrap.createDiv({ cls: 'wl-reading-section-label', text: t('reading.columns.addField') });
 
 		const row = wrap.createDiv({ cls: 'wl-reading-add-col-row' });
 
 		const nameInput = row.createEl('input', {
 			cls: 'wl-modal-input wl-reading-add-col-name',
-			attr: { type: 'text', placeholder: 'Field name' },
+			attr: { type: 'text', placeholder: t('reading.columns.fieldName') },
 		});
 
 		const typeSelect = row.createEl('select', { cls: 'wl-select wl-reading-add-col-type' });
-		for (const t of ['text', 'number', 'select'] as const) {
-			typeSelect.createEl('option', {
-				value: t,
-				text: t.charAt(0).toUpperCase() + t.slice(1),
-			});
+		const typeLabels = {
+			text: t('ui.columns.typeText'),
+			number: t('ui.columns.typeNumber'),
+			select: t('ui.columns.typeSelect'),
+		};
+		for (const type of ['text', 'number', 'select'] as const) {
+			typeSelect.createEl('option', { value: type, text: typeLabels[type] });
 		}
 
 		const optsInput = row.createEl('input', {
 			cls: 'wl-modal-input wl-reading-add-col-opts',
 			attr: {
 				type: 'text',
-				placeholder: 'Options (comma-separated)',
+				placeholder: t('reading.columns.optionsPlaceholder'),
 			},
 		});
 		const refreshOpts = (): void => {
@@ -238,12 +246,12 @@ export class ReadingManageColumnsModal extends Modal {
 
 		const addBtn = row.createEl('button', {
 			cls: 'wl-reading-add-btn wl-btn-success wl-reading-add-col-btn',
-			text: 'Add',
+			text: t('common.add'),
 		});
 		addBtn.addEventListener('click', () => {
 			const name = nameInput.value.trim();
 			if (!name) {
-				new Notice('Enter a field name first.');
+				new Notice(t('reading.columns.enterName'));
 				return;
 			}
 			const type = typeSelect.value as ReadingCustomColumn['type'];

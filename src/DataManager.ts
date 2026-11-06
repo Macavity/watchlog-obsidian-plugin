@@ -1,4 +1,4 @@
-import { App, Notice, TAbstractFile, TFile, normalizePath, stringifyYaml } from 'obsidian';
+import { App, TAbstractFile, TFile, normalizePath, stringifyYaml } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DraftPersistState, Season, WatchLogTitle, WatchLogGroup, AirtimeEntry, AirtimeSchedule, EntryAirtime, MaybeTitle, RecommendedDaily, SavedFilterPreset, Book, Manga, Game } from './types';
 import type { HistoryManager } from './HistoryManager';
@@ -10,7 +10,8 @@ import { getBaseline, sameStoredState, setBaseline, getNotesBaseline, setNotesBa
 import type { ApiOutcome } from './ApiService';
 import { ApiCheckQueue } from './apiCheckQueue';
 import type { LocalStore } from './storage/LocalStore';
-import type { ApiCheckResult, EntryCache } from './storage/storageTypes';
+import { renameTargetFree, updateFrontMatter } from './storage/noteWrite';
+import type { ApiCheckResult, EntryCache, Notify } from './storage/storageTypes';
 import type { SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
 import { TITLE_CACHE_KEYS, decodeTitle, encodeTitle, isMovie, seasonsPending, splitCache } from './storage/titleCodec';
@@ -24,6 +25,7 @@ export interface DataStores {
 	local: LocalStore;
 	shared: SharedConfigStore;
 	layout: () => VaultLayout;
+	notify: Notify;
 }
 
 const AIRTIME_KEYS: readonly string[] = [
@@ -80,6 +82,7 @@ export class DataManager {
 	private local: LocalStore;
 	private shared: SharedConfigStore;
 	private layout: () => VaultLayout;
+	private notify: Notify;
 	private changeListeners: Array<() => void> = [];
 	private historyManager: HistoryManager | null = null;
 
@@ -117,6 +120,7 @@ export class DataManager {
 	}
 
 	constructor(plugin: WatchLogPlugin, stores: DataStores) {
+		this.notify = stores.notify;
 		this.plugin = plugin;
 		this.app = plugin.app;
 		this.index = stores.index;
@@ -257,11 +261,11 @@ export class DataManager {
 			const noKey = this.local.getCache(t.id)?.apiCheck?.seasons?.result === 'nokey';
 			if (noKey && this.seasonsMissing(t) && !this.noKeyNoticeShown.has(t.id)) {
 				this.noKeyNoticeShown.add(t.id);
-				new Notice('API key needed to load episodes');
+				this.notify({ code: 'apiKeyNeeded' });
 			}
 			return false;
 		}
-		new Notice(`Episodes of "${t.title}" are still loading.`);
+		this.notify({ code: 'episodesLoading', title: t.title });
 		this.queueMissingSeasons([t]);
 		return true;
 	}
@@ -523,7 +527,7 @@ export class DataManager {
 		for (const id of ids) {
 			const t = this.getTitle(id);
 			if (t) await this.writeTitle(t);
-			else new Notice(`An edit of "${id}" was not saved: its note can no longer be read.`);
+			else this.notify({ code: 'editLost', id });
 		}
 	}
 
@@ -1084,7 +1088,7 @@ export class DataManager {
 			return true;
 		} catch (err) {
 			console.warn(`WatchLog: could not update frontmatter of ${file.path}`, err);
-			new Notice(`Could not update "${file.basename}": its frontmatter is not valid YAML.`);
+			this.notify({ code: 'invalidYaml', file: file.basename });
 			return false;
 		}
 	}
@@ -1496,17 +1500,10 @@ export class DataManager {
 		fn: (fm: Record<string, unknown>) => void,
 		background = false,
 	): Promise<boolean> {
-		try {
-			await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-				fn(fm);
-				this.afterWrite(t, { ...fm }, background);
-			});
-			return true;
-		} catch (e) {
-			console.warn(`WatchLog: could not update frontmatter of ${file.path}`, e);
-			new Notice(`Could not update "${file.basename}": its frontmatter is not valid YAML.`);
-			return false;
-		}
+		return updateFrontMatter(this.app, file, this.notify, (fm: Record<string, unknown>) => {
+			fn(fm);
+			this.afterWrite(t, { ...fm }, background);
+		});
 	}
 
 	/** Creates the note for a new title; the title's id becomes the note path. */
@@ -1549,16 +1546,12 @@ export class DataManager {
 
 		if (src && (t.title !== src.title || t.type !== src.type)) {
 			const target = this.layout().notePath('title', t.title, t.type);
-			if (target !== file.path) {
-				if (this.app.vault.getAbstractFileByPath(target)) {
-					new Notice(`"${target}" already exists; the note keeps its old file name.`);
-				} else {
-					await this.ensureFolder(this.parentOf(target));
-					await this.app.fileManager.renameFile(file, target);
-					this.moveId(t.id, this.layout().idFromPath(target));
-					t.id = this.layout().idFromPath(target);
-					file = this.fileOf(t.id) ?? file;
-				}
+			if (target !== file.path && renameTargetFree(this.app, target, this.notify)) {
+				await this.ensureFolder(this.parentOf(target));
+				await this.app.fileManager.renameFile(file, target);
+				this.moveId(t.id, this.layout().idFromPath(target));
+				t.id = this.layout().idFromPath(target);
+				file = this.fileOf(t.id) ?? file;
 			}
 		}
 

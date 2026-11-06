@@ -15,7 +15,11 @@ import { renderTagPill } from './StatusDropdown';
 import { renderStarRating } from './StarRating';
 import { CollectionModal, resolveCollection, countMissing } from './CollectionModal';
 import { pinModalFooter } from './StickyModal';
+import { renderEpisodeGrid } from './ui/EpisodeGrid';
 import type { TmdbCollectionDetail } from './types';
+import { t } from './i18n';
+import { paintFavoriteButton, renderGroupDetailHeader, episodeGridText } from './ui/detailShared';
+import { priorityLabel, statusLabel, typeLabel } from './i18n/labels';
 
 // titles whose credits backfill is in flight — de-dupes rapid modal re-opens
 const creditsBackfillInFlight = new Set<string>();
@@ -167,7 +171,7 @@ export class TitleDetailModal extends Modal {
 			if (mobile) setIcon(linkIcon, 'globe');
 			else linkIcon.setText('🌐');
 			linkIcon.href = this.title.externalLink;
-			linkIcon.title = 'Open external link';
+			linkIcon.title = t('list.openExternalLink');
 			linkIcon.target = '_blank';
 			linkIcon.rel = 'noopener noreferrer';
 		}
@@ -204,7 +208,7 @@ export class TitleDetailModal extends Modal {
 			cls: 'wl-detail-title wl-reading-detail-editable-text',
 			text: this.title.title,
 		});
-		titleEl.title = 'Click to edit';
+		titleEl.title = t('detail.clickToEdit');
 		titleEl.addEventListener('click', () => this.editTitleInline(wrap));
 	}
 
@@ -262,10 +266,11 @@ export class TitleDetailModal extends Modal {
 		renderTagPill({
 			wrap,
 			value: this.title.type,
+			valueLabel: typeLabel(this.title.type),
 			color: this.typeColor(this.title.type),
-			tooltip: 'Click to change type',
+			tooltip: t('detail.clickToChangeType'),
 			container: this.contentEl,
-			options: this.plugin.settings.types.map((t) => t.name),
+			options: this.plugin.settings.types.map((def) => ({ value: def.name, label: typeLabel(def.name) })),
 			getOptionColor: (name) => this.typeColor(name),
 			onSelect: (name) => void this.saveType(name),
 		});
@@ -378,7 +383,7 @@ export class TitleDetailModal extends Modal {
 			const el = wrap.createSpan({ cls: 'wl-detail-studio-chip', text: name });
 			if (!this.onPersonClick) return;
 			el.addClass('is-clickable');
-			el.title = `Filter by ${name}`;
+			el.title = t('detail.filterBy', { name });
 			el.addEventListener('click', () => {
 				this.close();
 				this.onPersonClick!(name);
@@ -391,7 +396,7 @@ export class TitleDetailModal extends Modal {
 
 		const more = wrap.createSpan({
 			cls: 'wl-detail-studio-more',
-			text: `+${overflow.length} more`,
+			text: t('detail.more', { count: overflow.length }),
 		});
 		more.addEventListener('click', () => {
 			more.remove();
@@ -472,12 +477,12 @@ export class TitleDetailModal extends Modal {
 	private renderStatsBox(): void {
 		if (!this.statsBoxEl) return;
 		this.statsBoxEl.empty();
-		const t = this.title;
-		const timeLeft = this.dataManager.calcTimeRemainingForModal(t);
-		const timeWatched = this.dataManager.calcTimeWatched(t);
-		const watchedEps = t.watchedEpisodes.length;
-		const effectiveTotal = this.dataManager.getEffectiveTotal(t);
-		const progress = this.dataManager.getProgress(t);
+		const entry = this.title;
+		const timeLeft = this.dataManager.calcTimeRemainingForModal(entry);
+		const timeWatched = this.dataManager.calcTimeWatched(entry);
+		const watchedEps = entry.watchedEpisodes.length;
+		const effectiveTotal = this.dataManager.getEffectiveTotal(entry);
+		const progress = this.dataManager.getProgress(entry);
 
 		// mobile: plain "2h 15m left · 0m watched · 0/1 eps" line, then a full-width bar and its caption
 		if (this.mobile) {
@@ -487,15 +492,15 @@ export class TitleDetailModal extends Modal {
 				item.createSpan({ cls: 'wl-detail-statline-value', text: value });
 				item.createSpan({ cls: 'wl-detail-statline-label', text: label });
 			};
-			stat(formatTime(timeLeft), 'left');
-			stat(formatTime(timeWatched), 'watched');
-			stat(`${watchedEps}/${effectiveTotal}`, 'eps');
+			stat(formatTime(timeLeft), t('list.stat.left'));
+			stat(formatTime(timeWatched), t('list.stat.watched'));
+			stat(`${watchedEps}/${effectiveTotal}`, t('detail.epsShort'));
 
 			const bar = this.statsBoxEl.createDiv({ cls: 'wl-acc-progress-wrap' });
 			bar.createDiv({ cls: 'wl-progress-bar' }).style.width = `${progress}%`;
 			this.statsBoxEl.createDiv({
 				cls: 'wl-detail-progress-label',
-				text: `${progress}% progress`,
+				text: t('detail.progressPercent', { percent: progress }),
 			});
 			return;
 		}
@@ -509,13 +514,13 @@ export class TitleDetailModal extends Modal {
 			block.createDiv({ cls: 'wl-acc-percent', text: value });
 			block.createDiv({ cls: 'wl-acc-progress-label', text: label });
 		};
-		makeBlock(formatTime(timeLeft), 'left');
-		makeBlock(formatTime(timeWatched), 'watched');
-		makeBlock(`${watchedEps} / ${effectiveTotal}`, 'episodes');
+		makeBlock(formatTime(timeLeft), t('list.stat.left'));
+		makeBlock(formatTime(timeWatched), t('list.stat.watched'));
+		makeBlock(`${watchedEps} / ${effectiveTotal}`, t('list.stat.episodes'));
 
 		const progBlock = row.createDiv({ cls: 'wl-acc-header-right' });
 		progBlock.createDiv({ cls: 'wl-acc-percent', text: `${progress}%` });
-		progBlock.createDiv({ cls: 'wl-acc-progress-label', text: 'progress' });
+		progBlock.createDiv({ cls: 'wl-acc-progress-label', text: t('list.stat.progress') });
 
 		const barWrap = this.statsBoxEl.createDiv({
 			cls: 'wl-acc-progress-wrap wl-detail-stats-bar',
@@ -544,12 +549,12 @@ export class TitleDetailModal extends Modal {
 	private renderEpisodesBody(): void {
 		if (!this.episodesSectionEl) return;
 		this.episodesSectionEl.empty();
-		const t = this.title;
-		if (isSingleEpisodeTitle(t)) {
+		const entry = this.title;
+		if (isSingleEpisodeTitle(entry)) {
 			const row = this.episodesSectionEl.createDiv({ cls: 'wl-movie-row' });
 			// the shared toggle owns the status → Completed and watch-date writes; this only mirrors them back
 			// into the open modal
-			appendMarkWatchedButton(this.dataManager, row, t.id, () => {
+			appendMarkWatchedButton(this.dataManager, row, entry.id, () => {
 				this.refreshTitle();
 				this.markChanged();
 				this.renderStatsBox();
@@ -558,13 +563,13 @@ export class TitleDetailModal extends Modal {
 			});
 			return;
 		}
-		if (t.seasons.length === 0) {
-			if (t.totalEpisodes > 0) {
+		if (entry.seasons.length === 0) {
+			if (entry.totalEpisodes > 0) {
 				this.renderEpisodeGrid(this.episodesSectionEl, null);
 			}
 			return;
 		}
-		t.seasons.forEach((season, seasonIdx) => {
+		entry.seasons.forEach((season, seasonIdx) => {
 			let isCollapsed = this.collapsedSeasons.has(seasonIdx);
 			const seasonWrap = this.episodesSectionEl!.createDiv({ cls: 'wl-season-wrap' });
 			const seasonHeader = seasonWrap.createDiv({ cls: 'wl-season-header' });
@@ -573,10 +578,11 @@ export class TitleDetailModal extends Modal {
 			const palette = this.plugin.settings.seasonPalette;
 			badge.style.backgroundColor = palette[seasonIdx % palette.length] ?? '#888780';
 			const skipCount = (season.skippedEpisodes ?? []).length;
-			const skipSuffix = skipCount > 0 ? ` (${skipCount} to skip)` : '';
 			seasonHeader.createSpan({
 				cls: 'wl-season-ep-count',
-				text: `${season.episodes} eps${skipSuffix}`,
+				text: skipCount > 0
+					? t('list.season.epsToSkip', { eps: season.episodes, skip: skipCount })
+					: t('list.season.eps', { count: season.episodes }),
 			});
 			const chevron = seasonHeader.createSpan({
 				cls: `wl-chevron${isCollapsed ? '' : ' is-open'}`,
@@ -605,53 +611,22 @@ export class TitleDetailModal extends Modal {
 	}
 
 	private renderEpisodeGrid(parent: HTMLElement, season: Season | null): void {
-		const t = this.title;
-		const grid = parent.createDiv({ cls: 'wl-episode-grid' });
-		const count = season ? season.episodes : t.totalEpisodes;
-		const offset = season ? season.offset : 0;
-		const seasonEps = Array.from({ length: count }, (_, i) => offset + i + 1);
-
-		const fillBtn = grid.createDiv({ cls: 'wl-season-fill-btn' });
-		const refreshFillBtn = (): void => {
-			const watched = new Set(this.title.watchedEpisodes);
-			const allWatched = seasonEps.length > 0 && seasonEps.every((ep) => watched.has(ep));
-			fillBtn.classList.toggle('is-clear', allWatched);
-			fillBtn.classList.toggle('is-fill', !allWatched);
-			fillBtn.textContent = allWatched ? '✗' : '✓';
-			fillBtn.title = allWatched
-				? 'Clear all episodes in this season'
-				: 'Mark all episodes in this season as watched';
-		};
-		refreshFillBtn();
-		fillBtn.addEventListener('click', () => {
-			const watched = new Set(this.title.watchedEpisodes);
-			const allWatched = seasonEps.length > 0 && seasonEps.every((ep) => watched.has(ep));
-			void this.dataManager
-				.markSeasonWatched(this.title.id, seasonEps, !allWatched, season?.name)
-				.then(() => {
-					this.refreshTitle();
-					this.markChanged();
-					this.renderEpisodesBody();
-					this.renderStatsBox();
-				});
-		});
-
-		const perSeason = this.plugin.settings.episodeNumbering === 'per-season';
-		for (let i = 0; i < count; i++) {
-			const epNum = offset + i + 1;
-			const relNum = i + 1;
-			const displayNum = perSeason ? relNum : epNum;
-			const box = grid.createDiv({ cls: 'wl-episode-box' });
-			const refreshBox = (): void => {
-				const isWatched = this.title.watchedEpisodes.includes(epNum);
-				const isSkipped = season ? (season.skippedEpisodes ?? []).includes(relNum) : false;
-				box.classList.toggle('is-watched', isWatched);
-				box.classList.toggle('is-skipped', isSkipped);
-				box.textContent = isSkipped && !isWatched ? '—' : isWatched ? '✓' : String(displayNum);
-				box.title = `Episode ${epNum}${isSkipped ? ' (skipped)' : ''}`;
-			};
-			refreshBox();
-			box.addEventListener('click', () => {
+		renderEpisodeGrid(parent, {
+			getTitle: () => this.title,
+			season,
+			perSeason: this.plugin.settings.episodeNumbering === 'per-season',
+			...episodeGridText(),
+			onFill: (seasonEps, markWatched) => {
+				void this.dataManager
+					.markSeasonWatched(this.title.id, seasonEps, markWatched, season?.name)
+					.then(() => {
+						this.refreshTitle();
+						this.markChanged();
+						this.renderEpisodesBody();
+						this.renderStatsBox();
+					});
+			},
+			onEpisode: (epNum, _e, refreshBox, refreshFillBtn) => {
 				const isWatched = this.title.watchedEpisodes.includes(epNum);
 				this.dataManager.applyEpisodeWatchedToggle(this.title.id, epNum, !isWatched);
 				this.refreshTitle();
@@ -659,8 +634,8 @@ export class TitleDetailModal extends Modal {
 				refreshBox();
 				refreshFillBtn();
 				this.renderStatsBox();
-			});
-		}
+			},
+		});
 	}
 
 	// Rating
@@ -669,7 +644,7 @@ export class TitleDetailModal extends Modal {
 		const wrap = parent.createDiv({ cls: 'wl-detail-rating' });
 		// no "Rating" label on mobile — stars carry their own tier label
 		if (mobile) wrap.addClass('wl-detail-rating-stacked');
-		else wrap.createSpan({ cls: 'wl-stars-label', text: 'Rating' });
+		else wrap.createSpan({ cls: 'wl-stars-label', text: t('list.footer.rating') });
 		this.starsWrapEl = wrap.createDiv({ cls: 'wl-stars wl-detail-stars' });
 		this.renderStars();
 
@@ -716,13 +691,13 @@ export class TitleDetailModal extends Modal {
 		if (url) {
 			const btn = container.createEl('button', {
 				cls: 'wl-trailer-btn',
-				attr: { type: 'button', title: 'Watch trailer on YouTube', 'aria-label': 'Watch trailer on YouTube' },
+				attr: { type: 'button', title: t('detail.trailer.watch'), 'aria-label': t('detail.trailer.watch') },
 			});
 			// mobile has room for a labelled button and needs the bigger tap target
 			if (this.mobile) {
 				btn.addClass('wl-trailer-btn-labeled');
 				setIcon(btn, 'play');
-				btn.createSpan({ cls: 'wl-trailer-btn-label', text: 'Trailer' });
+				btn.createSpan({ cls: 'wl-trailer-btn-label', text: t('detail.trailer.label') });
 			} else {
 				setIcon(btn, 'youtube');
 			}
@@ -734,7 +709,7 @@ export class TitleDetailModal extends Modal {
 		}
 		const refreshBtn = container.createEl('button', {
 			cls: 'wl-community-refresh wl-trailer-refresh',
-			attr: { type: 'button', title: 'Fetch trailer', 'aria-label': 'Fetch trailer' },
+			attr: { type: 'button', title: t('detail.trailer.fetch'), 'aria-label': t('detail.trailer.fetch') },
 		});
 		setIcon(refreshBtn, 'refresh-cw');
 		refreshBtn.addEventListener('click', (e) => {
@@ -760,11 +735,11 @@ export class TitleDetailModal extends Modal {
 			if (hit) {
 				this.paintTrailerControl(container);
 			} else {
-				new Notice('No trailer found');
+				new Notice(t('detail.trailer.notFound'));
 				btn.removeClass('is-loading');
 			}
 		} catch {
-			new Notice('No trailer found');
+			new Notice(t('detail.trailer.notFound'));
 			btn.removeClass('is-loading');
 		}
 	}
@@ -792,10 +767,10 @@ export class TitleDetailModal extends Modal {
 	// Notes
 	private renderNotesSection(parent: HTMLElement): void {
 		const wrap = parent.createDiv({ cls: 'wl-detail-notes' });
-		wrap.createSpan({ cls: 'wl-stars-label', text: 'Notes' });
+		wrap.createSpan({ cls: 'wl-stars-label', text: t('detail.notes') });
 		const textarea = wrap.createEl('textarea', {
 			cls: 'wl-detail-notes-input',
-			attr: { placeholder: 'Add notes...', rows: '3' },
+			attr: { placeholder: t('detail.addNotes'), rows: '3' },
 		});
 		textarea.value = this.title.notes;
 		const autoResize = (): void => {
@@ -839,8 +814,8 @@ export class TitleDetailModal extends Modal {
 	private renderDateSection(parent: HTMLElement): void {
 		const wrap = parent.createDiv({ cls: 'wl-detail-date' });
 		const topRow = wrap.createDiv({ cls: 'wl-detail-date-row' });
-		this.renderDateField(topRow, 'Date started', 'dateStarted');
-		const watched = this.renderDateField(topRow, 'Date watched', 'dateFinished');
+		this.renderDateField(topRow, t('list.footer.dateStarted'), 'dateStarted');
+		const watched = this.renderDateField(topRow, t('list.footer.dateWatched'), 'dateFinished');
 		// kept so a Mark-as-Watched press can restamp the field in place
 		this.datePickerEl = watched.picker;
 		this.refreshDateDimmed = watched.refreshDimmed;
@@ -856,7 +831,7 @@ export class TitleDetailModal extends Modal {
 	 */
 	private renderReleaseDateField(parent: HTMLElement): void {
 		const wrap = parent.createDiv({ cls: 'wl-date-field' });
-		wrap.createSpan({ cls: 'wl-stars-label', text: 'Release date' });
+		wrap.createSpan({ cls: 'wl-stars-label', text: t('list.footer.releaseDate') });
 		const picker = createDatePicker({
 			parent: wrap,
 			inputCls: 'wl-footer-date wl-date-input',
@@ -890,7 +865,7 @@ export class TitleDetailModal extends Modal {
 		wrap.createSpan({ cls: 'wl-stars-label', text: label });
 		const todayBtn = wrap.createEl('button', {
 			cls: 'wl-btn wl-btn-sm wl-footer-today-btn',
-			text: 'Today',
+			text: t('list.footer.today'),
 		});
 		const picker = createDatePicker({
 			parent: wrap,
@@ -932,12 +907,13 @@ export class TitleDetailModal extends Modal {
 		renderTagPill({
 			wrap,
 			value: this.title.status,
+			valueLabel: statusLabel(this.title.status),
 			color: this.statusColor(this.title.status),
-			tooltip: 'Click to change status',
+			tooltip: t('detail.clickToChangeStatus'),
 			container: this.contentEl,
 			options: this.plugin.settings.statuses
 				.filter((s) => s.name !== 'To be released')
-				.map((s) => s.name),
+				.map((s) => ({ value: s.name, label: statusLabel(s.name) })),
 			getOptionColor: (name) => this.statusColor(name),
 			onSelect: (name) => void this.saveStatus(name).then(() => this.renderStatusBadge(wrap)),
 		});
@@ -965,13 +941,14 @@ export class TitleDetailModal extends Modal {
 		renderTagPill({
 			wrap,
 			value: priority,
-			emptyLabel: 'No priority',
+			valueLabel: priorityLabel(priority),
+			emptyLabel: t('list.footer.noPriority'),
 			color: priority ? this.priorityColor(priority) : null,
-			tooltip: 'Click to change priority',
+			tooltip: t('detail.clickToChangePriority'),
 			container: this.contentEl,
 			options: [
-				...this.plugin.settings.priorities.map((p) => p.name),
-				{ value: '', label: 'No priority' },
+				...this.plugin.settings.priorities.map((p) => ({ value: p.name, label: priorityLabel(p.name) })),
+				{ value: '', label: t('list.footer.noPriority') },
 			],
 			getOptionColor: (name) => (name ? this.priorityColor(name) : null),
 			onSelect: (name) => void this.savePriority(name).then(() => this.renderPriorityBadge(wrap)),
@@ -993,12 +970,12 @@ export class TitleDetailModal extends Modal {
 		this.footerEl = footer;
 		const removeBtn = footer.createEl('button', {
 			cls: 'wl-delete-btn wl-btn-danger wl-detail-remove',
-			text: 'Remove',
+			text: t('common.remove'),
 		});
 		removeBtn.addEventListener('click', () => {
 			new ConfirmModal(
 				this.plugin.app,
-				`Remove "${this.title.title}" from watchlog?`,
+				t('list.removeTitleConfirm', { title: this.title.title }),
 				() => {
 					void this.dataManager.removeTitle(this.title.id).then(() => {
 						this.markChanged();
@@ -1016,10 +993,7 @@ export class TitleDetailModal extends Modal {
 		setIcon(favBtn, 'heart');
 		const paintFav = (): void => {
 			const fav = !!this.title.favorite;
-			favBtn.toggleClass('is-active', fav);
-			const label = fav ? 'Remove from favorites' : 'Add to favorites';
-			favBtn.title = label;
-			favBtn.setAttr('aria-label', label);
+			paintFavoriteButton(favBtn, fav);
 		};
 		paintFav();
 		favBtn.addEventListener('click', () => {
@@ -1036,7 +1010,7 @@ export class TitleDetailModal extends Modal {
 
 		const editBtn = right.createEl('button', {
 			cls: 'wl-edit-btn wl-detail-edit',
-			text: 'Edit',
+			text: t('common.edit'),
 		});
 		editBtn.addEventListener('click', () => {
 			const current = this.dataManager.getTitle(this.title.id);
@@ -1074,7 +1048,7 @@ export class TitleDetailModal extends Modal {
 		setIcon(btn, 'layers');
 		btn.createSpan({
 			cls: 'wl-collection-btn-label',
-			text: missing > 0 ? `Collection · ${missing} missing` : 'Collection',
+			text: missing > 0 ? t('detail.collection.missing', { count: missing }) : t('detail.collection.label'),
 		});
 		if (missing > 0) btn.addClass('has-missing');
 		// mobile has no room for Remove · centred heart · Collection + Edit — park the heart
@@ -1082,7 +1056,9 @@ export class TitleDetailModal extends Modal {
 		if (Platform.isMobile) {
 			host.closest<HTMLElement>('.wl-detail-footer')?.addClass('wl-footer-heart-left');
 		}
-		const label = `${collection.name}: ${missing > 0 ? `${missing} not in your library` : 'all in your library'}`;
+		const label = missing > 0
+			? t('detail.collection.tipMissing', { name: collection.name, count: missing })
+			: t('detail.collection.tipComplete', { name: collection.name });
 		btn.title = label;
 		btn.setAttr('aria-label', label);
 
@@ -1132,8 +1108,8 @@ export function renderCreditsRefreshButton(
 	onDone: (changed: boolean) => void,
 ): void {
 	const btn = parent.createEl('button', { cls: 'wl-credits-refresh', text: '⟳' });
-	btn.title = 'Refresh director & cast';
-	btn.setAttr('aria-label', 'Refresh director & cast');
+	btn.title = t('detail.credits.refresh');
+	btn.setAttr('aria-label', t('detail.credits.refresh'));
 	if (creditsRefreshInFlight.has(title.id)) btn.addClass('is-loading');
 	btn.addEventListener('click', () => {
 		if (creditsRefreshInFlight.has(title.id)) return;
@@ -1212,8 +1188,9 @@ export function renderCreditsRows(
 		// studio has no add path — AddCreditModal's pool and labels are director/cast only
 		if (onAddCredits && field !== 'studio') {
 			const addBtn = labelEl.createEl('button', { cls: 'wl-credits-add', text: '+' });
-			addBtn.title = `Add ${label.toLowerCase()}`;
-			addBtn.setAttr('aria-label', `Add ${label.toLowerCase()}`);
+			const addLabel = t(field === 'director' ? 'detail.credits.addDirector' : 'detail.credits.addCast');
+			addBtn.title = addLabel;
+			addBtn.setAttr('aria-label', addLabel);
 			addBtn.addEventListener('click', (e) => {
 				e.stopPropagation();
 				onAddCredits(field);
@@ -1236,7 +1213,7 @@ export function renderCreditsRows(
 			const text = el.createSpan({ cls: 'wl-credits-name-text', text: name });
 			if (onPersonClick) {
 				text.addClass('is-clickable');
-				text.title = `Show titles with ${name}`;
+				text.title = t('detail.credits.showTitlesWith', { name });
 				text.addEventListener('click', (e) => {
 					e.stopPropagation();
 					onPersonClick(name);
@@ -1244,8 +1221,9 @@ export function renderCreditsRows(
 			}
 			if (isManual && onRemoveManual) {
 				const del = el.createEl('button', { cls: 'wl-credits-name-del', text: '✕' });
-				del.title = `Remove ${name}`;
-				del.setAttr('aria-label', `Remove ${name}`);
+				const removeLabel = t('detail.credits.removeName', { name });
+				del.title = removeLabel;
+				del.setAttr('aria-label', removeLabel);
 				del.addEventListener('click', (e) => {
 					e.stopPropagation();
 					onRemoveManual(field, name);
@@ -1264,7 +1242,7 @@ export function renderCreditsRows(
 		if (overflow.length === 0) return;
 		const moreBtn = valuesEl.createEl('button', {
 			cls: 'wl-credits-more',
-			text: `+${overflow.length} more`,
+			text: t('detail.more', { count: overflow.length }),
 		});
 		const overflowEl = parent.createDiv({ cls: 'wl-credits-overflow' });
 		overflowEl.hide();
@@ -1273,16 +1251,16 @@ export function renderCreditsRows(
 			e.stopPropagation();
 			const expanded = !overflowEl.isShown();
 			overflowEl.toggle(expanded);
-			moreBtn.setText(expanded ? 'show less' : `+${overflow.length} more`);
+			moreBtn.setText(expanded ? t('detail.showLess') : t('detail.more', { count: overflow.length }));
 		});
 	};
 
 	if (includeStudio) {
 		const studios = getTitleCredits(title, 'studio');
-		renderRow(studios.length === 1 ? 'Studio' : 'Studios', 'studio');
+		renderRow(t('detail.studio', { count: studios.length }), 'studio');
 	}
-	renderRow('Director', 'director');
-	renderRow('Cast', 'cast');
+	renderRow(t('list.searchField.director'), 'director');
+	renderRow(t('list.searchField.cast'), 'cast');
 }
 
 // Group detail modal
@@ -1328,26 +1306,17 @@ export class GroupDetailModal extends Modal {
 
 	private renderAll(): void {
 		this.contentEl.empty();
-		const header = this.contentEl.createDiv({ cls: 'wl-detail-header' });
-		const left = header.createDiv({ cls: 'wl-detail-header-left' });
-		left.createEl('h2', { cls: 'wl-detail-title', text: this.group.name });
-		left.createDiv({
-			cls: 'wl-detail-group-meta',
-			text: `${this.members.length} title${this.members.length !== 1 ? 's' : ''}`,
-		});
-
 		const totalEps = this.members.reduce(
 			(s, m) => s + this.dataManager.getEffectiveTotal(m),
 			0,
 		);
 		const watchedEps = this.members.reduce((s, m) => s + m.watchedEpisodes.length, 0);
 		const progress = totalEps > 0 ? Math.round((watchedEps / totalEps) * 100) : 0;
-		const statsBox = header.createDiv({ cls: 'wl-detail-stats-box' });
-		const progBlock = statsBox.createDiv({ cls: 'wl-acc-header-right' });
-		progBlock.createDiv({ cls: 'wl-acc-percent', text: `${progress}%` });
-		progBlock.createDiv({ cls: 'wl-acc-progress-label', text: 'progress' });
-		const barWrap = progBlock.createDiv({ cls: 'wl-acc-progress-wrap' });
-		barWrap.createDiv({ cls: 'wl-progress-bar' }).style.width = `${progress}%`;
+		renderGroupDetailHeader(this.contentEl, {
+			name: this.group.name,
+			countText: t('ui.group.countTitle', { count: this.members.length }),
+			progress,
+		});
 
 		const grid = this.contentEl.createDiv({ cls: 'wl-cards-grid wl-detail-group-grid' });
 		for (const m of this.members) {
@@ -1431,7 +1400,7 @@ function buildTitleCardElement(
 	if (statusDef) {
 		const statusBadge = card.createSpan({
 			cls: 'wl-card-status-badge',
-			text: title.status,
+			text: statusLabel(title.status),
 		});
 		statusBadge.style.backgroundColor = getThemedColor(
 			title.status,
@@ -1443,7 +1412,7 @@ function buildTitleCardElement(
 	const overlay = card.createDiv({ cls: 'wl-card-overlay' });
 	overlay.createSpan({ cls: 'wl-card-title', text: title.title });
 	const metaRow = overlay.createDiv({ cls: 'wl-card-meta-row' });
-	const typeBadge = metaRow.createSpan({ cls: 'wl-card-type-badge', text: title.type });
+	const typeBadge = metaRow.createSpan({ cls: 'wl-card-type-badge', text: typeLabel(title.type) });
 	typeBadge.style.backgroundColor = typeColor;
 	// release year beside the type badge; omitted when unknown (matches ListTab's card)
 	const yearMatch = title.releaseDate?.match(/^(\d{4})/);
@@ -1461,7 +1430,7 @@ function buildTitleCardElement(
 	}
 
 	const menuBtn = card.createEl('button', { cls: 'wl-card-menu-btn', text: '⋮' });
-	menuBtn.setAttr('aria-label', 'Edit');
+	menuBtn.setAttr('aria-label', t('common.edit'));
 	menuBtn.addEventListener('click', (e) => {
 		e.stopPropagation();
 		handlers.onEdit();

@@ -1,4 +1,6 @@
 import { Notice, TFile, setIcon } from 'obsidian';
+import { t, type TranslationKey } from './i18n';
+import { gameStatusLabel } from './i18n/labels';
 import type WatchLogPlugin from './main';
 import type { GameDataManager } from './GameDataManager';
 import {
@@ -288,20 +290,13 @@ export class GamesTab {
 		releaseDate:  'desc',
 	};
 
+	private static readonly SORT_KEYS = [
+		'title', 'dateAdded', 'progress', 'playtime', 'rating', 'priority',
+		'started', 'status', 'dateFinished', 'releaseDate',
+	] as const;
+
 	private sortLabelToKey(label: string): string {
-		const map: Record<string, string> = {
-			'Title':         'title',
-			'Date added':    'dateAdded',
-			'Progress':      'progress',
-			'Playtime':      'playtime',
-			'Rating':        'rating',
-			'Priority':      'priority',
-			'Started':       'started',
-			'Status':        'status',
-			'Date finished': 'dateFinished',
-			'Release date':  'releaseDate',
-		};
-		return map[label] ?? 'dateAdded';
+		return GamesTab.SORT_KEYS.find((k) => t(`games.sort.${k}`) === label) ?? 'dateAdded';
 	}
 
 	private getStatusIndex(status: string): number {
@@ -356,13 +351,13 @@ export class GamesTab {
 	/** Fields the Games search covers — also drives the "?" help panel. */
 	searchFields(): SearchFieldSpec<Game>[] {
 		return [
-			{ name: 'title', label: 'Title', weight: 0.6, text: (g) => [g.title] },
-			{ name: 'developer', label: 'Developer', weight: 0.15, aliases: ['dev'], text: (g) => [g.developer] },
-			{ name: 'publisher', label: 'Publisher', weight: 0.1, aliases: ['pub'], text: (g) => [g.publisher] },
-			{ name: 'platform', label: 'Platform', weight: 0.1, aliases: ['platforms'], text: (g) => g.platforms },
-			{ name: 'year', label: 'Year', weight: 0.05, text: (g) => { const y = yearOf(g.releaseDate); return y ? [String(y)] : []; }, number: (g) => yearOf(g.releaseDate) },
-			{ name: 'rating', label: 'Rating', number: (g) => g.rating },
-			{ name: 'hours', label: 'Hours played', number: (g) => g.playtimeMinutes / 60 },
+			{ name: 'title', label: t('games.fields.title'), weight: 0.6, text: (g) => [g.title] },
+			{ name: 'developer', label: t('games.fields.developer'), weight: 0.15, aliases: ['dev'], text: (g) => [g.developer] },
+			{ name: 'publisher', label: t('games.fields.publisher'), weight: 0.1, aliases: ['pub'], text: (g) => [g.publisher] },
+			{ name: 'platform', label: t('games.fields.platform'), weight: 0.1, aliases: ['platforms'], text: (g) => g.platforms },
+			{ name: 'year', label: t('games.fields.year'), weight: 0.05, text: (g) => { const y = yearOf(g.releaseDate); return y ? [String(y)] : []; }, number: (g) => yearOf(g.releaseDate) },
+			{ name: 'rating', label: t('games.fields.rating'), number: (g) => g.rating },
+			{ name: 'hours', label: t('games.fields.hours'), number: (g) => g.playtimeMinutes / 60 },
 		];
 	}
 
@@ -548,7 +543,7 @@ export class GamesTab {
 		if (allGames.length === 0 && this.gameData.getGroups().length === 0) {
 			const empty = content.createDiv({ cls: 'wl-cards-empty' });
 			empty.createSpan({ cls: 'wl-cards-empty-icon', text: '🎮' });
-			empty.createEl('p', { cls: 'wl-cards-empty-msg', text: 'No games yet; click + Add to track your first game.' });
+			empty.createEl('p', { cls: 'wl-cards-empty-msg', text: t('games.empty') });
 			return;
 		}
 
@@ -563,25 +558,28 @@ export class GamesTab {
 		const visibleGroups = this.getVisibleGroups();
 		const gameCount = items.reduce((n, item) => n + (item.kind === 'game' ? 1 : 0), 0);
 		const groupCount = items.length - gameCount;
-		const countParts = [`${gameCount} game${gameCount !== 1 ? 's' : ''}`];
-		if (groupCount > 0) countParts.push(`${groupCount} group${groupCount !== 1 ? 's' : ''}`);
+		const countParts = [t('ui.group.countGame', { count: gameCount })];
+		if (groupCount > 0) countParts.push(t('games.countGroup', { count: groupCount }));
 		const countEl = content.createDiv({
 			cls: 'wl-results-count wl-results-count-rows',
 			text: countParts.join(', '),
 		});
 		const gearBtn = countEl.createEl('button', { cls: 'wl-rows-customize-btn' });
-		gearBtn.setAttr('aria-label', 'Customize rows');
+		gearBtn.setAttr('aria-label', t('games.customizeRows'));
 		setIcon(gearBtn, 'settings');
 		gearBtn.addEventListener('click', () => {
 			new RowsCustomizeModal(this.plugin.app, this.plugin, {
-				shelves: GAMES_ROWS_SHELVES,
+				shelves: GAMES_ROWS_SHELVES.map((sh) => ({
+					id: sh.id,
+					label: t(`games.shelves.${sh.id === 'byType' ? 'byGenre' : sh.id}` as TranslationKey),
+				})),
 				getLayout: () => this.gameData.getSettings().rowsLayout,
 				setLayout: (layout) => { this.gameData.getSettings().rowsLayout = layout; },
 				// the layout lives inside data.json's games key, not plugin.settings — persist through the games
 				// data manager (quiet: onChanged re-renders this tab itself)
 				persist: () => this.gameData.persistQuiet(),
 				onChanged: () => this.renderContent(),
-				hint: 'Reorder the sections or switch them off. "By genre" and "By status" are the grouped grid sections; only one can be on at a time, and with both off the games show as one flat grid.',
+				hint: t('games.customizeHint'),
 				exclusiveGroups: ROWS_EXCLUSIVE_SHELVES,
 			}).open();
 		});
@@ -627,16 +625,16 @@ export class GamesTab {
 				// newest favorite first — this shelf ignores the tab sort
 				const favorites = sortByFavorited(allGames.filter((g) => g.favorite && gameVisible(g)));
 				renderShelf(
-					scroll, 'Favorites', favorites,
-					'No favorites yet; use a card\'s ⋮ menu to favorite a game.',
+					scroll, t('games.shelves.favorites'), favorites,
+					t('games.shelves.emptyFavorites'),
 					filtering, gameCard, sel(favorites),
 				);
 			},
 			recommended: () => {
 				const recommended = this.getRecommendedGames(allGames).filter(gameVisible);
 				renderShelf(
-					scroll, 'Recommended', recommended,
-					'Nothing to recommend; add games you plan to play.',
+					scroll, t('games.shelves.recommended'), recommended,
+					t('games.shelves.emptyRecommended'),
 					filtering, gameCard, sel(recommended),
 				);
 			},
@@ -646,16 +644,16 @@ export class GamesTab {
 					.slice(0, 10)
 					.filter(gameVisible);
 				renderShelf(
-					scroll, 'Recently Added', recentlyAdded,
-					'Nothing here yet; added games will show up in this row.',
+					scroll, t('games.shelves.recentlyAdded'), recentlyAdded,
+					t('games.shelves.emptyRecentlyAdded'),
 					filtering, gameCard, sel(recentlyAdded),
 				);
 			},
 			recentlyPlayed: () => {
 				const recentlyPlayed = this.getRecentlyPlayedGames(allGames).filter(gameVisible);
 				renderShelf(
-					scroll, 'Recently Played', recentlyPlayed,
-					'Nothing played yet; games you progress or finish show up here.',
+					scroll, t('games.shelves.recentlyPlayed'), recentlyPlayed,
+					t('games.shelves.emptyRecentlyPlayed'),
 					filtering, gameCard, sel(recentlyPlayed),
 				);
 			},
@@ -677,8 +675,8 @@ export class GamesTab {
 					.slice(0, 10)
 					.filter(gameVisible);
 				renderShelf(
-					scroll, 'Recently Released', recentlyReleased,
-					'No released games yet; games with a past release date show up here.',
+					scroll, t('games.shelves.recentlyReleased'), recentlyReleased,
+					t('games.shelves.emptyRecentlyReleased'),
 					filtering, gameCard, sel(recentlyReleased),
 				);
 			},
@@ -722,11 +720,11 @@ export class GamesTab {
 	): void {
 		if (filtering && groups.length === 0) return;
 		const shelf = parent.createDiv({ cls: 'wl-rows-shelf' });
-		renderShelfTitle(shelf, 'Groups', groups.length, this.shelfSelect(groups.map((g) => g.data.id)));
+		renderShelfTitle(shelf, t('games.shelves.groups'), groups.length, this.shelfSelect(groups.map((g) => g.data.id)));
 		if (groups.length === 0) {
 			shelf.createDiv({
 				cls: 'wl-rows-shelf-empty',
-				text: 'No groups yet; group related games to see their covers here.',
+				text: t('games.shelves.emptyGroups'),
 			});
 			return;
 		}
@@ -753,7 +751,7 @@ export class GamesTab {
 		const keyOf = (g: Game): string => (byType ? g.type : g.status);
 
 		const section = parent.createDiv({ cls: 'wl-rows-bytype' });
-		section.createDiv({ cls: 'wl-rows-bytype-title', text: byType ? 'By genre' : 'By status' });
+		section.createDiv({ cls: 'wl-rows-bytype-title', text: byType ? t('games.shelves.byGenre') : t('games.shelves.byStatus') });
 
 		const allGames = this.gameData.getGames();
 		let rendered = 0;
@@ -763,7 +761,7 @@ export class GamesTab {
 			);
 			if (bucketGames.length === 0) continue;
 			rendered++;
-			renderShelfTitle(section, def.name, bucketGames.length, this.shelfSelect(bucketGames.map((g) => g.id)));
+			renderShelfTitle(section, byType ? def.name : gameStatusLabel(def.name), bucketGames.length, this.shelfSelect(bucketGames.map((g) => g.id)));
 			const spacer = section.createDiv({ cls: 'wl-rows-bytype-spacer' });
 			const grid = spacer.createDiv({ cls: 'wl-cards-grid wl-cards-grid-virtual' });
 			const vgrid = new VirtualGrid(spacer, grid, bucketGames.length, {
@@ -785,7 +783,7 @@ export class GamesTab {
 			}
 			section.createDiv({
 				cls: 'wl-rows-shelf-empty',
-				text: `No games yet; added games are grouped by ${byType ? 'genre' : 'status'} here.`,
+				text: byType ? t('games.shelves.emptyByGenre') : t('games.shelves.emptyByStatus'),
 			});
 		}
 	}
@@ -800,14 +798,14 @@ export class GamesTab {
 				parent.createDiv({
 					cls: 'wl-reading-empty-search',
 					text: this.searchQuery.trim()
-						? `No matches for "${this.searchQuery.trim()}".`
-						: 'No games match the current filters.',
+						? t('games.noMatchesQuery', { query: this.searchQuery.trim() })
+						: t('games.noMatchesFilters'),
 				});
 			}
 			return;
 		}
 		const section = parent.createDiv({ cls: 'wl-rows-bytype' });
-		if (titled) renderShelfTitle(section, 'All games', items.length, this.shelfSelect(items.map((i) => i.data.id)));
+		if (titled) renderShelfTitle(section, t('games.shelves.allGames'), items.length, this.shelfSelect(items.map((i) => i.data.id)));
 		const spacer = section.createDiv({ cls: 'wl-rows-bytype-spacer' });
 		const grid = spacer.createDiv({ cls: 'wl-cards-grid wl-cards-grid-virtual' });
 		const vgrid = new VirtualGrid(spacer, grid, items.length, {
@@ -894,8 +892,8 @@ export class GamesTab {
 	private renderSearch(parent: HTMLElement): void {
 		renderSearchBox(parent, {
 			value: this.searchQuery,
-			placeholder: 'Search title, developer, platform…',
-			help: (host) => renderSearchHelpButton(host, this.plugin.app, 'Games', () => this.searchFields()),
+			placeholder: t('games.searchPlaceholder'),
+			help: (host) => renderSearchHelpButton(host, this.plugin.app, t('app.tabs.games'), () => this.searchFields()),
 			onChange: (q) => { this.searchQuery = q; },
 			onCommit: () => this.renderContent(),
 		});
@@ -985,13 +983,14 @@ export class GamesTab {
 
 				return {
 					sections: buildFilterSections({
-						lead: [{ label: 'Genre', opts: settings.types.map((t) => t.name), excludeSet: draft.genreExclude }],
+						lead: [{ label: t('games.filters.genre'), opts: settings.types.map((ty) => ty.name), excludeSet: draft.genreExclude }],
 						statusOpts: settings.statuses.map((s) => s.name),
+						formatStatus: gameStatusLabel,
 						// half options appear only when a game holds that exact rating (the Watchlist rule)
 						ratingOpts: buildRatingOpts(this.gameData.getGames().map((g) => g.rating)),
 						priorities: this.plugin.settings.priorities,
 						middle: platformOpts.length > 0
-							? [{ label: 'Platform', opts: platformOpts, excludeSet: draft.platformExclude }]
+							? [{ label: t('games.filters.platform'), opts: platformOpts, excludeSet: draft.platformExclude }]
 							: [],
 						groupOpts: this.gameData.getGroups().map((g) => g.name),
 						draft,
@@ -1001,7 +1000,7 @@ export class GamesTab {
 						set: (v) => { draft.filterFavoritesOnly = v; },
 					},
 					standaloneRows: [{
-						text: '🎁 Wishlist',
+						text: `🎁 ${t('games.filters.wishlist')}`,
 						spanCls: 'wl-wishlist-filter',
 						get: () => draft.filterWishlistOnly,
 						set: (v) => { draft.filterWishlistOnly = v; },
@@ -1040,10 +1039,7 @@ export class GamesTab {
 	private renderSortingDropdown(parent: HTMLElement): void {
 		renderSortingDropdown(parent, this.sort, {
 			registerCleanup: (fn) => this.activeCleanups.push(fn),
-			options: [
-				'Title', 'Date added', 'Progress', 'Playtime', 'Rating', 'Priority',
-				'Started', 'Status', 'Date finished', 'Release date',
-			],
+			options: GamesTab.SORT_KEYS.map((k) => t(`games.sort.${k}`)),
 			labelToKey: (label) => this.sortLabelToKey(label),
 			defaultDirs: GamesTab.SORT_DEFAULT_DIR,
 			onSorted: () => {
@@ -1102,9 +1098,9 @@ export class GamesTab {
 
 	private renderActionBar(parent: HTMLElement): void {
 		const bar = renderActionBar(parent, this.plugin.app, {
-			title: 'Delete selected',
+			title: t('games.deleteSelected'),
 			selected: this.selectedIds,
-			message: (count) => `Delete ${count} selected item${count !== 1 ? 's' : ''}? Deleted games' note files will be moved to the trash; deleting a group returns its games to the main list.`,
+			message: (count) => t('games.deleteSelectedConfirm', { count }),
 			onConfirm: async () => {
 				// selected groups are dissolved (games return to the grid); selected games are batch-deleted
 				// with their note files
@@ -1139,6 +1135,7 @@ export class GamesTab {
 				}
 				await this.gameData.saveAndNotify();
 			},
+			gameStatusLabel,
 		);
 
 		const allGroups = this.gameData.getGroups();
@@ -1178,7 +1175,7 @@ export class GamesTab {
 	 */
 	private renderGameCard(parent: HTMLElement, game: Game, cardWidth: number, cardHeight?: number): void {
 		const settings = this.gameData.getSettings();
-		const typeColor = settings.types.find((t) => t.name === game.type)?.color ?? '#888780';
+		const typeColor = settings.types.find((ty) => ty.name === game.type)?.color ?? '#888780';
 		const statusColor = settings.statuses.find((s) => s.name === game.status)?.color;
 
 		buildPosterCard(parent, {
@@ -1190,31 +1187,31 @@ export class GamesTab {
 			cardWidth,
 			cardHeight,
 			selected: this.selectedIds.has(game.id),
-			statusLabel: game.status,
+			statusLabel: gameStatusLabel(game.status),
 			statusColor,
 			typeLabel: game.type || undefined,
 			typeColor,
 			year: game.releaseDate?.match(/^(\d{4})/)?.[1],
 			progressRatio: game.progress > 0 ? game.progress / 100 : undefined,
 			textUnder: this.plugin.isCardTextUnder('games'),
-			flag: game.wishlist ? { icon: 'gift', label: 'On your wishlist' } : undefined,
+			flag: game.wishlist ? { icon: 'gift', label: t('games.card.onWishlist') } : undefined,
 			menuItems: [
 				{
-					label: game.favorite ? 'Unfavorite' : 'Favorite',
+					label: game.favorite ? t('games.card.unfavorite') : t('games.card.favorite'),
 					onClick: () => { void this.gameData.updateGame({ ...game, favorite: !game.favorite }); },
 				},
 				{
-					label: game.wishlist ? 'Remove from wishlist' : 'Add to wishlist',
+					label: game.wishlist ? t('games.card.removeFromWishlist') : t('games.card.addToWishlist'),
 					onClick: () => { void this.gameData.updateGame({ ...game, wishlist: !game.wishlist }); },
 				},
-				{ label: 'Refresh cover', onClick: () => { void this.refreshCover(game); } },
-				{ label: 'Open note', onClick: () => { void this.openGameNote(game); } },
+				{ label: t('games.card.refreshCover'), onClick: () => { void this.refreshCover(game); } },
+				{ label: t('games.card.openNote'), onClick: () => { void this.openGameNote(game); } },
 				{
-					label: 'Delete',
+					label: t('common.delete'),
 					onClick: () => {
 						new ConfirmModal(
 							this.plugin.app,
-							`Delete "${game.title}"? Its note file will be moved to the trash.`,
+							t('games.card.deleteConfirm', { title: game.title }),
 							() => { void this.gameData.removeGame(game.id); },
 						).open();
 					},
@@ -1280,7 +1277,7 @@ export class GamesTab {
 	private async refreshCover(game: Game): Promise<void> {
 		const res = await this.resolveCover(game);
 		if (!res.url) {
-			new Notice('Could not fetch a cover; check the game\'s title and your Settings → API → Games setup.');
+			new Notice(t('games.notices.coverFetchFailed'));
 			return;
 		}
 		const fresh = this.gameData.getGame(game.id);
@@ -1292,7 +1289,7 @@ export class GamesTab {
 			updated.apiId = res.apiId;
 		}
 		await this.gameData.updateGame(updated);
-		new Notice('Cover refreshed.');
+		new Notice(t('games.notices.coverRefreshed'));
 	}
 
 	/**
@@ -1307,7 +1304,7 @@ export class GamesTab {
 			group,
 			members,
 			getCover: (g) => rawgResizedCover(g.coverUrl),
-			typeColor: settings.types.find((t) => t.name === primaryType)?.color ?? '#888780',
+			typeColor: settings.types.find((ty) => ty.name === primaryType)?.color ?? '#888780',
 			textUnder: this.plugin.isCardTextUnder('games'),
 			selected: this.selectedIds.has(group.id),
 			cardHeight,
@@ -1315,7 +1312,7 @@ export class GamesTab {
 			container: this.container,
 			cleanups: this.activeCleanups,
 			onRename: () => this.openRenameGroupPrompt(group),
-			deleteMessage: `Delete group "${group.name}"? All games inside will be returned to the main list.`,
+			deleteMessage: t('games.card.deleteGroupConfirm', { name: group.name }),
 			onDelete: () => { void this.gameData.removeGroup(group.id); },
 			onActivate: (card) => {
 				if (this.selectionMode) {

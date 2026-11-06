@@ -1,4 +1,5 @@
 import { App, Notice, TFile, setIcon } from 'obsidian';
+import { t } from './i18n';
 
 /**
  * The shared "Open note" file-text icon button used by the Watchlist and Reading detail modals.
@@ -17,14 +18,14 @@ export function appendNoteLinkButton(
 	// sizing/alignment come from .wl-acc-link-icon (matches the globe)
 	const noteIcon = parent.createSpan({ cls: 'wl-acc-link-icon' });
 	setIcon(noteIcon, 'file-text');
-	noteIcon.setAttr('aria-label', 'Open note');
-	noteIcon.title = 'Open note';
+	noteIcon.setAttr('aria-label', t('misc.noteLink.open'));
+	noteIcon.title = t('misc.noteLink.open');
 	noteIcon.addEventListener('click', (e) => {
 		e.stopPropagation();
 		const file =
 			target instanceof TFile ? target : app.vault.getAbstractFileByPath(target);
 		if (!(file instanceof TFile)) {
-			new Notice('Note file not found for this title.');
+			new Notice(t('misc.noteLink.notFound'));
 			return;
 		}
 		void app.workspace.getLeaf().openFile(file);

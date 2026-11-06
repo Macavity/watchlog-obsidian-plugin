@@ -1,17 +1,14 @@
 import { setIcon } from 'obsidian';
+import { t, type TranslationKey } from './i18n';
+import { readingStatusLabel, statusLabel } from './i18n/labels';
+import { dayName, monthName } from './ui/dateNames';
 import type WatchLogPlugin from './main';
 import type { HistoryEntry } from './HistoryManager';
 import { inferHistoryAction, inferHistorySource } from './HistoryManager';
 import { ConfirmModal } from './ConfirmModal';
-import { getActiveDateFormat } from './types';
+import { getActiveDateFormat, type ReadingStatus } from './types';
 
 type SourceFilter = 'all' | 'Watchlist' | 'Reading' | 'Games';
-
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTHS = [
-	'January', 'February', 'March', 'April', 'May', 'June',
-	'July', 'August', 'September', 'October', 'November', 'December',
-];
 
 const ACTION_COLORS: Record<string, string> = {
 	completed: '#1D9E75',
@@ -30,33 +27,49 @@ const SOURCE_COLORS: Record<string, string> = {
 	Games: '#8B5CF6',
 };
 
-function actionLabel(entry: HistoryEntry): string {
+/** The stored status of a history line, shown in the UI language: watch statuses first, then reading ones; anything else as stored. */
+function storedStatusLabel(status: string): string {
+	const watch = statusLabel(status);
+	return watch !== status ? watch : readingStatusLabel(status as ReadingStatus);
+}
+
+// the patterns match the stored History.md lines; only the label built from them is localized
+/** Exported for tests. */
+export function actionLabel(entry: HistoryEntry): string {
 	const action = inferHistoryAction(entry);
 	const m = entry.message;
 	switch (action) {
-		case 'added': return 'Added';
-		case 'group': return 'Group created';
-		case 'deleted': return 'Deleted';
+		case 'added': return t('dashboard.log.action.added');
+		case 'group': return t('dashboard.log.action.group');
+		case 'deleted': return t('dashboard.log.action.deleted');
 		case 'rating': {
 			const rm = m.match(/Rating → (\d+\/5)/);
-			if (rm) return `Rating → ${rm[1]}`;
-			return 'Rating changed';
+			if (rm) return t('dashboard.log.action.rating', { value: rm[1]! });
+			return t('dashboard.log.action.ratingChanged');
 		}
 		case 'status': {
 			const sm = m.match(/status changed to (.+)$/);
-			return sm ? `Status → ${sm[1]}` : 'Status changed';
+			return sm ? t('dashboard.log.action.status', { status: storedStatusLabel(sm[1]!) }) : t('dashboard.log.action.statusChanged');
 		}
-		case 'completed': return 'Completed';
+		case 'completed': return t('dashboard.log.action.completed');
 		case 'watched': {
 			const pm = m.match(/At (page|chapter|volume) (\d+) \/ (\d+)/i);
-			if (pm) return `At ${pm[1]} ${pm[2]} / ${pm[3]}`;
+			if (pm) {
+				const key = `dashboard.log.action.at${pm[1]!.charAt(0).toUpperCase()}${pm[1]!.slice(1).toLowerCase()}`;
+				return t(key as TranslationKey, { n: pm[2]!, total: pm[3]! });
+			}
 			const seasonM = m.match(/\)\s+(.+?)\s+was fully watched on/i);
-			if (seasonM) return `${seasonM[1]} watched`;
+			if (seasonM) return t('dashboard.log.action.seasonWatched', { name: seasonM[1]! });
 			const em = m.match(/episode (\d+)/i);
-			return em ? `Episode ${em[1]} watched` : 'Watched';
+			return em ? t('dashboard.log.action.episodeWatched', { n: em[1]! }) : t('dashboard.log.action.watched');
 		}
 	}
-	return 'Updated';
+	return t('dashboard.log.action.updated');
+}
+
+/** A History source as shown in the tab chrome (the tab names). */
+function sourceLabel(source: Exclude<SourceFilter, 'all'>): string {
+	return t(`app.tabs.${source.toLowerCase()}` as TranslationKey);
 }
 
 function typeFromEntry(entry: HistoryEntry): string {
@@ -81,12 +94,12 @@ function formatDayHeader(dateStr: string): string {
 	const d = new Date(dateStr + 'T12:00:00');
 	// month name, ordered by the user's date-format setting
 	if (getActiveDateFormat() === 'american') {
-		return `${DAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+		return `${dayName(d.getDay())}, ${monthName(d.getMonth())} ${d.getDate()}, ${d.getFullYear()}`;
 	}
 	if (getActiveDateFormat() === 'iso') {
-		return `${DAYS[d.getDay()]}, ${dateStr}`;
+		return `${dayName(d.getDay())}, ${dateStr}`;
 	}
-	return `${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+	return `${dayName(d.getDay())}, ${d.getDate()} ${monthName(d.getMonth())} ${d.getFullYear()}`;
 }
 
 function formatTime(isoTs: string): string {
@@ -167,8 +180,8 @@ export class LogTab {
 			this.container.createDiv({
 				cls: 'wl-log-empty',
 				text: this.sourceFilter === 'all'
-					? 'No events yet. Actions from Watchlist, Reading and Games will appear here.'
-					: `No ${this.sourceFilter} events yet.`,
+					? t('dashboard.log.empty')
+					: t('dashboard.log.emptySource', { source: sourceLabel(this.sourceFilter) }),
 			});
 			return;
 		}
@@ -181,10 +194,10 @@ export class LogTab {
 		const bar = this.container.createDiv({ cls: 'wl-log-filter-bar' });
 
 		const filters: { label: string; value: SourceFilter }[] = [
-			{ label: 'All', value: 'all' },
-			{ label: 'Watchlist', value: 'Watchlist' },
-			{ label: 'Reading', value: 'Reading' },
-			{ label: 'Games', value: 'Games' },
+			{ label: t('ui.toolbar.all'), value: 'all' },
+			{ label: sourceLabel('Watchlist'), value: 'Watchlist' },
+			{ label: sourceLabel('Reading'), value: 'Reading' },
+			{ label: sourceLabel('Games'), value: 'Games' },
 		];
 
 		for (const f of filters) {
@@ -344,7 +357,7 @@ export class LogTab {
 		if (!row.isLastInGroup) dotCol.createDiv({ cls: 'wl-log-connector' });
 
 		const content = el.createDiv({ cls: 'wl-log-content' });
-		content.createSpan({ cls: 'wl-log-source', text: source });
+		content.createSpan({ cls: 'wl-log-source', text: sourceLabel(source) });
 		content.createSpan({ cls: 'wl-log-sep', text: ' · ' });
 		content.createSpan({ cls: 'wl-log-title', text: titleFromEntry(entry) });
 		content.createSpan({ cls: 'wl-log-sep', text: ' · ' });
@@ -354,7 +367,7 @@ export class LogTab {
 		el.createDiv({ cls: 'wl-log-time', text: formatTime(entry.timestamp) });
 
 		const delBtn = el.createEl('button', { cls: 'wl-log-del' });
-		delBtn.setAttribute('aria-label', 'Delete event');
+		delBtn.setAttribute('aria-label', t('dashboard.log.deleteEvent'));
 		setIcon(delBtn, 'x');
 		delBtn.addEventListener('click', (ev) => {
 			ev.stopPropagation();
@@ -367,7 +380,7 @@ export class LogTab {
 	private confirmDelete(entry: HistoryEntry): void {
 		new ConfirmModal(
 			this.plugin.app,
-			`Delete this log event? (${titleFromEntry(entry)} · ${actionLabel(entry)})`,
+			t('dashboard.log.confirmDelete', { title: titleFromEntry(entry), action: actionLabel(entry) }),
 			() => {
 				const hm = this.plugin.historyManager;
 				if (!hm) return;

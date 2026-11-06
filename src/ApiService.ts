@@ -1,6 +1,7 @@
 import { requestUrl } from 'obsidian';
 import type { RequestUrlParam } from 'obsidian';
 import { httpsOrEmpty } from './httpsUrl';
+import { t, type TranslationKey } from './i18n';
 import { TENRAI_BASE, type JikanEndpoint } from './jikanBase';
 import type {
 	AnimeSearchResult,
@@ -420,8 +421,17 @@ const API_LABELS: Record<ApiSource, string> = {
 	rawg: 'RAWG',
 	igdb: 'IGDB',
 	twitch: 'Twitch',
-	unknown: 'The API',
+	unknown: 'The API', // dev-facing Error messages only; user text goes through serviceName()
 };
+
+/** Sources with a dedicated wording for the matching reason. */
+const AUTH_KEYS: ReadonlySet<ApiSource> = new Set<ApiSource>(['tmdb', 'omdb', 'googleBooks', 'rawg', 'twitch', 'igdb']);
+const RATE_LIMIT_KEYS: ReadonlySet<ApiSource> = new Set<ApiSource>(['omdb', 'jikan', 'anilist', 'googleBooks']);
+
+/** Service name for user text; the unknown source reads "The API". */
+function serviceName(source: ApiSource): string {
+	return source === 'unknown' ? t('notices.api.unknownService') : API_LABELS[source];
+}
 
 /**
  * Source from the request URL — every base is a distinct host, so no call site has to say. The
@@ -480,91 +490,68 @@ function providerMessageFrom(body: string): string {
 
 /** Maps any error from an API call to a short, user-facing explanation. */
 export function apiErrorMessage(err: unknown): string {
-	if (!(err instanceof ApiError)) return 'Request failed; check your connection.';
-	const label = API_LABELS[err.source];
+	if (!(err instanceof ApiError)) return t('notices.api.requestFailed');
+	const service = serviceName(err.source);
+	const status = err.status ?? '?';
 
 	// the service explained itself, and we have nothing better than a status code to offer.
 	// only for the generic reasons: our own auth / quota / no-key wording names the actual fix,
 	// which beats a terse provider string like Twitch's "invalid client".
 	if (err.providerMessage && (err.reason === 'server' || err.reason === 'http')) {
 		const text = err.providerMessage;
-		return `${label}: ${/[.!?]$/.test(text) ? text : `${text}.`}`;
+		return t('notices.api.providerMessage', { service, text: /[.!?]$/.test(text) ? text : `${text}.` });
 	}
 
 	switch (err.reason) {
 		case 'no-key':
 			return err.source === 'tmdb'
-				? 'TMDB token required; add one in Settings → API.'
-				: `${label} API key required; add one in Settings → API.`;
+				? t('notices.api.tmdbTokenRequired')
+				: t('notices.api.keyRequired', { service });
 
 		case 'auth':
-			switch (err.source) {
-				case 'tmdb':
-					// the v3 key and the v4 token sit side by side on TMDB's own settings page
-					return 'TMDB rejected this credential. Settings → API needs the API Read Access Token (v4), a long string starting "eyJ", not the 32-character v3 API key.';
-				case 'omdb':
-					return 'OMDb rejected the key. If it is new, click the activation link OMDb emailed you; keys do not work until activated.';
-				case 'googleBooks':
-					return 'Google rejected this key; check it was copied in full.';
-				case 'rawg':
-					return 'RAWG rejected the key; it may be invalid, or suspended for exceeding the monthly quota.';
-				case 'twitch':
-					return 'Twitch rejected the Client ID or Secret; re-check both in Settings → API → Games.';
-				case 'igdb':
-					return 'IGDB rejected the request; the credentials work, the query did not.';
-				default:
-					return `${label} rejected your credentials.`;
-			}
+			// the v3 key and the v4 token sit side by side on TMDB's own settings page
+			return AUTH_KEYS.has(err.source)
+				? t(`notices.api.auth.${err.source}` as TranslationKey)
+				: t('notices.api.auth.other', { service });
 
 		case 'not-enabled':
-			return 'The Books API is not enabled for this key. Enable "Books API" in your Google Cloud project, then try again.';
+			return t('notices.api.notEnabled');
 
 		case 'rate-limited':
-			switch (err.source) {
-				case 'omdb':
-					return 'OMDb daily request limit reached (1,000 per day on the free tier). It resets at midnight UTC.';
-				case 'jikan':
-					return 'MyAnimeList API is rate-limiting requests; wait a few seconds and search again.';
-				case 'anilist':
-					return 'AniList is rate-limiting requests; wait a moment and search again.';
-				case 'googleBooks':
-					return 'Google Books quota exceeded for this key; it resets daily.';
-				default:
-					return `${label} is rate-limiting requests; wait a moment and try again.`;
-			}
+			return RATE_LIMIT_KEYS.has(err.source)
+				? t(`notices.api.rateLimited.${err.source}` as TranslationKey)
+				: t('notices.api.rateLimited.other', { service });
 
 		case 'server':
-			return KEYLESS_SOURCES.has(err.source)
-				? `${label} is temporarily unavailable (HTTP ${err.status ?? '?'}). Try again shortly.`
-				: `${label} is temporarily unavailable (HTTP ${err.status ?? '?'}). This is not your key; try again shortly.`;
+			return t(KEYLESS_SOURCES.has(err.source) ? 'notices.api.serverKeyless' : 'notices.api.server', { service, status });
 
 		case 'not-found':
-			return `${label} had no match for that request.`;
+			return t('notices.api.notFound', { service });
 
 		case 'parse':
-			return `${label} returned an unreadable response.`;
+			return t('notices.api.parse', { service });
 
 		case 'network':
-			return `${label} is unreachable; check your connection.`;
+			return t('notices.api.network', { service });
 
 		default:
-			return `${label} request failed (HTTP ${err.status ?? '?'}).`;
+			return t('notices.api.failed', { service, status });
 	}
 }
 
 /** Chip-sized label for the same error — the full sentence goes in a detail line. */
 export function apiErrorShort(err: unknown): string {
-	if (!(err instanceof ApiError)) return 'Failed';
+	if (!(err instanceof ApiError)) return t('notices.api.short.failed');
 	switch (err.reason) {
-		case 'no-key': return 'No key set';
-		case 'auth': return 'Credential rejected';
-		case 'not-enabled': return 'API not enabled';
-		case 'rate-limited': return 'Rate limited';
-		case 'server': return 'Service unavailable';
-		case 'not-found': return 'Not found';
-		case 'parse': return 'Unreadable response';
-		case 'network': return 'Unreachable';
-		default: return `Failed (HTTP ${err.status ?? '?'})`;
+		case 'no-key': return t('notices.api.short.noKey');
+		case 'auth': return t('notices.api.short.auth');
+		case 'not-enabled': return t('notices.api.short.notEnabled');
+		case 'rate-limited': return t('notices.api.short.rateLimited');
+		case 'server': return t('notices.api.short.server');
+		case 'not-found': return t('notices.api.short.notFound');
+		case 'parse': return t('notices.api.short.parse');
+		case 'network': return t('notices.api.short.network');
+		default: return t('notices.api.short.http', { status: err.status ?? '?' });
 	}
 }
 

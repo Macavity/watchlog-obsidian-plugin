@@ -1,8 +1,10 @@
-import { Notice, TFile, normalizePath, stringifyYaml } from 'obsidian';
+import { TFile, normalizePath, stringifyYaml } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { HistoryManager } from './HistoryManager';
 import type { DataStores } from './DataManager';
+import type { Notify } from './storage/storageTypes';
 import type { EntryIndex } from './storage/EntryIndex';
+import { renameTargetFree, updateFrontMatter } from './storage/noteWrite';
 import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
 import { splitNested, type SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
@@ -49,6 +51,7 @@ export class GameDataManager {
 	private local: DataStores['local'];
 	private shared: SharedConfigStore;
 	private layout: () => VaultLayout;
+	private notify: Notify;
 	private changeListeners: Array<() => void> = [];
 	private historyManager: HistoryManager | null = null;
 
@@ -60,6 +63,7 @@ export class GameDataManager {
 	private settingsCache: GamesSettings | null = null;
 
 	constructor(plugin: WatchLogPlugin, stores: DataStores) {
+		this.notify = stores.notify;
 		this.plugin = plugin;
 		this.index = stores.index;
 		this.local = stores.local;
@@ -209,7 +213,7 @@ export class GameDataManager {
 		for (const id of ids) {
 			const view = this.views.get(id)?.view;
 			if (view) await this.writeGame(view);
-			else new Notice(`An edit of "${id}" was not saved: its note can no longer be read.`);
+			else this.notify({ code: 'editLost', id });
 		}
 	}
 
@@ -564,17 +568,10 @@ export class GameDataManager {
 	 * `background` marks an automatic fill (no user write).
 	 */
 	private async processFrontMatter(file: TFile, g: Game, fn: (fm: Record<string, unknown>) => void, background = false): Promise<boolean> {
-		try {
-			await this.plugin.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-				fn(fm);
-				this.afterWrite(g, { ...fm }, background);
-			});
-			return true;
-		} catch (e) {
-			console.warn(`WatchLog: could not update frontmatter of ${file.path}`, e);
-			new Notice(`Could not update "${file.basename}": its frontmatter is not valid YAML.`);
-			return false;
-		}
+		return updateFrontMatter(this.plugin.app, file, this.notify, (fm: Record<string, unknown>) => {
+			fn(fm);
+			this.afterWrite(g, { ...fm }, background);
+		});
 	}
 
 	/** True when `g` was made from the stored state of its note (or nothing is stored yet). */
@@ -635,18 +632,14 @@ export class GameDataManager {
 
 		if (src && g.title !== src.title) {
 			const target = this.layout().notePath('game', g.title);
-			if (target !== file.path) {
-				if (this.plugin.app.vault.getAbstractFileByPath(target)) {
-					new Notice(`"${target}" already exists; the note keeps its old file name.`);
-				} else {
-					const oldId = g.id;
-					await this.plugin.app.fileManager.renameFile(file, target);
-					this.index.removeLocal(oldId);
-					this.views.delete(oldId);
-					if (this.dirty.delete(oldId)) this.dirty.add(this.layout().idFromPath(target));
-					g.id = this.layout().idFromPath(target);
-					file = this.fileOf(g.id) ?? file;
-				}
+			if (target !== file.path && renameTargetFree(this.plugin.app, target, this.notify)) {
+				const oldId = g.id;
+				await this.plugin.app.fileManager.renameFile(file, target);
+				this.index.removeLocal(oldId);
+				this.views.delete(oldId);
+				if (this.dirty.delete(oldId)) this.dirty.add(this.layout().idFromPath(target));
+				g.id = this.layout().idFromPath(target);
+				file = this.fileOf(g.id) ?? file;
 			}
 		}
 

@@ -84,3 +84,13 @@ export interface LocalData {
 		recommendedDaily?: RecommendedDaily;
 	};
 }
+
+/** A user-facing message a manager wants shown; the UI layer owns the text. */
+export type ManagerNotice =
+	| { code: 'editLost'; id: string }
+	| { code: 'invalidYaml'; file: string }
+	| { code: 'renameTargetExists'; target: string }
+	| { code: 'apiKeyNeeded' }
+	| { code: 'episodesLoading'; title: string }
+	| { code: 'sharedConfigUnreadable' };
+export type Notify = (notice: ManagerNotice) => void;

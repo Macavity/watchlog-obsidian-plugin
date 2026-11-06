@@ -23,12 +23,17 @@ export function safeTypeName(name: string): string {
 	return RESERVED_FOLDERS.has(safe.toLowerCase()) ? `${safe} (type)` : safe;
 }
 
-/** Why a type name cannot be used as entered, or null when it can. */
-export function typeNameError(name: string): string | null {
+export type TypeNameProblem =
+	| { reason: 'reserved'; name: string }
+	| { reason: 'unsafe'; name: string; safe: string };
+
+/** Why a type name cannot be used as entered, or null when it can. The UI layer renders the code. */
+export function typeNameProblem(name: string): TypeNameProblem | null {
+	const trimmed = name.trim();
 	const safe = safeTypeName(name);
-	if (safe === name.trim()) return null;
-	if (RESERVED_FOLDERS.has(name.trim().toLowerCase())) return `"${name.trim()}" is a reserved folder name.`;
-	return `"${name.trim()}" cannot be used as a folder name; try "${safe}".`;
+	if (safe === trimmed) return null;
+	if (RESERVED_FOLDERS.has(trimmed.toLowerCase())) return { reason: 'reserved', name: trimmed };
+	return { reason: 'unsafe', name: trimmed, safe };
 }
 
 /** Folder structure below the vault root; entry id = note path relative to root, without `.md`. */

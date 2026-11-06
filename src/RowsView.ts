@@ -3,6 +3,8 @@
 // the tab; only the DOM shape is shared. The virtualised per-section grids a Rows view mixes in are
 // driven by VirtualGrid + VirtualScroller, not by this module.
 
+import { t } from './i18n';
+
 /**
  * Per-section select-all box, shown in the header while selection mode is on. Ids rather than DOM,
  * because the grid sections are virtualised: most cards of a section are not rendered.
@@ -33,7 +35,7 @@ function renderShelfSelect(parent: HTMLElement, label: string, spec: ShelfSelect
 		box.toggleClass('is-all', all);
 		box.toggleClass('is-partial', partial);
 		box.setText(all ? '✓' : partial ? '–' : '');
-		box.setAttribute('aria-label', `${all ? 'Deselect' : 'Select'} all in ${label}`);
+		box.setAttribute('aria-label', t(all ? 'list.rows.deselectAllIn' : 'list.rows.selectAllIn', { label }));
 	};
 
 	box.addEventListener('click', (e) => {

@@ -1,4 +1,5 @@
 import { setIcon } from 'obsidian';
+import { t } from './i18n';
 
 /**
  * The game-modes segmented pill: Solo (red) · Co-op (green) · Multi (blue). Each segment carries a
@@ -11,10 +12,10 @@ export interface GameModes {
 	multiplayer: boolean;
 }
 
-const SEGMENTS: Array<{ key: keyof GameModes; cls: string; icon: string; label: string; title: string }> = [
-	{ key: 'singleplayer', cls: 'wl-mode-pill-solo', icon: 'user', label: 'Solo', title: 'Singleplayer' },
-	{ key: 'coop', cls: 'wl-mode-pill-coop', icon: 'users', label: 'Co-op', title: 'Co-operative' },
-	{ key: 'multiplayer', cls: 'wl-mode-pill-multi', icon: 'globe', label: 'Multi', title: 'Multiplayer' },
+const SEGMENTS: Array<{ key: keyof GameModes; cls: string; icon: string }> = [
+	{ key: 'singleplayer', cls: 'wl-mode-pill-solo', icon: 'user' },
+	{ key: 'coop', cls: 'wl-mode-pill-coop', icon: 'users' },
+	{ key: 'multiplayer', cls: 'wl-mode-pill-multi', icon: 'globe' },
 ];
 
 export function renderModePill(
@@ -28,11 +29,11 @@ export function renderModePill(
 	for (const seg of SEGMENTS) {
 		const btn = pill.createEl('button', {
 			cls: `wl-mode-pill-seg ${seg.cls}`,
-			attr: { type: 'button', title: seg.title, 'aria-label': `Toggle ${seg.title.toLowerCase()}` },
+			attr: { type: 'button', title: t(`list.mode.${seg.key}.title`), 'aria-label': t(`list.mode.${seg.key}.toggle`) },
 		});
 		const icon = btn.createSpan({ cls: 'wl-mode-pill-icon' });
 		setIcon(icon, seg.icon);
-		btn.createSpan({ cls: 'wl-mode-pill-label', text: seg.label });
+		btn.createSpan({ cls: 'wl-mode-pill-label', text: t(`list.mode.${seg.key}.label`) });
 
 		const sync = (): void => {
 			const on = get()[seg.key];

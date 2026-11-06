@@ -1,10 +1,12 @@
-import { Notice, TFile, normalizePath, stringifyYaml } from 'obsidian';
+import { TFile, normalizePath, stringifyYaml } from 'obsidian';
 import type { App } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { HistoryManager } from './HistoryManager';
 import type { DataStores } from './DataManager';
+import type { Notify } from './storage/storageTypes';
 import type { EntryIndex } from './storage/EntryIndex';
 import type { LocalStore } from './storage/LocalStore';
+import { renameTargetFree, updateFrontMatter } from './storage/noteWrite';
 import { getBaseline, sameStoredState, setBaseline } from './storage/baseline';
 import { splitNested, type SharedConfigStore } from './storage/SharedConfigStore';
 import type { VaultLayout } from './storage/VaultLayout';
@@ -63,6 +65,7 @@ export class ReadingDataManager {
 	private local: LocalStore;
 	private shared: SharedConfigStore;
 	private layout: () => VaultLayout;
+	private notify: Notify;
 	private changeListeners: Array<() => void> = [];
 	private historyManager: HistoryManager | null = null;
 
@@ -83,6 +86,7 @@ export class ReadingDataManager {
 		this.local = stores.local;
 		this.shared = stores.shared;
 		this.layout = stores.layout;
+		this.notify = stores.notify;
 	}
 
 	setHistoryManager(hm: HistoryManager): void {
@@ -207,7 +211,7 @@ export class ReadingDataManager {
 			if (kind && slot) {
 				try { await this.writeItem(kind, slot.view); } catch (e) { console.warn('[WL] reading note write failed:', e); }
 			} else {
-				new Notice(`An edit of "${id}" was not saved: its note can no longer be read.`);
+				this.notify({ code: 'editLost', id });
 			}
 		}
 	}
@@ -726,17 +730,10 @@ export class ReadingDataManager {
 		fn: (fm: Fm) => void,
 		background = false,
 	): Promise<boolean> {
-		try {
-			await this.app.fileManager.processFrontMatter(file, (fm: Fm) => {
-				fn(fm);
-				this.afterWrite(kind, item, { ...fm }, background);
-			});
-			return true;
-		} catch (e) {
-			console.warn(`WatchLog: could not update frontmatter of ${file.path}`, e);
-			new Notice(`Could not update "${file.basename}": its frontmatter is not valid YAML.`);
-			return false;
-		}
+		return updateFrontMatter(this.app, file, this.notify, (fm: Fm) => {
+			fn(fm);
+			this.afterWrite(kind, item, { ...fm }, background);
+		});
 	}
 
 	/** Creates the note for a new entry; the entry's id becomes the note path. */
@@ -772,20 +769,16 @@ export class ReadingDataManager {
 
 		if (src && item.title !== src.title) {
 			const target = this.layout().notePath(kind, item.title);
-			if (target !== file.path) {
-				if (this.app.vault.getAbstractFileByPath(target)) {
-					new Notice(`"${target}" already exists; the note keeps its old file name.`);
-				} else {
-					await this.ensureFolder(this.parentOf(target));
-					await this.app.fileManager.renameFile(file, target);
-					const from = item.id;
-					const to = this.layout().idFromPath(target);
-					this.index.removeLocal(from);
-					this.views.delete(from);
-					if (this.dirty.delete(from)) this.dirty.add(to);
-					item.id = to;
-					file = this.fileOf(to) ?? file;
-				}
+			if (target !== file.path && renameTargetFree(this.app, target, this.notify)) {
+				await this.ensureFolder(this.parentOf(target));
+				await this.app.fileManager.renameFile(file, target);
+				const from = item.id;
+				const to = this.layout().idFromPath(target);
+				this.index.removeLocal(from);
+				this.views.delete(from);
+				if (this.dirty.delete(from)) this.dirty.add(to);
+				item.id = to;
+				file = this.fileOf(to) ?? file;
 			}
 		}
 

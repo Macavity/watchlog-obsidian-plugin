@@ -1,4 +1,5 @@
 import { createDatePicker } from '../DatePicker';
+import { t } from '../i18n';
 import type { AirtimeSchedule, AirtimeRecurrence } from '../types';
 
 export type ScheduleMode = 'single' | 'recurring';
@@ -45,7 +46,14 @@ export interface CounterGroup {
 	total: CounterField;
 }
 
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+/** Sunday first, matching Date.getDay(). */
+function dayNames(): string[] {
+	return [
+		t('ui.schedule.days.sunday'), t('ui.schedule.days.monday'), t('ui.schedule.days.tuesday'),
+		t('ui.schedule.days.wednesday'), t('ui.schedule.days.thursday'), t('ui.schedule.days.friday'),
+		t('ui.schedule.days.saturday'),
+	];
+}
 
 /** Single release needs a date; recurring is always saveable. */
 export function isScheduleValid(state: ScheduleFormState): boolean {
@@ -71,13 +79,13 @@ function renderModeToggle(parent: HTMLElement, state: ScheduleFormState, options
 			options.onModeChange();
 		});
 	};
-	const [singleLabel, recurringLabel] = options.modeLabels ?? ['Single release', 'Recurring'];
+	const [singleLabel, recurringLabel] = options.modeLabels ?? [t('ui.schedule.single'), t('ui.schedule.recurring')];
 	makeModeBtn(singleLabel, 'single');
 	makeModeBtn(recurringLabel, 'recurring');
 }
 
 function renderDateRow(parent: HTMLElement, state: ScheduleFormState, options: ScheduleFormOptions): void {
-	const dateRow = makeRow(parent, 'Release date');
+	const dateRow = makeRow(parent, t('ui.schedule.releaseDate'));
 	createDatePicker({
 		parent: dateRow,
 		inputCls: 'wl-modal-input wl-date-input',
@@ -94,7 +102,7 @@ function renderDateRow(parent: HTMLElement, state: ScheduleFormState, options: S
 /** Native time input + optional note label (e.g. live JST converter). */
 function renderTimeRow(parent: HTMLElement, state: ScheduleFormState, options: ScheduleFormOptions): void {
 	const row = parent.createDiv({ cls: 'wl-modal-row wl-modal-row-mt' });
-	row.createSpan({ cls: 'wl-modal-label', text: 'Time (optional)' });
+	row.createSpan({ cls: 'wl-modal-label', text: t('ui.schedule.timeOptional') });
 	const inp = row.createEl('input', {
 		cls: 'wl-modal-input wl-time-input',
 		attr: { type: 'time' },
@@ -113,9 +121,9 @@ function renderTimeRow(parent: HTMLElement, state: ScheduleFormState, options: S
 }
 
 function renderWeekdayRow(parent: HTMLElement, state: ScheduleFormState, options: ScheduleFormOptions): void {
-	const r = makeRow(parent, 'Day of week');
+	const r = makeRow(parent, t('ui.schedule.dayOfWeek'));
 	const daySelect = r.createEl('select', { cls: 'wl-select' });
-	DAYS.forEach((d, i) => {
+	dayNames().forEach((d, i) => {
 		const opt = daySelect.createEl('option', { text: d, value: String(i) });
 		if (i === state.dayOfWeek) opt.selected = true;
 	});
@@ -126,7 +134,7 @@ function renderWeekdayRow(parent: HTMLElement, state: ScheduleFormState, options
 }
 
 function renderMonthdayRow(parent: HTMLElement, state: ScheduleFormState, options: ScheduleFormOptions): void {
-	const r = makeRow(parent, 'Day of month');
+	const r = makeRow(parent, t('ui.schedule.dayOfMonth'));
 	const inp = r.createEl('input', {
 		cls: 'wl-modal-input wl-modal-input-sm',
 		attr: { type: 'number', min: '1', max: '31', placeholder: '1' },
@@ -210,7 +218,8 @@ export function renderCounterRow(parent: HTMLElement, groups: CounterGroup[]): v
 		if (i > 0) progRow.createSpan({ cls: 'wl-schedule-progress-sep wl-schedule-progress-dot', text: '·' });
 		progRow.createSpan({ cls: 'wl-modal-label', text: group.label });
 		makeNum(group.current);
-		progRow.createSpan({ cls: 'wl-schedule-progress-sep', text: 'of' });
+		// the leaf is capitalized for the sentence-case lint; it reads as a lowercase connector between inputs
+		progRow.createSpan({ cls: 'wl-schedule-progress-sep', text: t('ui.schedule.of') });
 		makeNum(group.total);
 	});
 }
@@ -228,10 +237,10 @@ interface SaveRowOptions {
  */
 function renderSaveRow(parent: HTMLElement, options: SaveRowOptions): () => void {
 	const btnRow = parent.createDiv({ cls: 'wl-modal-btn-row' });
-	const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-mr', text: 'Cancel' });
+	const cancelBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-mr', text: t('common.cancel') });
 	cancelBtn.addEventListener('click', options.onCancel);
 
-	const saveBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Save' });
+	const saveBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('common.save') });
 	saveBtn.addEventListener('click', () => {
 		if (!options.isValid()) return;
 		void options.onSave();
@@ -323,9 +332,10 @@ export function resolveScheduleMode(
 
 /** Cadence choices shared by every recurring schedule modal. */
 export const RECURRENCE_OPTIONS = [
-	{ value: 'daily', label: 'Daily' },
-	{ value: 'weekly', label: 'Weekly' },
-	{ value: 'monthly', label: 'Monthly' },
+	// getters: the label follows the locale at render time, not at module load
+	{ value: 'daily', get label(): string { return t('ui.schedule.recurrence.daily'); } },
+	{ value: 'weekly', get label(): string { return t('ui.schedule.recurrence.weekly'); } },
+	{ value: 'monthly', get label(): string { return t('ui.schedule.recurrence.monthly'); } },
 ];
 
 export function counterField(

@@ -81,7 +81,7 @@ describe('API checks in DataManager', () => {
 		await dm.refreshAiring('TV Show/C');
 		expect(local.getCache('TV Show/C')?.apiCheck?.airing).toEqual({ at: START.toISOString(), result: 'transient' });
 
-		const restarted = new DataManager(plugin, { index, local, shared, layout: () => layout });
+		const restarted = new DataManager(plugin, { index, local, shared, layout: () => layout, notify: () => {} });
 		vi.setSystemTime(new Date(START.getTime() + 59 * 60_000));
 		await restarted.refreshAiring('TV Show/C');
 		expect(fetchAiring).toHaveBeenCalledTimes(1);
@@ -134,7 +134,7 @@ describe('API checks in DataManager', () => {
 		expect(fetchSeasons).toHaveBeenCalledTimes(1);
 		await dm.markEpisodeWatched('TV Show/Dark', 3, false);
 		expect(fetchSeasons).toHaveBeenCalledTimes(1);
-		const restarted = new DataManager(plugin, { index, local, shared, layout: () => layout });
+		const restarted = new DataManager(plugin, { index, local, shared, layout: () => layout, notify: () => {} });
 		await restarted.init();
 		await new Promise((r) => setTimeout(r, 50));
 		expect(fetchSeasons).toHaveBeenCalledTimes(1);
