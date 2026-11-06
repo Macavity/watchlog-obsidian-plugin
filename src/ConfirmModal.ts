@@ -1,4 +1,5 @@
 import { App, Modal } from 'obsidian';
+import { t } from './i18n';
 
 /**
  * Optional third action between Confirm and Cancel — an alternative way out (e.g. "Switch to
@@ -23,16 +24,17 @@ export class ConfirmModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
+		this.titleEl.setText(t('misc.confirm.title'));
 		contentEl.createDiv({ cls: 'wl-confirm-msg', text: this.message });
 		const btnRow = contentEl.createDiv({ cls: 'wl-modal-btn-row' });
-		btnRow.createEl('button', { cls: 'wl-btn wl-btn-danger', text: 'Confirm' })
+		btnRow.createEl('button', { cls: 'wl-btn wl-btn-danger', text: t('misc.confirm.confirm') })
 			.addEventListener('click', () => { this.close(); this.onConfirm(); });
 		if (this.extraButton) {
 			const extra = this.extraButton;
 			btnRow.createEl('button', { cls: 'wl-btn', text: extra.label })
 				.addEventListener('click', () => { this.close(); extra.onClick(); });
 		}
-		btnRow.createEl('button', { cls: 'wl-btn', text: 'Cancel' })
+		btnRow.createEl('button', { cls: 'wl-btn', text: t('common.cancel') })
 			.addEventListener('click', () => this.close());
 	}
 

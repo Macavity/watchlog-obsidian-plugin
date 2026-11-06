@@ -8,9 +8,7 @@
 // trailing label shows that tier's text. N and N.5 share tier N; 0 is the unrated state.
 
 import type { RatingTier } from './types';
-
-/** Text shown for the unrated (0) state — not part of the editable five tiers. */
-const UNRATED_LABEL = 'Not rated';
+import { t } from './i18n';
 
 /**
  * Maps a rating to its tier index: 0 when unrated, else 1–5. A whole star shares a tier with the
@@ -30,7 +28,8 @@ export function ratingColor(rating: number, tiers: RatingTier[]): string {
 /** Tier label for a rating, or the unrated label when 0. */
 function ratingLabel(rating: number, tiers: RatingTier[]): string {
 	const idx = ratingTierIndex(rating);
-	return idx === 0 ? UNRATED_LABEL : (tiers[idx - 1]?.label ?? '');
+	// unrated (0) is not part of the editable five tiers
+	return idx === 0 ? t('misc.starRating.unrated') : (tiers[idx - 1]?.label ?? '');
 }
 
 export interface StarRatingOptions {

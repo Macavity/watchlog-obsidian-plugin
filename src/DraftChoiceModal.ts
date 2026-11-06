@@ -1,4 +1,5 @@
 import { App, Modal } from 'obsidian';
+import { t } from './i18n';
 
 export type DraftAddChoice = 'watchlist' | 'book' | 'manga' | 'game';
 
@@ -11,7 +12,7 @@ export class DraftChoiceModal extends Modal {
 		app: App,
 		private draftText: string,
 		private onChoice: (choice: DraftAddChoice) => void,
-		private heading = 'Add draft',
+		private heading = t('misc.draftChoice.heading'),
 	) {
 		super(app);
 	}
@@ -35,10 +36,10 @@ export class DraftChoiceModal extends Modal {
 			});
 		};
 
-		makeOption('Add in Watchlist', 'watchlist');
-		makeOption('Add book', 'book');
-		makeOption('Add manga', 'manga');
-		makeOption('Add to Games', 'game');
+		makeOption(t('misc.draftChoice.addWatchlist'), 'watchlist');
+		makeOption(t('misc.draftChoice.addBook'), 'book');
+		makeOption(t('misc.draftChoice.addManga'), 'manga');
+		makeOption(t('misc.draftChoice.addGame'), 'game');
 	}
 
 	onClose(): void {

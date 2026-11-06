@@ -1,4 +1,5 @@
 import { App, FuzzySuggestModal } from 'obsidian';
+import { t } from './i18n';
 
 /** A unified finder entry spanning watchlist titles, reading items and games. */
 export interface UpcomingFinderItem {
@@ -22,7 +23,7 @@ export class UpcomingFinderModal extends FuzzySuggestModal<UpcomingFinderItem> {
 		super(app);
 		this.items = items;
 		this.onSelect = onSelect;
-		this.setPlaceholder('Search a title to add to Upcoming...');
+		this.setPlaceholder(t('misc.upcomingFinder.placeholder'));
 	}
 
 	getItems(): UpcomingFinderItem[] {

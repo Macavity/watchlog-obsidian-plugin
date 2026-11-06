@@ -1,6 +1,7 @@
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle } from './types';
 import { todayIso } from './types';
+import { t } from './i18n';
 
 /**
  * True for titles with exactly one thing to tick, where the episode grid would render a lone "1"
@@ -44,9 +45,9 @@ export function appendMarkWatchedButton(
 
 	const paint = (): void => {
 		const done = isWatched();
-		btn.textContent = done ? 'Watched' : 'Mark as Watched';
+		btn.textContent = done ? t('misc.markWatched.watched') : t('misc.markWatched.markAsWatched');
 		btn.toggleClass('is-watched', done);
-		btn.title = done ? 'Click to unmark as watched' : 'Mark as watched';
+		btn.title = done ? t('misc.markWatched.unmarkHint') : t('misc.markWatched.markHint');
 		btn.setAttr('aria-pressed', done ? 'true' : 'false');
 	};
 	paint();

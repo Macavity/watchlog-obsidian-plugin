@@ -1,4 +1,5 @@
 import type WatchLogPlugin from './main';
+import { t } from './i18n';
 import type { MediaFields } from './ui/FormCells';
 import type { AnimeSearchResult, MediaSearchResult, Season } from './types';
 import { getApiGroupForType } from './types';
@@ -48,7 +49,7 @@ export function fetchMediaDetails(
 
 /** "12 eps", or the media type for movies and rows without an episode count. */
 export function episodesLabel(result: TitleSearchResult): string {
-	if (isAnimeResult(result) || result.episodes > 0) return `${result.episodes} eps`;
+	if (isAnimeResult(result) || result.episodes > 0) return t('misc.titleSearch.episodes', { count: result.episodes });
 	return result.mediaType;
 }
 
@@ -162,7 +163,7 @@ export function titlePickerBase(
 	onTypeChange: (type: string) => void,
 ) {
 	return {
-		placeholder: 'Search for a title...',
+		placeholder: t('misc.titleSearch.placeholder'),
 		withYear: true,
 		pageSize: SEARCH_PAGE_SIZE,
 		typeSelect: {

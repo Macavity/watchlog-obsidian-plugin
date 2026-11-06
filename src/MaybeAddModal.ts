@@ -1,4 +1,5 @@
 import { App, Notice } from 'obsidian';
+import { t } from './i18n';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { MaybeTitle } from './types';
@@ -33,7 +34,7 @@ export class MaybeAddModal extends SearchFormModal<TitleSearchResult> {
 		dataManager: DataManager,
 		onAdded: () => void,
 	) {
-		super(app, 'Add to maybe', ['wl-add-modal']);
+		super(app, t('misc.maybeAdd.title'), ['wl-add-modal']);
 		this.plugin = plugin;
 		this.dataManager = dataManager;
 		this.onAdded = onAdded;
@@ -53,7 +54,7 @@ export class MaybeAddModal extends SearchFormModal<TitleSearchResult> {
 	protected async search(query: string, year: string): Promise<TitleSearchResult[]> {
 		const found = await searchTitles(this.plugin, this.selectedType, query, year);
 		if (found) return found;
-		new Notice(`No API configured for type "${this.selectedType}". Configure it in Settings → API.`);
+		new Notice(t('misc.maybeAdd.noApi', { type: this.selectedType }));
 		return [];
 	}
 
@@ -75,13 +76,13 @@ export class MaybeAddModal extends SearchFormModal<TitleSearchResult> {
 		renderMediaFields(form, this.media, false);
 
 		const btnRow = form.createDiv({ cls: 'wl-modal-btn-row' });
-		const addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: 'Add to maybe' });
+		const addBtn = btnRow.createEl('button', { cls: 'wl-btn wl-btn-primary', text: t('misc.maybeAdd.submit') });
 		addBtn.addEventListener('click', () => void this.addMaybeTitle());
 	}
 
 	private async addMaybeTitle(): Promise<void> {
 		const titleName = this.media.title.trim();
-		if (!titleName) { new Notice('Please enter a title name.'); return; }
+		if (!titleName) { new Notice(t('misc.maybeAdd.titleRequired')); return; }
 
 		const entry: MaybeTitle = {
 			id: this.dataManager.generateMaybeId(titleName),
@@ -94,7 +95,7 @@ export class MaybeAddModal extends SearchFormModal<TitleSearchResult> {
 			dateAdded: new Date().toISOString(),
 		};
 		await this.dataManager.addMaybeTitle(entry);
-		new Notice(`"${titleName}" added to Maybe.`);
+		new Notice(t('misc.maybeAdd.added', { title: titleName }));
 		this.close();
 		this.onAdded();
 	}

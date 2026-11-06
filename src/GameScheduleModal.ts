@@ -1,4 +1,5 @@
 import { App, Modal } from 'obsidian';
+import { t } from './i18n';
 import type { Game, AirtimeSchedule } from './types';
 import {
 	type ScheduleFormState,
@@ -28,7 +29,7 @@ export class GameScheduleModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.titleEl.setText('Set release schedule');
+		this.titleEl.setText(t('misc.gameSchedule.title'));
 		this.contentEl.addClass('wl-add-modal');
 		this.renderForm();
 	}
@@ -42,7 +43,7 @@ export class GameScheduleModal extends Modal {
 			withTime: false,
 			withRecurring: false,
 			// the save side-effect, stated instead of silent
-			hint: () => "Saving also updates this game's release date.",
+			hint: () => t('misc.gameSchedule.hint'),
 			modal: this,
 			onSave: () => this.onSave(buildScheduleFromState(this.form, false)),
 		});

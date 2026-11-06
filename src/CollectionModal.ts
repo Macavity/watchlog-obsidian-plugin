@@ -1,6 +1,7 @@
 // TMDB collections (film series). Movies only — TV has no belongs_to_collection.
 
 import { App, Modal, Notice } from 'obsidian';
+import { t } from './i18n';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type {
@@ -213,7 +214,7 @@ export class CollectionModal extends Modal {
 		if (!this.metaEl) return;
 		const titles = this.dataManager.getTitles();
 		const owned = this.parts.filter((p) => matchLibraryTitle(p, titles)).length;
-		this.metaEl.setText(`${owned} of ${this.parts.length} in your library`);
+		this.metaEl.setText(t('misc.collection.libraryCount', { owned, total: this.parts.length }));
 	}
 
 	private renderGrid(): void {
@@ -227,7 +228,7 @@ export class CollectionModal extends Modal {
 
 		for (const part of this.parts) {
 			const existing = matchLibraryTitle(part, titles);
-			const name = part.title ?? 'Untitled';
+			const name = part.title ?? t('misc.collection.untitled');
 			const year = yearOf(part.release_date);
 			const fallbackPoster = tmdbPoster(part.poster_path);
 
@@ -278,7 +279,7 @@ export class CollectionModal extends Modal {
 					posterUrl: fallbackPoster,
 					placeholderColor: NOT_ADDED_COLOR,
 					selected: this.selected.has(part.id),
-					statusLabel: 'Not added',
+					statusLabel: t('misc.collection.notAdded'),
 					statusColor: NOT_ADDED_COLOR,
 					typeLabel: this.movieType,
 					typeColor: NOT_ADDED_COLOR,
@@ -320,7 +321,7 @@ export class CollectionModal extends Modal {
 			const allSelected = missing.every((p) => this.selected.has(p.id));
 			const selectBtn = left.createEl('button', {
 				cls: 'wl-btn wl-btn-sm',
-				text: allSelected ? 'Select none' : 'Select all',
+				text: allSelected ? t('misc.collection.selectNone') : t('misc.collection.selectAll'),
 				attr: { type: 'button' },
 			});
 			selectBtn.disabled = this.isAdding;
@@ -342,7 +343,7 @@ export class CollectionModal extends Modal {
 		groupCheck.addEventListener('change', () => {
 			this.createGroup = groupCheck.checked;
 		});
-		groupLabel.createSpan({ text: `Group as "${this.collection.name}"` });
+		groupLabel.createSpan({ text: t('misc.collection.groupAs', { name: this.collection.name }) });
 
 		const addBtn = footer.createEl('button', {
 			cls: 'wl-btn wl-btn-primary wl-collection-add',
@@ -351,10 +352,10 @@ export class CollectionModal extends Modal {
 		const count = this.selected.size;
 		addBtn.setText(
 			this.isAdding
-				? 'Adding…'
+				? t('misc.collection.adding')
 				: count > 0
-					? `Add ${count} title${count !== 1 ? 's' : ''}`
-					: 'Add selected',
+					? t('misc.collection.addCount', { count })
+					: t('misc.collection.addSelected'),
 		);
 		addBtn.disabled = this.isAdding || count === 0;
 		addBtn.addEventListener('click', () => void this.addSelected());
@@ -389,7 +390,7 @@ export class CollectionModal extends Modal {
 
 		for (let i = 0; i < picked.length; i++) {
 			const part = picked[i]!;
-			addBtn?.setText(`Adding ${i + 1}/${picked.length}…`);
+			addBtn?.setText(t('misc.collection.addingProgress', { current: i + 1, total: picked.length }));
 
 			const detail = await api.getTmdbMovieDetails(String(part.id));
 			if (!detail) {
@@ -452,11 +453,11 @@ export class CollectionModal extends Modal {
 		if (failed > 0) {
 			new Notice(
 				entries.length > 0
-					? `Added ${entries.length}; ${failed} could not be fetched from TMDB.`
-					: 'Could not fetch details from TMDB. Check your connection.',
+					? t('misc.collection.partial', { added: entries.length, failed })
+					: t('misc.collection.fetchFailed'),
 			);
 		} else {
-			new Notice(`Added ${entries.length} to "${this.collection.name}".`);
+			new Notice(t('misc.collection.added', { count: entries.length, name: this.collection.name }));
 		}
 
 		this.renderGrid();
