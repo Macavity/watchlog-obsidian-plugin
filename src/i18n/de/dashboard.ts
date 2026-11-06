@@ -1,6 +1,75 @@
 import type enDashboard from '../en/dashboard';
 import type { DeepPartial } from '../index';
 
-const dashboard = {} satisfies DeepPartial<typeof enDashboard>;
+const dashboard = {
+	cards: {
+		total: 'Gesamt',
+		books: 'Bücher',
+		manga: 'Manga',
+		left: '{count} übrig',
+		unwatched: '{count} ungesehen',
+		timeWatched: 'Geschaute Zeit',
+		timeRemaining: 'Verbleibende Zeit',
+		timePlayed: 'Gespielte Zeit',
+		pages: '{read} / {total} Seiten',
+		chapters: '{read} / {total} Kapitel · {volumesRead} / {volumesTotal} Bd.',
+	},
+	stats: {
+		title: 'Weitere Statistiken',
+		titlesInLibrary: 'Titel in der Bibliothek',
+		completed: 'Abgeschlossen',
+		addedOverTime: 'Hinzugefügt im Zeitverlauf',
+		byStatus: 'Nach Status',
+		byType: 'Nach Typ',
+		byYear: 'Nach Jahr',
+		timeByYear: 'Geschaute Zeit nach Jahr',
+		topActors: 'Top-Schauspieler',
+		topDirectors: 'Top-Regisseure',
+		topStudios: 'Top-Studios',
+		groupByYear: 'Nach Jahr gruppieren',
+		groupByDecade: 'Nach Jahrzehnt gruppieren',
+		noData: 'Noch keine Daten.',
+		empty: 'Noch keine Statistiken für die gewählten Bibliotheken.',
+		book: 'Buch',
+		manga: 'Manga',
+	},
+	suggestions: {
+		title: 'Keine Idee, was du als Nächstes schauen sollst?',
+		shortest: 'Kürzeste Wahl: {type}',
+		nothingPlanned: 'Nichts geplant',
+		random: 'Zufall',
+		pickAnother: 'Anderen wählen',
+	},
+	recent: {
+		watchedTitle: 'Zuletzt geschaut',
+		watchedEmpty: 'Noch nichts geschaut.',
+		addedTitle: 'Zuletzt hinzugefügt',
+		addedEmpty: 'Noch keine Titel in deiner Bibliothek.',
+		episode: 'Folge {n}',
+	},
+	log: {
+		empty: 'Noch keine Ereignisse. Aktionen aus Watchlist, Lesen und Spiele erscheinen hier.',
+		emptySource: 'Noch keine Ereignisse in {source}.',
+		deleteEvent: 'Ereignis löschen',
+		confirmDelete: 'Dieses Verlaufsereignis löschen? ({title} · {action})',
+		action: {
+			added: 'Hinzugefügt',
+			group: 'Gruppe erstellt',
+			deleted: 'Gelöscht',
+			rating: 'Bewertung → {value}',
+			ratingChanged: 'Bewertung geändert',
+			status: 'Status → {status}',
+			statusChanged: 'Status geändert',
+			completed: 'Abgeschlossen',
+			atPage: 'Bei Seite {n} / {total}',
+			atChapter: 'Bei Kapitel {n} / {total}',
+			atVolume: 'Bei Band {n} / {total}',
+			seasonWatched: '{name} geschaut',
+			episodeWatched: 'Folge {n} geschaut',
+			watched: 'Geschaut',
+			updated: 'Aktualisiert',
+		},
+	},
+} satisfies DeepPartial<typeof enDashboard>;
 
 export default dashboard;
