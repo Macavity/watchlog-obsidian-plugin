@@ -15,6 +15,7 @@ const lists = {
 	preview: 'Vorschau',
 	notesPlaceholder: 'Notizen, Links oder beliebigen Text hier eintragen...',
 	newList: 'Neue eigene Liste',
+	deleteList: 'Liste „{name}“ löschen',
 	listName: 'Listenname',
 	listNamePlaceholder: 'Z. B. Marvel-Filme',
 	enterName: 'Bitte einen Namen eingeben.',

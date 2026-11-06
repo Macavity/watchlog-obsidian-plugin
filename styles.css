@@ -2683,15 +2683,12 @@ button.wl-api-action-btn {
   color: var(--text-normal);
 }
 
+/* sm icon button at the end of a tag pill */
 .wl-tag-del {
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
   margin-left: 2px;
 }
 
-.wl-tag-del:hover {
+button.wl-tag-del:hover {
   color: var(--text-error);
 }
 
@@ -4938,11 +4935,8 @@ button.wl-airtime-action-btn-tick:hover {
   flex: 1;
 }
 
+/* sm icon button in the list tab, revealed on hover */
 .wl-cl-sub-tab-del {
-  font-size: 13px;
-  line-height: 1;
-  color: var(--text-faint);
-  cursor: pointer;
   opacity: 0;
   transition: opacity 0.12s, color 0.12s;
   flex-shrink: 0;
@@ -4952,25 +4946,14 @@ button.wl-airtime-action-btn-tick:hover {
   opacity: 1;
 }
 
-.wl-cl-sub-tab-del:hover {
+button.wl-cl-sub-tab-del:hover {
   color: var(--text-error);
 }
 
-.wl-cl-sub-tab-add {
+/* icon button; its colours come from .wl-btn-success */
+button.wl-cl-sub-tab-add {
+  width: auto;
   padding: 3px 10px;
-  border-radius: 4px;
-  border: 0.5px dashed var(--background-modifier-border);
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-  transition: color 0.12s, border-color 0.12s;
-}
-
-.wl-cl-sub-tab-add:hover {
-  color: var(--text-normal);
-  border-color: var(--interactive-accent);
 }
 
 .wl-cl-sub-tab-rename {
@@ -5182,10 +5165,9 @@ body.wl-cl-col-resizing {
   text-overflow: ellipsis;
 }
 
+/* sm icon button next to the column label */
 .wl-cl-autotime-refresh {
-  cursor: pointer;
   margin-left: 4px;
-  font-size: 13px;
   opacity: 0.6;
   transition: opacity 0.15s;
 }
@@ -5237,48 +5219,29 @@ body.wl-cl-col-resizing {
 }
 
 /* Row actions */
-.wl-cl-row-action {
+/* row icon buttons, revealed on row hover; element-qualified to outrank the base */
+button.wl-cl-row-action {
   width: 20px;
   height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 3px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-muted);
   opacity: 0;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
   flex-shrink: 0;
-  user-select: none;
 }
 
-.wl-cl-drag-handle {
+button.wl-cl-drag-handle {
   cursor: grab;
-  font-size: 14px;
 }
 
-.wl-cl-drag-handle:hover {
-  color: var(--text-normal);
-  background: var(--background-modifier-hover);
-}
-
-.wl-cl-add-btn {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.wl-cl-add-btn:hover {
+button.wl-cl-add-btn:hover {
   color: var(--text-on-accent);
   background: var(--color-green);
 }
 
-.wl-cl-dup-btn:hover {
+button.wl-cl-dup-btn:hover {
   color: var(--interactive-accent);
-  background: var(--background-modifier-hover);
 }
 
-.wl-cl-row-del:hover {
+button.wl-cl-row-del:hover {
   color: var(--text-on-accent);
   background: #E24B4A;
 }
@@ -5524,19 +5487,12 @@ body.wl-cl-col-resizing {
   justify-content: center;
 }
 
+/* icon button in the column card header */
 .wl-editcol-card-del {
   align-self: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  font-size: 11px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
 }
 
-.wl-editcol-card-del:hover {
+button.wl-editcol-card-del:hover {
   color: var(--text-error);
 }
 
@@ -5568,19 +5524,12 @@ body.wl-cl-col-resizing {
   height: 22px;
 }
 
+/* sm icon button after an option input */
 .wl-editcol-card-opt-del {
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  font-size: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
 }
 
-.wl-editcol-card-opt-del:hover {
+button.wl-editcol-card-opt-del:hover {
   color: var(--text-error);
 }
 
@@ -10287,13 +10236,14 @@ button.wl-btn-danger:hover {
   color: var(--text-on-accent);
 }
 
-.wl-btn-success {
+/* element-qualified so it also outranks button.wl-icon-btn */
+button.wl-btn-success {
   background: transparent;
   border: 0.5px solid rgba(var(--color-green-rgb), 0.65);
   color: var(--color-green);
 }
 
-.wl-btn-success:hover {
+button.wl-btn-success:hover {
   background: var(--color-green);
   border-color: var(--color-green);
   color: var(--text-on-accent);
@@ -11164,8 +11114,6 @@ button.wl-search-help-btn {
    Phones and desktop never load that rule; only tablets break.
    Prefixing `body` + qualifying `button` outranks it. Values copied from each
    button's own rule. */
-body.is-tablet button.wl-editcol-card-del,
-body.is-tablet button.wl-editcol-card-opt-del,
 body.is-tablet button.wl-editcol-card-toggle,
 body.is-tablet button.wl-editcol-opt-color-dot,
 body.is-tablet button.wl-reading-col-color-dot,

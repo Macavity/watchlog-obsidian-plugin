@@ -10,6 +10,7 @@ import { openAddForTitle } from './AddRouter';
 import { cloneColumns, renderCancelSave, renderColumnsEditor } from './ui/ColumnsEditor';
 import { t } from './i18n';
 import { statusLabel, typeLabel, readingStatusLabel } from './i18n/labels';
+import { createIconButton } from './ui/IconButton';
 
 /** Row name, trimmed — the index signature types it loosely. */
 function rowName(row: CustomListRow): string {
@@ -661,7 +662,12 @@ export class CustomListsTab {
 				this.startRenameTab(tab, nameSpan, name);
 			});
 
-			const delBtn = tab.createSpan({ cls: 'wl-cl-sub-tab-del', text: '×' });
+			const delBtn = createIconButton(tab, {
+				icon: 'x',
+				label: t('lists.deleteList', { name }),
+				cls: 'wl-cl-sub-tab-del',
+				variant: 'sm',
+			});
 			delBtn.addEventListener('click', (e) => { e.stopPropagation(); void this.deleteList(name); });
 
 			tab.addEventListener('click', () => {
@@ -696,7 +702,7 @@ export class CustomListsTab {
 			});
 		}
 
-		const addBtn = tabBar.createEl('button', { cls: 'wl-cl-sub-tab-add wl-btn-success', text: '+' });
+		const addBtn = createIconButton(tabBar, { icon: 'plus', label: t('lists.newList'), cls: 'wl-cl-sub-tab-add wl-btn-success' });
 		addBtn.addEventListener('click', () => this.promptCreateList());
 	}
 
@@ -995,8 +1001,12 @@ export class CustomListsTab {
 			th.createSpan({ text: col.label });
 			this.addResizeHandle(th, col.id, list, table);
 			if (col.type === 'number' && col.autoTime) {
-				const refreshBtn = th.createSpan({ cls: 'wl-cl-autotime-refresh', text: '↻' });
-				refreshBtn.title = t('lists.refreshRemaining');
+				const refreshBtn = createIconButton(th, {
+					icon: 'refresh-cw',
+					label: t('lists.refreshRemaining'),
+					cls: 'wl-cl-autotime-refresh',
+					variant: 'sm',
+				});
 				refreshBtn.addEventListener('click', (e) => {
 					e.stopPropagation();
 					this.autoPopulateTimeColumn(list, col);
@@ -1059,17 +1069,18 @@ export class CustomListsTab {
 
 			const actCell = tr.createDiv({ cls: 'wl-cl-td wl-cl-td-actions' });
 
-			const dragHandle = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-drag-handle', text: '⠿' });
-			dragHandle.title = t('ui.columns.dragToReorder');
+			const dragHandle = createIconButton(actCell, {
+				icon: 'grip-vertical',
+				label: t('ui.columns.dragToReorder'),
+				cls: 'wl-cl-row-action wl-cl-drag-handle',
+			});
 
-			// unnamed rows have nothing to send to a library
+			// unnamed rows have nothing to send to a library; the click is delegated on the table
 			if (rowName(row)) {
-				const addBtn = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-add-btn', text: '+' });
-				addBtn.title = t('lists.addToLibrary');
+				createIconButton(actCell, { icon: 'plus', label: t('lists.addToLibrary'), cls: 'wl-cl-row-action wl-cl-add-btn' });
 			}
 
-			const dupBtn = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-dup-btn', text: '⧉' });
-			dupBtn.title = t('lists.duplicateRow');
+			const dupBtn = createIconButton(actCell, { icon: 'copy', label: t('lists.duplicateRow'), cls: 'wl-cl-row-action wl-cl-dup-btn' });
 			dupBtn.addEventListener('click', () => {
 				const realIdx = list.rows.findIndex(r => r.id === row.id);
 				if (realIdx < 0) return;
@@ -1082,8 +1093,7 @@ export class CustomListsTab {
 				void this.manager.saveList(list).then(() => { container.empty(); this.buildTable(container, list, countEl); });
 			});
 
-			const rowDelBtn = actCell.createDiv({ cls: 'wl-cl-row-action wl-cl-row-del', text: '×' });
-			rowDelBtn.title = t('lists.deleteRow');
+			const rowDelBtn = createIconButton(actCell, { icon: 'x', label: t('lists.deleteRow'), cls: 'wl-cl-row-action wl-cl-row-del' });
 			rowDelBtn.addEventListener('click', () => {
 				list.rows = list.rows.filter(r => r.id !== row.id);
 				this.duplicatedRowIds.delete(row.id);
