@@ -76,6 +76,8 @@ const sentenceCaseOptions = {
 		'^Format: "Season Name',
 		'^Skip episodes: add "',
 		'^Note: when adding a new season',
+		// detail area: lowercase link/caption/unit words, placeholder naming MAL
+		'^(show less|eps|cover art|not linked|chapters|volumes|MAL manga ID)$',
 	],
 };
 

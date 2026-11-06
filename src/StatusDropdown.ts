@@ -7,6 +7,7 @@
 // and renderTagChips, the multi-select chip row used by the Games platform pickers.
 
 import type { TagDefinition } from './types';
+import { t } from './i18n';
 
 export interface StatusDropdownOption {
 	value: string;
@@ -83,6 +84,8 @@ export interface TagPillOptions {
 	wrap: HTMLElement;
 	/** Current value; '' renders the muted placeholder pill. */
 	value: string;
+	/** Display text for a non-empty `value` (a localized stored value); defaults to `value`. */
+	valueLabel?: string;
 	/** Text for the empty value (e.g. 'No priority'). */
 	emptyLabel?: string;
 	/** Fill colour for the current value; null/undefined ⇒ muted placeholder. */
@@ -111,7 +114,7 @@ export function renderTagPill(opts: TagPillOptions): HTMLElement {
 		cls: `wl-reading-detail-status${color ? '' : ' wl-detail-priority-empty'}`,
 	});
 	if (opts.showDot) badge.createSpan({ cls: 'wl-detail-status-dot' });
-	badge.createSpan({ text: value || (opts.emptyLabel ?? 'None') });
+	badge.createSpan({ text: value ? (opts.valueLabel ?? value) : (opts.emptyLabel ?? t('common.none')) });
 	if (color) badge.style.backgroundColor = color;
 	if (opts.tooltip) badge.title = opts.tooltip;
 
