@@ -6703,20 +6703,30 @@ button.wl-inner-tab-btn {
 
 /* ✕ on a user-added name (sm icon button), revealed on hover so the row stays quiet at rest.
    element-qualified to outrank the base's display */
+/* collapsed to zero width at rest (display: none would make it unreachable by keyboard),
+   so the name list keeps no gap before the comma */
 button.wl-credits-name-del {
-  margin-left: 3px;
   vertical-align: 1px;
-  display: none;
+  width: 0;
+  margin-left: 0;
+  opacity: 0;
+  overflow: hidden;
 }
 
-.wl-credits-name:hover button.wl-credits-name-del {
-  display: inline-flex;
+.wl-credits-name:hover button.wl-credits-name-del,
+.wl-credits-name:focus-within button.wl-credits-name-del,
+button.wl-credits-name-del:focus-visible {
+  width: 16px;
+  margin-left: 3px;
+  opacity: 1;
 }
 
 /* no hover on touch — the remove control has to be there from the start */
 @media (hover: none) {
   button.wl-credits-name-del {
-    display: inline-flex;
+    width: 16px;
+    margin-left: 3px;
+    opacity: 1;
   }
 }
 
