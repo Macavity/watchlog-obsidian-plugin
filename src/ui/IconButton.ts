@@ -1,15 +1,16 @@
-import { setIcon } from 'obsidian';
+import { setIcon, setTooltip } from 'obsidian';
 
 /**
- * `framed` adds a border (rating row refresh); `lg` is the 28px card-menu size;
- * `sm` is the 16px inline affordance next to text (add / remove on a credits row).
+ * `framed` adds a border (rating row refresh); `sm` is the 16px inline affordance next to
+ * text (add / remove on a credits row). Anything else sizes itself with its own
+ * `button.wl-x` rule (card menus, row actions).
  */
-export type IconButtonVariant = 'framed' | 'lg' | 'sm';
+export type IconButtonVariant = 'framed' | 'sm';
 
 export interface IconButtonOptions {
 	/** Lucide icon name, e.g. `refresh-cw`. */
 	icon: string;
-	/** Already translated; becomes `aria-label` and `title`. */
+	/** Already translated; becomes the accessible name and Obsidian's tooltip (`aria-label`, no `title`). */
 	label: string;
 	/** Extra context classes, space separated. */
 	cls?: string;
@@ -26,8 +27,10 @@ export function createIconButton(parent: HTMLElement, opts: IconButtonOptions): 
 	if (opts.cls) classes.push(opts.cls);
 	const btn = parent.createEl('button', {
 		cls: classes.join(' '),
-		attr: { type: 'button', 'aria-label': opts.label, title: opts.label },
+		attr: { type: 'button', 'aria-label': opts.label },
 	});
+	// Obsidian's own tooltip reads aria-label; a `title` on top would add a second, native one
+	setTooltip(btn, opts.label);
 	setIcon(btn, opts.icon);
 	return btn;
 }

@@ -13,7 +13,7 @@ describe('createIconButton', () => {
 		expect(btn.tag).toBe('button');
 		expect(btn.attr.type).toBe('button');
 		expect(btn.attr['aria-label']).toBe('Refresh');
-		expect(btn.attr.title).toBe('Refresh');
+		expect(btn.attr.title).toBeUndefined();
 		expect(btn.attr['data-icon']).toBe('refresh-cw');
 		expect(btn.classes.has('wl-icon-btn')).toBe(true);
 		expect(btn.text).toBe('');
@@ -30,11 +30,5 @@ describe('createIconButton', () => {
 	it('maps the sm variant to its class', () => {
 		const btn = build({ icon: 'plus', label: 'Add', variant: 'sm' });
 		expect(btn.classes.has('wl-icon-btn-sm')).toBe(true);
-	});
-
-	it('maps the lg variant to its class', () => {
-		const btn = build({ icon: 'more-vertical', label: 'Menu', variant: 'lg' });
-		expect(btn.classes.has('wl-icon-btn-lg')).toBe(true);
-		expect(btn.classes.has('wl-icon-btn-framed')).toBe(false);
 	});
 });

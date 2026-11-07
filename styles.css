@@ -163,17 +163,6 @@ button.wl-icon-btn-sm .svg-icon {
   height: 12px;
 }
 
-/* card menus and the mobile toolbar */
-button.wl-icon-btn-lg {
-  width: 28px;
-  height: 28px;
-}
-
-button.wl-icon-btn-lg .svg-icon {
-  width: 18px;
-  height: 18px;
-}
-
 /* refresh in flight; the caller toggles the class */
 button.wl-icon-btn.is-loading {
   animation: wl-spin 0.9s linear infinite;
@@ -4898,7 +4887,8 @@ button.wl-rows-customize-move:disabled {
   flex-shrink: 0;
 }
 
-.wl-cl-sub-tab:hover .wl-cl-sub-tab-del {
+.wl-cl-sub-tab:hover .wl-cl-sub-tab-del,
+.wl-cl-sub-tab-del:focus-visible {
   opacity: 1;
 }
 
@@ -4907,7 +4897,8 @@ button.wl-cl-sub-tab-del:hover {
 }
 
 /* icon button; its colours come from .wl-btn-success */
-button.wl-cl-sub-tab-add {
+button.wl-cl-sub-tab-add,
+body.is-tablet button.wl-cl-sub-tab-add {
   width: auto;
   padding: 3px 10px;
 }
@@ -5100,7 +5091,8 @@ body.wl-cl-col-resizing {
   background: var(--background-modifier-hover);
 }
 
-.wl-cl-tr-body:hover .wl-cl-row-action {
+.wl-cl-tr-body:hover .wl-cl-row-action,
+button.wl-cl-row-action:focus-visible {
   opacity: 1;
 }
 
@@ -7432,7 +7424,8 @@ button.wl-reading-card-menu-btn:hover {
   color: #fff;
 }
 
-.wl-card:hover .wl-card-menu-btn {
+.wl-card:hover .wl-card-menu-btn,
+button.wl-card-menu-btn:focus-visible {
   opacity: 1;
 }
 
@@ -8941,7 +8934,8 @@ button.wl-reading-card-menu-btn {
   z-index: 5;
 }
 
-.wl-reading-card:hover .wl-reading-card-menu-btn {
+.wl-reading-card:hover .wl-reading-card-menu-btn,
+button.wl-reading-card-menu-btn:focus-visible {
   opacity: 1;
 }
 
