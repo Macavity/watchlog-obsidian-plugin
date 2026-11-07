@@ -1,6 +1,7 @@
 import type { App } from 'obsidian';
 import { ConfirmModal } from '../ConfirmModal';
 import { t } from '../i18n';
+import { createIconButton } from './IconButton';
 
 export interface DeleteSelectedOptions {
 	/** Tooltip on the ✕ button. */
@@ -16,11 +17,11 @@ export interface DeleteSelectedOptions {
 /** The selection action bar with its red ✕, which asks for confirmation before running `onConfirm`. */
 export function renderActionBar(parent: HTMLElement, app: App, opts: DeleteSelectedOptions): HTMLElement {
 	const bar = parent.createDiv({ cls: 'wl-action-bar' });
-	const deleteBtn = bar.createEl('button', {
+	const deleteBtn = createIconButton(bar, {
+		icon: 'x',
+		label: opts.title,
 		cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
-		text: '✕',
 	});
-	deleteBtn.title = opts.title;
 	deleteBtn.addEventListener('click', (e) => {
 		e.stopPropagation();
 		new ConfirmModal(app, opts.message(opts.selected.size), () => { void opts.onConfirm(); }).open();
@@ -93,10 +94,8 @@ function renderInlineGroupInput(bar: HTMLElement, opts: MoveToGroupOptions): voi
 		cls: 'wl-modal-input wl-group-name-input',
 		attr: { type: 'text', placeholder: t('ui.actionBar.groupName'), maxlength: '64' },
 	});
-	const confirmBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✓' });
-	confirmBtn.title = t('ui.actionBar.createGroup');
-	const cancelBtn = bar.createEl('button', { cls: 'wl-group-action-btn', text: '✕' });
-	cancelBtn.title = t('common.cancel');
+	const confirmBtn = createIconButton(bar, { icon: 'check', label: t('ui.actionBar.createGroup'), cls: 'wl-group-action-btn' });
+	const cancelBtn = createIconButton(bar, { icon: 'x', label: t('common.cancel'), cls: 'wl-group-action-btn' });
 
 	// Enter twice (or Enter + ✓) while onCreate awaits the store would build two identical groups
 	let creating = false;

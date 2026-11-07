@@ -4,6 +4,7 @@ import type { WatchLogTitle, AnimeSearchResult } from './types';
 import { formatVoteCount, getApiGroupForType, getCommunityRating } from './types';
 import { apiErrorMessage } from './ApiService';
 import { t } from './i18n';
+import { createIconButton } from './ui/IconButton';
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -55,10 +56,10 @@ export function renderCommunityRating(
 		badge.createSpan({ cls: 'wl-community-empty', text: t('detail.community.empty') });
 	}
 
-	const refreshBtn = badge.createEl('button', {
-		cls: 'wl-community-refresh',
-		text: '⟳',
-		attr: { title: t('detail.community.refresh'), type: 'button' },
+	const refreshBtn = createIconButton(badge, {
+		icon: 'refresh-cw',
+		label: t('detail.community.refresh'),
+		variant: 'framed',
 	});
 	refreshBtn.addEventListener('click', (e) => {
 		e.stopPropagation();

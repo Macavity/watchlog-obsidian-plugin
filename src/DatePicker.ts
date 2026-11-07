@@ -13,8 +13,8 @@
  *   committed value is kept, so a typo can no longer write a non-ISO string into the data.
  */
 
-import { setIcon } from 'obsidian';
 import { t } from './i18n';
+import { createIconButton } from './ui/IconButton';
 import {
 	dateFormatMask,
 	formatDateDisplay,
@@ -146,20 +146,12 @@ export function createDatePicker(cfg: DatePickerConfig): DatePickerHandle {
 		body.empty();
 
 		const head = body.createDiv({ cls: 'wl-datepicker-head' });
-		const prev = head.createEl('button', {
-			cls: 'wl-datepicker-nav',
-			attr: { 'aria-label': t('misc.datePicker.previousMonth') },
-		});
-		setIcon(prev, 'chevron-left');
+		const prev = createIconButton(head, { icon: 'chevron-left', label: t('misc.datePicker.previousMonth') });
 		head.createSpan({
 			cls: 'wl-datepicker-month',
 			text: `${t(MONTH_NAMES[viewMonth]!)} ${viewYear}`,
 		});
-		const next = head.createEl('button', {
-			cls: 'wl-datepicker-nav',
-			attr: { 'aria-label': t('misc.datePicker.nextMonth') },
-		});
-		setIcon(next, 'chevron-right');
+		const next = createIconButton(head, { icon: 'chevron-right', label: t('misc.datePicker.nextMonth') });
 
 		prev.addEventListener('click', (ev) => {
 			ev.stopPropagation();

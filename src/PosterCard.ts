@@ -7,6 +7,7 @@
 
 import { setIcon } from 'obsidian';
 import { t } from './i18n';
+import { createIconButton } from './ui/IconButton';
 
 export interface CardMenuItem {
 	label: string;
@@ -217,11 +218,11 @@ export function buildPosterCard(
 
 	const menuItems = spec.menuItems;
 	if (menuItems && menuItems.length > 0) {
-		const menuBtn = card.createEl('button', {
+		const menuBtn = createIconButton(card, {
+			icon: 'more-vertical',
+			label: spec.menuAriaLabel ?? t('list.card.moreActions'),
 			cls: 'wl-card-menu-btn',
-			text: '⋮',
 		});
-		menuBtn.setAttr('aria-label', spec.menuAriaLabel ?? t('list.card.moreActions'));
 		menuBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			openCardMenu(card, menuBtn, menuItems, menuCtx);

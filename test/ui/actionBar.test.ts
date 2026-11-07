@@ -17,7 +17,7 @@ function openInlineInput(onCreate: (name: string) => Promise<void>) {
 	select.value = '__new__';
 	select.fire('change');
 	const input = bar.find('wl-group-name-input')!;
-	const confirm = bar.children.find((c) => c.text === '✓')!;
+	const confirm = bar.children.find((c) => c.attr['data-icon'] === 'check')!;
 	return { bar, select, input, confirm, onMove, onCancel };
 }
 

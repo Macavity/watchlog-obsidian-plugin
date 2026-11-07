@@ -146,6 +146,11 @@ export class WorkspaceLeaf {}
 export const Platform = { isMobile: false, isDesktop: true };
 
 /** Records the icon name as `data-icon` so tests can assert which icon was set. */
+/** Mirrors the API: the tooltip text lands in aria-label. */
+export function setTooltip(el: El, tooltip: string): void {
+	el.attr['aria-label'] = tooltip;
+}
+
 export function setIcon(el: El, icon: string): void {
 	el.empty();
 	el.text = '';

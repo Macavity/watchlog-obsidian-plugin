@@ -1,5 +1,6 @@
-import { Notice, TFile, setIcon } from 'obsidian';
+import { Notice, TFile } from 'obsidian';
 import { t, type TranslationKey } from './i18n';
+import { createIconButton } from './ui/IconButton';
 import { gameStatusLabel } from './i18n/labels';
 import type WatchLogPlugin from './main';
 import type { GameDataManager } from './GameDataManager';
@@ -564,9 +565,7 @@ export class GamesTab {
 			cls: 'wl-results-count wl-results-count-rows',
 			text: countParts.join(', '),
 		});
-		const gearBtn = countEl.createEl('button', { cls: 'wl-rows-customize-btn' });
-		gearBtn.setAttr('aria-label', t('games.customizeRows'));
-		setIcon(gearBtn, 'settings');
+		const gearBtn = createIconButton(countEl, { icon: 'settings', label: t('games.customizeRows') });
 		gearBtn.addEventListener('click', () => {
 			new RowsCustomizeModal(this.plugin.app, this.plugin, {
 				shelves: GAMES_ROWS_SHELVES.map((sh) => ({

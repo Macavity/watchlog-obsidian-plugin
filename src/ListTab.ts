@@ -1,5 +1,6 @@
 import { setIcon } from 'obsidian';
 import { t, type TranslationKey } from './i18n';
+import { createIconButton } from './ui/IconButton';
 import { priorityLabel, statusLabel, typeLabel } from './i18n/labels';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
@@ -349,9 +350,7 @@ export class ListTab {
 		);
 		// customize-shelves gear, far right on the count line
 		countEl.addClass('wl-results-count-rows');
-		const gearBtn = countEl.createEl('button', { cls: 'wl-rows-customize-btn' });
-		gearBtn.setAttr('aria-label', t('list.rows.customize'));
-		setIcon(gearBtn, 'settings');
+		const gearBtn = createIconButton(countEl, { icon: 'settings', label: t('list.rows.customize') });
 		gearBtn.addEventListener('click', () => {
 			new RowsCustomizeModal(this.plugin.app, this.plugin, {
 				shelves: ROWS_SHELVES.map((sh) => ({ id: sh.id, label: t(`list.shelves.${sh.id}` as TranslationKey) })),
@@ -1981,8 +1980,7 @@ export class ListTab {
 					this.rerenderTable();
 				}
 			});
-			const saveBtn = renameRow.createEl('button', { cls: 'wl-group-action-btn', text: '✓' });
-			saveBtn.title = t('common.save');
+			const saveBtn = createIconButton(renameRow, { icon: 'check', label: t('common.save'), cls: 'wl-group-action-btn' });
 			saveBtn.addEventListener('click', (e) => {
 				e.stopPropagation();
 				void (async () => {
@@ -1995,8 +1993,7 @@ export class ListTab {
 					this.rerenderTable();
 				})();
 			});
-			const cancelBtn = renameRow.createEl('button', { cls: 'wl-group-action-btn', text: '✕' });
-			cancelBtn.title = t('common.cancel');
+			const cancelBtn = createIconButton(renameRow, { icon: 'x', label: t('common.cancel'), cls: 'wl-group-action-btn' });
 			cancelBtn.addEventListener('click', (e) => {
 				e.stopPropagation();
 				this.renamingGroupId = null;
@@ -2007,15 +2004,17 @@ export class ListTab {
 			// normal mode
 			const nameRow = colTitle.createDiv({ cls: 'wl-group-name-row' });
 			nameRow.createSpan({ cls: 'wl-row-title-text wl-group-name', text: group.name });
-			const renameBtn = nameRow.createEl('button', { cls: 'wl-group-action-btn', text: '✏' });
-			renameBtn.title = t('ui.toolbar.renameGroup');
+			const renameBtn = createIconButton(nameRow, { icon: 'pencil', label: t('ui.toolbar.renameGroup'), cls: 'wl-group-action-btn' });
 			renameBtn.addEventListener('click', (e) => {
 				e.stopPropagation();
 				this.renamingGroupId = group.id;
 				this.rerenderTable();
 			});
-			const deleteBtn = nameRow.createEl('button', { cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger', text: '✕' });
-			deleteBtn.title = t('list.deleteGroupTip');
+			const deleteBtn = createIconButton(nameRow, {
+				icon: 'x',
+				label: t('list.deleteGroupTip'),
+				cls: 'wl-group-action-btn wl-group-action-btn-delete wl-btn-danger',
+			});
 			deleteBtn.addEventListener('click', (e) => {
 				e.stopPropagation();
 				new ConfirmModal(this.plugin.app, t('list.deleteGroupConfirm', { name: group.name }), () => {
@@ -2197,7 +2196,8 @@ export class ListTab {
 		const subtitleRow = accLeft.createDiv({ cls: 'wl-acc-subtitle' });
 		subtitleRow.createSpan({ cls: 'wl-acc-subtitle-text', text: `${startedStr}${episodeTotal}` });
 		if (title.externalLink) {
-			const linkIcon = subtitleRow.createEl('a', { cls: 'wl-acc-link-icon', text: '🌐' });
+			const linkIcon = subtitleRow.createEl('a', { cls: 'wl-acc-link-icon' });
+			setIcon(linkIcon, 'globe');
 			linkIcon.href = title.externalLink;
 			linkIcon.title = t('list.openExternalLink');
 			linkIcon.target = '_blank';

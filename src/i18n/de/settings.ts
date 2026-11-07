@@ -135,6 +135,7 @@ const settings = {
 		add: '+ hinzufügen',
 		exists: '"{name}" existiert bereits.',
 		removed: '"{name}" entfernt.',
+		remove: '{name} entfernen',
 		rename: '{name} umbenennen',
 		infoStatusLocked: 'Statusnamen sind gesperrt. Nur die Farbe kann geändert werden.',
 		infoTypes: 'Eingebaute Typen sind gesperrt. Eigene Typen können hinzugefügt und entfernt werden.',
@@ -180,6 +181,7 @@ const settings = {
 			help: 'Die Farben wechseln der Reihe nach durch die Staffeln (Staffel 1 = Farbe 1 usw.).',
 			name: 'Staffel {number}',
 			add: '+ Farbe hinzufügen',
+			remove: 'Farbe {number} entfernen',
 		},
 	},
 	watchlist: {

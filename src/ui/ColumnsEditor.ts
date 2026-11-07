@@ -1,4 +1,5 @@
-import { App, Notice } from 'obsidian';
+import { App, Notice, setIcon } from 'obsidian';
+import { createIconButton } from './IconButton';
 import type { CustomListColumn, CustomListRow } from '../types';
 import { DEFAULT_FIELD_COLOR } from '../types';
 import { ConfirmModal } from '../ConfirmModal';
@@ -32,7 +33,8 @@ export function attachCardDrag(
 	drag: DragState,
 	onReorder: (from: number, to: number) => void,
 ): void {
-	const handle = card.createDiv({ cls: 'wl-editcol-card-handle', text: '⠿' });
+	const handle = card.createDiv({ cls: 'wl-editcol-card-handle' });
+	setIcon(handle, 'grip-vertical');
 	handle.title = t('ui.columns.dragToReorder');
 	handle.addEventListener('mousedown', () => card.setAttribute('draggable', 'true'));
 	card.addEventListener('dragstart', (e) => {
@@ -269,9 +271,9 @@ function renderColumnList(
 			if (col.type === 'number') {
 				const autoTimeBtn = toggles.createEl('button', {
 					cls: `wl-btn wl-btn-sm wl-editcol-card-toggle wl-editcols-autotime-btn${col.autoTime ? ' is-active' : ''}`,
-					text: '⏱',
-					attr: { title: t('ui.columns.autoTime') },
+					attr: { title: t('ui.columns.autoTime'), 'aria-label': t('ui.columns.autoTime') },
 				});
+				setIcon(autoTimeBtn, 'timer');
 				autoTimeBtn.addEventListener('click', () => {
 					col.autoTime = !col.autoTime;
 					autoTimeBtn.toggleClass('is-active', !!col.autoTime);
@@ -279,11 +281,7 @@ function renderColumnList(
 			}
 		}
 
-		const delBtn = card.createEl('button', {
-			cls: 'wl-btn wl-btn-sm wl-editcol-card-del',
-			text: '×',
-		});
-		delBtn.title = t('ui.columns.deleteColumn');
+		const delBtn = createIconButton(card, { icon: 'x', label: t('ui.columns.deleteColumn'), cls: 'wl-editcol-card-del' });
 		delBtn.addEventListener('click', () => {
 			const hasData = existingRows.some(r => {
 				const val = (r as Record<string, unknown>)[col.id];
@@ -365,10 +363,11 @@ function renderColumnList(
 						col.options[oi] = nextVal;
 						prevVal = nextVal;
 					});
-					const delOpt = optRow.createEl('button', {
-						cls: 'wl-btn wl-btn-sm wl-editcol-card-opt-del',
-						text: '×',
-						attr: { title: t('ui.columns.removeOption') },
+					const delOpt = createIconButton(optRow, {
+						icon: 'x',
+						label: t('ui.columns.removeOption'),
+						cls: 'wl-editcol-card-opt-del',
+						variant: 'sm',
 					});
 					delOpt.addEventListener('click', () => {
 						const key = col.options?.[oi];

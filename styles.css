@@ -22,8 +22,9 @@
   padding: 8px 10px 0;
   border-bottom: 0.5px solid var(--background-modifier-border);
   flex-shrink: 0;
-  /* clip so the view can't be panned sideways */
-  overflow-x: hidden;
+  /* clip so the view can't be panned sideways; `clip` (not `hidden`) keeps this from
+     becoming a scroll container, which would show a scrollbar for the tabs' -0.5px overhang */
+  overflow-x: clip;
 }
 
 /* Mobile: icon-only tabs — 7 text labels overflow a phone panel */
@@ -32,7 +33,7 @@
   padding: 6px 4px 0;
 }
 
-.wl-tab-btn-icon {
+button.wl-tab-btn-icon {
   flex: 1 1 0;
   min-width: 0;
   display: flex;
@@ -42,13 +43,13 @@
   position: relative;
 }
 
-.wl-tab-btn-icon .svg-icon {
+button.wl-tab-btn-icon .svg-icon {
   width: 20px;
   height: 20px;
 }
 
 /* icon mode: dot instead of (N) */
-.wl-tab-btn-icon.wl-tab-has-badge::after {
+button.wl-tab-btn-icon.wl-tab-has-badge::after {
   content: '';
   position: absolute;
   top: 3px;
@@ -59,26 +60,42 @@
   background-color: #7F77DD;
 }
 
-.wl-tab-btn {
-  padding: 5px 14px;
+/* Flat tab buttons: top bar, airtime sub-tabs, reading sub-tabs.
+   element-qualified: plain .class loses to core's button:not(.clickable-icon)
+   (background, shadow, radius, height), which turns the tabs into raised buttons */
+button.wl-tab-btn,
+button.wl-inner-tab-btn,
+button.wl-reading-subtab {
+  height: auto;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
   color: var(--text-muted);
   cursor: pointer;
   font-size: var(--font-ui-small);
   font-weight: 500;
-  margin-bottom: -0.5px;
   transition: color 0.15s, border-color 0.15s;
 }
 
-.wl-tab-btn:hover {
+button.wl-tab-btn:hover,
+button.wl-inner-tab-btn:hover,
+button.wl-reading-subtab:hover {
   color: var(--text-normal);
+  background: none;
+  box-shadow: none;
 }
 
-.wl-tab-btn.is-active {
+button.wl-tab-btn.is-active,
+button.wl-inner-tab-btn.is-active {
   color: var(--text-accent);
   border-bottom-color: var(--text-accent);
+}
+
+button.wl-tab-btn {
+  padding: 5px 14px;
+  margin-bottom: -0.5px;
 }
 
 /* Tab content */
@@ -95,6 +112,66 @@
 .wl-tab-content.wl-tab-content-pinned {
   flex: none;
   height: var(--wl-pinned-tab-height);
+}
+
+/* ══ ICON BUTTONS ══ */
+
+/* Icon-only buttons, built by src/ui/IconButton.ts. element-qualified: a plain .class
+   loses to core's button:not(.clickable-icon) (background, shadow, radius, height).
+   Kept near the top so a component's own `button.wl-x` rule wins by source order. */
+button.wl-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+}
+
+button.wl-icon-btn .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+button.wl-icon-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+
+/* bordered, the rating-row look */
+button.wl-icon-btn-framed {
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* inline next to text: add / remove on a credits row */
+button.wl-icon-btn-sm {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+}
+
+button.wl-icon-btn-sm .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+
+/* refresh in flight; the caller toggles the class */
+button.wl-icon-btn.is-loading {
+  animation: wl-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+
+/* core's .is-tablet button:not(.clickable-icon) padding would squeeze the icon out */
+body.is-tablet button.wl-icon-btn {
+  padding: 0;
 }
 
 /* ══ DASHBOARD TAB ══ */
@@ -661,30 +738,6 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.wl-rows-customize-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  box-shadow: none;
-  padding: 2px 3px;
-  margin: 0;
-  cursor: pointer;
-  color: var(--text-muted);
-  border-radius: var(--radius-s, 4px);
-}
-
-.wl-rows-customize-btn:hover {
-  color: var(--text-normal);
-  background: var(--background-modifier-hover);
-}
-
-.wl-rows-customize-btn svg {
-  width: 15px;
-  height: 15px;
 }
 
 /* Table */
@@ -2595,15 +2648,12 @@ button.wl-api-action-btn {
   color: var(--text-normal);
 }
 
+/* sm icon button at the end of a tag pill */
 .wl-tag-del {
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
   margin-left: 2px;
 }
 
-.wl-tag-del:hover {
+button.wl-tag-del:hover {
   color: var(--text-error);
 }
 
@@ -2816,27 +2866,17 @@ button.wl-api-action-btn {
   min-width: 0;
 }
 
-.wl-group-action-btn {
+/* icon button, hairline frame; element-qualified to outrank the base size */
+button.wl-group-action-btn {
   flex-shrink: 0;
   width: 20px;
   height: 20px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
   border: 0.5px solid var(--background-modifier-border);
   border-radius: 3px;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 11px;
-  line-height: 1;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 
-.wl-group-action-btn:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
+button.wl-group-action-btn:hover {
   border-color: var(--interactive-accent);
 }
 
@@ -3218,7 +3258,6 @@ button.wl-api-action-btn {
   top: auto;
   bottom: 4px;
   right: 4px;
-  font-size: 12px;
 }
 
 .wl-tracker-card .wl-tracker-menu-btn {
@@ -3345,39 +3384,27 @@ button.wl-api-action-btn {
   gap: 4px;
 }
 
-.wl-airtime-action-btn {
+/* icon button, hairline frame; element-qualified to outrank the base size */
+button.wl-airtime-action-btn {
   width: 24px;
   height: 24px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
   border: 0.5px solid var(--background-modifier-border);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-  color: var(--text-muted);
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 
-.wl-airtime-action-btn:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
+button.wl-airtime-action-btn:hover {
   border-color: var(--interactive-accent);
 }
 
 /* .wl-airtime-action-btn-delete — color via .wl-btn-danger */
 
 /* Tick (complete) button */
-.wl-airtime-action-btn-tick {
+button.wl-airtime-action-btn-tick {
   color: #1D9E75;
   border-color: #1D9E75;
-  font-size: 14px;
 }
 
-.wl-airtime-action-btn-tick:hover {
+button.wl-airtime-action-btn-tick:hover {
   background: #1D9E75;
   color: #ffffff;
   border-color: #1D9E75;
@@ -4385,30 +4412,10 @@ button.wl-api-action-btn {
   gap: 6px;
 }
 
-.wl-rows-customize-move {
-  display: flex;
-  align-items: center;
-  background: none;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s, 4px);
-  box-shadow: none;
-  color: var(--text-normal);
-  cursor: pointer;
-  padding: 3px 5px;
-}
-
-.wl-rows-customize-move:hover:not(:disabled) {
-  background: var(--background-modifier-hover);
-}
-
-.wl-rows-customize-move:disabled {
+/* framed icon buttons; the base handles size and hover */
+button.wl-rows-customize-move:disabled {
   opacity: 0.35;
   cursor: default;
-}
-
-.wl-rows-customize-move svg {
-  width: 14px;
-  height: 14px;
 }
 
 .wl-filter-row {
@@ -4873,39 +4880,27 @@ button.wl-api-action-btn {
   flex: 1;
 }
 
+/* sm icon button in the list tab, revealed on hover */
 .wl-cl-sub-tab-del {
-  font-size: 13px;
-  line-height: 1;
-  color: var(--text-faint);
-  cursor: pointer;
   opacity: 0;
   transition: opacity 0.12s, color 0.12s;
   flex-shrink: 0;
 }
 
-.wl-cl-sub-tab:hover .wl-cl-sub-tab-del {
+.wl-cl-sub-tab:hover .wl-cl-sub-tab-del,
+.wl-cl-sub-tab-del:focus-visible {
   opacity: 1;
 }
 
-.wl-cl-sub-tab-del:hover {
+button.wl-cl-sub-tab-del:hover {
   color: var(--text-error);
 }
 
-.wl-cl-sub-tab-add {
+/* icon button; its colours come from .wl-btn-success */
+button.wl-cl-sub-tab-add,
+body.is-tablet button.wl-cl-sub-tab-add {
+  width: auto;
   padding: 3px 10px;
-  border-radius: 4px;
-  border: 0.5px dashed var(--background-modifier-border);
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-  transition: color 0.12s, border-color 0.12s;
-}
-
-.wl-cl-sub-tab-add:hover {
-  color: var(--text-normal);
-  border-color: var(--interactive-accent);
 }
 
 .wl-cl-sub-tab-rename {
@@ -5096,7 +5091,8 @@ body.wl-cl-col-resizing {
   background: var(--background-modifier-hover);
 }
 
-.wl-cl-tr-body:hover .wl-cl-row-action {
+.wl-cl-tr-body:hover .wl-cl-row-action,
+button.wl-cl-row-action:focus-visible {
   opacity: 1;
 }
 
@@ -5117,10 +5113,9 @@ body.wl-cl-col-resizing {
   text-overflow: ellipsis;
 }
 
+/* sm icon button next to the column label */
 .wl-cl-autotime-refresh {
-  cursor: pointer;
   margin-left: 4px;
-  font-size: 13px;
   opacity: 0.6;
   transition: opacity 0.15s;
 }
@@ -5172,48 +5167,29 @@ body.wl-cl-col-resizing {
 }
 
 /* Row actions */
-.wl-cl-row-action {
+/* row icon buttons, revealed on row hover; element-qualified to outrank the base */
+button.wl-cl-row-action {
   width: 20px;
   height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 3px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-muted);
   opacity: 0;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
   flex-shrink: 0;
-  user-select: none;
 }
 
-.wl-cl-drag-handle {
+button.wl-cl-drag-handle {
   cursor: grab;
-  font-size: 14px;
 }
 
-.wl-cl-drag-handle:hover {
-  color: var(--text-normal);
-  background: var(--background-modifier-hover);
-}
-
-.wl-cl-add-btn {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.wl-cl-add-btn:hover {
+button.wl-cl-add-btn:hover {
   color: var(--text-on-accent);
   background: var(--color-green);
 }
 
-.wl-cl-dup-btn:hover {
+button.wl-cl-dup-btn:hover {
   color: var(--interactive-accent);
-  background: var(--background-modifier-hover);
 }
 
-.wl-cl-row-del:hover {
+button.wl-cl-row-del:hover {
   color: var(--text-on-accent);
   background: #E24B4A;
 }
@@ -5398,6 +5374,11 @@ body.wl-cl-col-resizing {
   color: var(--text-muted);
 }
 
+.wl-editcol-card-handle .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+
 .wl-editcol-card-name {
   width: 100%;
   box-sizing: border-box;
@@ -5459,19 +5440,12 @@ body.wl-cl-col-resizing {
   justify-content: center;
 }
 
+/* icon button in the column card header */
 .wl-editcol-card-del {
   align-self: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  font-size: 11px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
 }
 
-.wl-editcol-card-del:hover {
+button.wl-editcol-card-del:hover {
   color: var(--text-error);
 }
 
@@ -5503,19 +5477,12 @@ body.wl-cl-col-resizing {
   height: 22px;
 }
 
+/* sm icon button after an option input */
 .wl-editcol-card-opt-del {
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  font-size: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
 }
 
-.wl-editcol-card-opt-del:hover {
+button.wl-editcol-card-opt-del:hover {
   color: var(--text-error);
 }
 
@@ -5774,11 +5741,7 @@ body.wl-cl-col-resizing {
   white-space: nowrap;
 }
 
-.wl-drafts-dismiss {
-  color: var(--text-muted);
-}
-
-.wl-drafts-dismiss:hover {
+button.wl-drafts-dismiss:hover {
   color: var(--color-red, #e24b4a);
 }
 
@@ -5945,22 +5908,10 @@ body.wl-cl-col-resizing {
   flex-shrink: 0;
 }
 
-.wl-inner-tab-btn {
+/* base, hover and active: see the flat tab buttons rule next to .wl-tab-bar */
+button.wl-inner-tab-btn {
   padding: 4px 12px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: var(--font-ui-small);
-  font-weight: 500;
   margin-bottom: -1px;
-}
-
-.wl-inner-tab-btn:hover { color: var(--text-normal); }
-.wl-inner-tab-btn.is-active {
-  color: var(--text-accent);
-  border-bottom-color: var(--text-accent);
 }
 
 /* Feature 1: Recently arrived label */
@@ -6146,35 +6097,18 @@ body.wl-cl-col-resizing {
   flex-shrink: 0;
   padding-top: 3px;
 }
+/* icon button, hidden until the entry is hovered */
 .wl-log-del {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  min-height: 0;
-  padding: 0;
   margin-top: 1px;
   flex-shrink: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-faint);
-  cursor: pointer;
   opacity: 0;
-}
-.wl-log-del svg {
-  width: 13px;
-  height: 13px;
 }
 .wl-log-entry:hover .wl-log-del,
 .wl-log-del:focus-visible {
   opacity: 1;
 }
-.wl-log-del:hover {
+.wl-log-entry .wl-log-del:hover {
   color: var(--text-error);
-  background: var(--background-modifier-hover);
 }
 /* mobile has no hover — keep it out permanently */
 .is-mobile .wl-log-del {
@@ -6725,33 +6659,9 @@ body.wl-cl-col-resizing {
   margin-top: 2px;
 }
 
-/* manual credits re-fetch; spins while in flight */
+/* manual credits re-fetch (icon button); sits at the start of the credits column */
 .wl-credits-refresh {
   align-self: flex-start;
-  background: none;
-  border: none;
-  box-shadow: none;
-  border-radius: 4px;
-  width: 44px;
-  height: 8px;
-  padding: 0;
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.wl-credits-refresh:hover {
-  color: var(--text-normal);
-  background-color: var(--background-modifier-hover);
-}
-
-.wl-credits-refresh.is-loading {
-  animation: wl-spin 0.9s linear infinite;
-  pointer-events: none;
 }
 
 .wl-credits-row {
@@ -6780,29 +6690,10 @@ body.wl-cl-col-resizing {
   text-decoration: underline;
 }
 
-/* Leading + on each credits row — opens the add-credit modal for that field. */
+/* Leading + on each credits row (sm icon button) — opens the add-credit modal for that field. */
 .wl-credits-add {
-  background: none;
-  border: none;
-  box-shadow: none;
-  border-radius: 4px;
-  width: 16px;
-  height: 16px;
-  padding: 0;
   margin-right: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   vertical-align: -3px;
-}
-
-.wl-credits-add:hover {
-  color: var(--text-normal);
-  background-color: var(--background-modifier-hover);
 }
 
 /* User-added names: a dotted underline marks them apart from fetched credits. */
@@ -6810,37 +6701,36 @@ body.wl-cl-col-resizing {
   border-bottom: 1px dotted var(--text-faint);
 }
 
-/* ✕ on a user-added name, revealed on hover so the row stays quiet at rest. */
-.wl-credits-name-del {
-  background: none;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-  margin-left: 3px;
-  width: 12px;
-  height: 12px;
-  font-size: 9px;
-  line-height: 1;
-  cursor: pointer;
-  color: var(--text-faint);
-  display: none;
-  align-items: center;
-  justify-content: center;
+/* ✕ on a user-added name (sm icon button), revealed on hover so the row stays quiet at rest.
+   element-qualified to outrank the base's display */
+/* collapsed to zero width at rest (display: none would make it unreachable by keyboard),
+   so the name list keeps no gap before the comma */
+button.wl-credits-name-del {
   vertical-align: 1px;
+  width: 0;
+  margin-left: 0;
+  opacity: 0;
+  overflow: hidden;
 }
 
-.wl-credits-name:hover .wl-credits-name-del {
-  display: inline-flex;
+.wl-credits-name:hover button.wl-credits-name-del,
+.wl-credits-name:focus-within button.wl-credits-name-del,
+button.wl-credits-name-del:focus-visible {
+  width: 16px;
+  margin-left: 3px;
+  opacity: 1;
 }
 
 /* no hover on touch — the remove control has to be there from the start */
 @media (hover: none) {
-  .wl-credits-name-del {
-    display: inline-flex;
+  button.wl-credits-name-del {
+    width: 16px;
+    margin-left: 3px;
+    opacity: 1;
   }
 }
 
-.wl-credits-name-del:hover {
+button.wl-credits-name-del:hover {
   color: var(--text-error, var(--text-accent));
 }
 
@@ -6964,24 +6854,12 @@ body.wl-cl-col-resizing {
   white-space: nowrap;
 }
 
+/* sm icon button at the end of a staged-name chip */
 .wl-credit-chip-del {
-  background: none;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-  width: 14px;
-  height: 14px;
   flex: 0 0 auto;
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
 }
 
-.wl-credit-chip-del:hover {
+button.wl-credit-chip-del:hover {
   color: var(--text-error, var(--text-accent));
 }
 
@@ -7535,27 +7413,29 @@ body.wl-cl-col-resizing {
   height: 14px;
 }
 
-.wl-card-menu-btn {
+/* icon button as a dark round overlay in the poster / cover corner; element-qualified to outrank the base */
+button.wl-card-menu-btn,
+button.wl-reading-card-menu-btn {
   position: absolute;
   top: 4px;
   right: 4px;
-  background: rgba(0, 0, 0, 0.5);
-  border: none;
-  color: #fff;
-  border-radius: 50%;
   width: 24px;
   height: 24px;
-  cursor: pointer;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
   opacity: 0;
   transition: opacity 0.15s;
-  padding: 0;
 }
 
-.wl-card:hover .wl-card-menu-btn {
+button.wl-card-menu-btn:hover,
+button.wl-reading-card-menu-btn:hover {
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+}
+
+.wl-card:hover .wl-card-menu-btn,
+button.wl-card-menu-btn:focus-visible {
   opacity: 1;
 }
 
@@ -7610,32 +7490,6 @@ body.wl-cl-col-resizing {
   font-style: italic;
 }
 
-.wl-community-refresh {
-  background: transparent;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 4px;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.wl-community-refresh:hover {
-  color: var(--text-normal);
-  background-color: var(--background-modifier-hover);
-}
-
-.wl-community-refresh.is-loading {
-  animation: wl-spin 0.9s linear infinite;
-  pointer-events: none;
-}
-
 /* Trailer control at the tail of the rating row (rating badge → refresh → YouTube). */
 .wl-trailer-control {
   display: inline-flex;
@@ -7643,7 +7497,8 @@ body.wl-cl-col-resizing {
   vertical-align: middle;
 }
 
-.wl-trailer-btn {
+/* element-qualified: see button.wl-icon-btn */
+button.wl-trailer-btn {
   /* wide frame, icon stays its natural size */
   min-width: 40px;
   padding: 1px 3px;
@@ -7659,10 +7514,10 @@ body.wl-cl-col-resizing {
   vertical-align: middle;
   box-shadow: none;
   height: 23px;
-  width: 40px; 
+  width: 40px;
 }
 
-.wl-trailer-btn:hover {
+button.wl-trailer-btn:hover {
   color: #CC0000; /* Discreet darker-red + subtle wash so it still reads as clickable. */
   background: var(--background-modifier-hover);
 }
@@ -7672,13 +7527,21 @@ body.wl-cl-col-resizing {
   height: 22px;
 }
 
-.wl-trailer-refresh {
-  margin-left: 8px;
+/* no trailer known yet: same frame, muted, fetches on click */
+button.wl-trailer-btn-fetch {
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
 }
 
-.wl-trailer-refresh .svg-icon {
-  width: 14px;
-  height: 14px;
+button.wl-trailer-btn-fetch:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+button.wl-trailer-btn.is-loading {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 /* Store button — the trailer-button frame with a store glyph (Games). */
@@ -7837,7 +7700,6 @@ button.wl-seg-toggle-btn.is-active {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
-
 /* Small numeric settings input (e.g. top directors/actors count): ~3 digits wide. */
 input.wl-settings-count-input {
   width: 64px;
@@ -8037,27 +7899,16 @@ input.wl-settings-count-input {
   margin: 8px -2px 0;
 }
 
-.wl-reading-subtab {
+/* base and hover: see the flat tab buttons rule next to .wl-tab-bar */
+button.wl-reading-subtab {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px 14px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: var(--font-ui-small);
-  font-weight: 500;
   margin-bottom: -0.5px;
-  transition: color 0.15s, border-color 0.15s;
 }
 
-.wl-reading-subtab:hover {
-  color: var(--text-normal);
-}
-
-.wl-reading-subtab.is-active {
+button.wl-reading-subtab.is-active {
   color: #1D9E75;
   border-bottom-color: #1D9E75;
 }
@@ -8118,37 +7969,19 @@ input.wl-settings-count-input {
 }
 
 /* clear (X) inside the search box — shown only when the input has text */
-.wl-search-clear {
+/* icon button inside the search field, shown while there is a query */
+button.wl-search-clear {
   position: absolute;
   right: 28px;
   top: 50%;
   transform: translateY(-50%);
-  display: none;
-  align-items: center;
-  justify-content: center;
   width: 20px;
   height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-muted);
-  cursor: pointer;
+  display: none;
 }
 
-.wl-search-clear.is-visible {
-  display: flex;
-}
-
-.wl-search-clear:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-
-.wl-search-clear .svg-icon {
-  width: 14px;
-  height: 14px;
+button.wl-search-clear.is-visible {
+  display: inline-flex;
 }
 
 .wl-reading-add-btn {
@@ -9119,28 +8952,13 @@ input.wl-settings-count-input {
 }
 
 /* Reading card context menu */
-.wl-reading-card-menu-btn {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  background: rgba(0, 0, 0, 0.5);
-  border: none;
-  color: #fff;
-  border-radius: 50%;
-  width: 24px;
-  height: 24px;
-  cursor: pointer;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 0.15s;
-  padding: 0;
+/* overlay look shared with button.wl-card-menu-btn (Watchlist section) */
+button.wl-reading-card-menu-btn {
   z-index: 5;
 }
 
-.wl-reading-card:hover .wl-reading-card-menu-btn {
+.wl-reading-card:hover .wl-reading-card-menu-btn,
+button.wl-reading-card-menu-btn:focus-visible {
   opacity: 1;
 }
 
@@ -10383,25 +10201,27 @@ input.wl-settings-count-input {
 }
 
 /* ══ SHARED BUTTON COLOR UTILITIES — color only, border at rest, fill on hover ══ */
-.wl-btn-danger {
+/* element-qualified so it also outranks button.wl-icon-btn */
+button.wl-btn-danger {
   background: transparent;
   border: 0.5px solid rgba(var(--color-red-rgb), 0.65);
   color: var(--text-error);
 }
 
-.wl-btn-danger:hover {
+button.wl-btn-danger:hover {
   background: var(--text-error);
   border-color: var(--text-error);
   color: var(--text-on-accent);
 }
 
-.wl-btn-success {
+/* element-qualified so it also outranks button.wl-icon-btn */
+button.wl-btn-success {
   background: transparent;
   border: 0.5px solid rgba(var(--color-green-rgb), 0.65);
   color: var(--color-green);
 }
 
-.wl-btn-success:hover {
+button.wl-btn-success:hover {
   background: var(--color-green);
   border-color: var(--color-green);
   color: var(--text-on-accent);
@@ -10654,26 +10474,6 @@ input.wl-settings-count-input {
   color: var(--text-normal);
 }
 
-.wl-datepicker-nav {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  box-shadow: none;
-}
-
-.wl-datepicker-nav:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-
 .wl-datepicker-dow,
 .wl-datepicker-grid {
   display: grid;
@@ -10849,7 +10649,7 @@ input.wl-settings-count-input {
 }
 
 /* labelled trailer button replaces the icon-only one */
-.wl-trailer-btn-labeled {
+button.wl-trailer-btn-labeled {
   width: auto;
   min-width: 0;
   height: auto;
@@ -10857,11 +10657,12 @@ input.wl-settings-count-input {
   gap: 6px;
   padding: 2px 12px;
   margin-left: 4px;
+  border: none;
   background: var(--background-modifier-border);
   color: var(--text-normal);
 }
 
-.wl-trailer-btn-labeled:hover {
+button.wl-trailer-btn-labeled:hover {
   color: var(--text-normal);
 }
 
@@ -10897,7 +10698,8 @@ input.wl-settings-count-input {
   --icon-size: 16px;
 }
 
-.wl-detail-mobile .wl-detail-badge-row .wl-acc-link-icon svg {
+.wl-detail-mobile .wl-detail-badge-row .wl-acc-link-icon svg,
+.wl-detail-mobile .wl-detail-badge-row .wl-credits-refresh .svg-icon {
   width: 16px;
   height: 16px;
 }
@@ -11198,33 +11000,10 @@ input.wl-settings-count-input {
 
 /* Search help ("?") button, at the right end of every search bar */
 /* element-qualified: plain .class loses to core's button:not(.clickable-icon) */
+/* icon button; quieter than the base at rest */
 button.wl-search-help-btn {
   flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  box-shadow: none;
   color: var(--text-faint);
-  cursor: pointer;
-}
-
-button.wl-search-help-btn:hover,
-button.wl-search-help-btn:active,
-button.wl-search-help-btn:focus {
-  color: var(--text-normal);
-  background: transparent;
-  box-shadow: none;
-}
-
-.wl-search-help-btn .svg-icon {
-  width: 15px;
-  height: 15px;
 }
 
 /* Search tips modal */
@@ -11314,25 +11093,10 @@ button.wl-search-help-btn:focus {
    Phones and desktop never load that rule; only tablets break.
    Prefixing `body` + qualifying `button` outranks it. Values copied from each
    button's own rule. */
-body.is-tablet button.wl-airtime-action-btn,
-body.is-tablet button.wl-card-menu-btn,
-body.is-tablet button.wl-community-refresh,
-body.is-tablet button.wl-credit-chip-del,
-body.is-tablet button.wl-credits-add,
-body.is-tablet button.wl-credits-name-del,
-body.is-tablet button.wl-credits-refresh,
-body.is-tablet button.wl-datepicker-nav,
-body.is-tablet button.wl-editcol-card-del,
-body.is-tablet button.wl-editcol-card-opt-del,
 body.is-tablet button.wl-editcol-card-toggle,
 body.is-tablet button.wl-editcol-opt-color-dot,
-body.is-tablet button.wl-group-action-btn,
-body.is-tablet button.wl-log-del,
-body.is-tablet button.wl-reading-card-menu-btn,
 body.is-tablet button.wl-reading-col-color-dot,
 body.is-tablet button.wl-reading-col-palette-swatch,
-body.is-tablet button.wl-search-clear,
-body.is-tablet button.wl-search-help-btn,
 body.is-tablet button.wl-toolbar-add-btn,
 body.is-tablet button.wl-toolbar-toggle-btn,
 body.is-tablet .wl-game-modal-actions button.wl-store-btn {

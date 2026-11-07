@@ -12,6 +12,7 @@ const lists = {
 	preview: 'Preview',
 	notesPlaceholder: 'Add notes, links, or any text here...',
 	newList: 'New custom list',
+	deleteList: 'Delete list "{name}"',
 	listName: 'List name',
 	listNamePlaceholder: 'E.g. Marvel movies',
 	enterName: 'Please enter a name.',

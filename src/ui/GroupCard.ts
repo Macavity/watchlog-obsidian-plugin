@@ -1,5 +1,6 @@
 import type { App } from 'obsidian';
 import { t } from '../i18n';
+import { createIconButton } from './IconButton';
 import { renderGroupCollage } from '../CollageUtil';
 import { ConfirmModal } from '../ConfirmModal';
 import { openCardMenu } from '../PosterCard';
@@ -48,8 +49,11 @@ function renderGroupText(textHost: HTMLElement, under: boolean, name: string, la
 }
 
 function renderGroupMenuButton<M>(card: HTMLElement, opts: GroupCardOptions<M>): void {
-	const menuBtn = card.createEl('button', { cls: 'wl-card-menu-btn', text: '⋮' });
-	menuBtn.setAttr('aria-label', t('ui.group.actions'));
+	const menuBtn = createIconButton(card, {
+		icon: 'more-vertical',
+		label: t('ui.group.actions'),
+		cls: 'wl-card-menu-btn',
+	});
 	menuBtn.addEventListener('click', (e) => {
 		e.stopPropagation();
 		openCardMenu(card, menuBtn, [
