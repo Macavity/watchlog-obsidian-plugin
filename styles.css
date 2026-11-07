@@ -7497,7 +7497,8 @@ button.wl-card-menu-btn:focus-visible {
   vertical-align: middle;
 }
 
-.wl-trailer-btn {
+/* element-qualified: see button.wl-icon-btn */
+button.wl-trailer-btn {
   /* wide frame, icon stays its natural size */
   min-width: 40px;
   padding: 1px 3px;
@@ -7513,10 +7514,10 @@ button.wl-card-menu-btn:focus-visible {
   vertical-align: middle;
   box-shadow: none;
   height: 23px;
-  width: 40px; 
+  width: 40px;
 }
 
-.wl-trailer-btn:hover {
+button.wl-trailer-btn:hover {
   color: #CC0000; /* Discreet darker-red + subtle wash so it still reads as clickable. */
   background: var(--background-modifier-hover);
 }
@@ -7526,9 +7527,21 @@ button.wl-card-menu-btn:focus-visible {
   height: 22px;
 }
 
-/* framed icon button after the rating badge */
-.wl-trailer-refresh {
-  margin-left: 8px;
+/* no trailer known yet: same frame, muted, fetches on click */
+button.wl-trailer-btn-fetch {
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+}
+
+button.wl-trailer-btn-fetch:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+button.wl-trailer-btn.is-loading {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 /* Store button — the trailer-button frame with a store glyph (Games). */
@@ -10636,7 +10649,7 @@ button.wl-btn-success:hover {
 }
 
 /* labelled trailer button replaces the icon-only one */
-.wl-trailer-btn-labeled {
+button.wl-trailer-btn-labeled {
   width: auto;
   min-width: 0;
   height: auto;
@@ -10644,11 +10657,12 @@ button.wl-btn-success:hover {
   gap: 6px;
   padding: 2px 12px;
   margin-left: 4px;
+  border: none;
   background: var(--background-modifier-border);
   color: var(--text-normal);
 }
 
-.wl-trailer-btn-labeled:hover {
+button.wl-trailer-btn-labeled:hover {
   color: var(--text-normal);
 }
 

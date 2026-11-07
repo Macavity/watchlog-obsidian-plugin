@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Platform, setIcon } from 'obsidian';
+import { App, Modal, Notice, Platform, setIcon, setTooltip } from 'obsidian';
 import type WatchLogPlugin from './main';
 import type { DataManager } from './DataManager';
 import type { WatchLogTitle, WatchLogGroup, Season, TagDefinition, CreditsField } from './types';
@@ -681,43 +681,40 @@ export class TitleDetailModal extends Modal {
 	}
 
 	/**
-	 * Paints the trailer control: a trailer → clickable YouTube icon (opens externally); none ('' or
-	 * 'none') → a refresh button that re-fetches from source. Re-read from the store so an override
-	 * saved in the edit modal shows.
+	 * Paints the trailer control: a trailer → red YouTube button (opens externally); none ('' or
+	 * 'none') → the same button muted, which fetches from source on click. Same frame in both
+	 * states so the row does not jump. Re-read from the store so an override saved in the edit
+	 * modal shows.
 	 */
 	private paintTrailerControl(container: HTMLElement): void {
 		container.empty();
 		const title = this.dataManager.getTitle(this.title.id) ?? this.title;
 		const url = getDisplayTrailer(title);
-		if (url) {
-			const btn = container.createEl('button', {
-				cls: 'wl-trailer-btn',
-				attr: { type: 'button', title: t('detail.trailer.watch'), 'aria-label': t('detail.trailer.watch') },
-			});
-			// mobile has room for a labelled button and needs the bigger tap target
-			if (this.mobile) {
-				btn.addClass('wl-trailer-btn-labeled');
-				setIcon(btn, 'play');
-				btn.createSpan({ cls: 'wl-trailer-btn-label', text: t('detail.trailer.label') });
-			} else {
-				setIcon(btn, 'youtube');
-			}
-			btn.addEventListener('click', (e) => {
-				e.stopPropagation();
-				window.open(url, '_blank');
-			});
-			return;
-		}
-		const refreshBtn = createIconButton(container, {
-			icon: 'refresh-cw',
-			label: t('detail.trailer.fetch'),
-			cls: 'wl-trailer-refresh',
-			variant: 'framed',
-		});
-		refreshBtn.addEventListener('click', (e) => {
+		const btn = this.renderTrailerButton(container, url ? t('detail.trailer.watch') : t('detail.trailer.fetch'));
+		if (!url) btn.addClass('wl-trailer-btn-fetch');
+		btn.addEventListener('click', (e) => {
 			e.stopPropagation();
-			void this.refreshTrailer(refreshBtn, container);
+			if (url) window.open(url, '_blank');
+			else void this.refreshTrailer(btn, container);
 		});
+	}
+
+	/**
+	 * The play-shaped trailer button (Obsidian's Lucide set has no `youtube` icon); mobile has room
+	 * for a label and needs the bigger tap target.
+	 */
+	private renderTrailerButton(container: HTMLElement, label: string): HTMLButtonElement {
+		const btn = container.createEl('button', {
+			cls: 'wl-trailer-btn',
+			attr: { type: 'button', 'aria-label': label },
+		});
+		setTooltip(btn, label);
+		setIcon(btn, 'play');
+		if (this.mobile) {
+			btn.addClass('wl-trailer-btn-labeled');
+			btn.createSpan({ cls: 'wl-trailer-btn-label', text: t('detail.trailer.label') });
+		}
+		return btn;
 	}
 
 	/**
